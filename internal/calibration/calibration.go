@@ -84,6 +84,10 @@ func Prepare(ctx context.Context, source corpus.BOM, cache *lookaside.Cache, bud
 	if err != nil {
 		return Prepared{}, err
 	}
+	// MkdirTemp requires its parent to exist.
+	if err := cache.EnsureScratch(); err != nil {
+		return Prepared{}, fmt.Errorf("prepare calibration scratch %s: %w; set a writable location with `waldo config set lookaside.scratch <directory>`", cache.Scratch(), err)
+	}
 	directory, err := os.MkdirTemp(cache.Scratch(), ".waldo-calibration-*")
 	if err != nil {
 		return Prepared{}, err

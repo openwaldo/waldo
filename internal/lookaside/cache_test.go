@@ -407,3 +407,24 @@ func digestOf(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])
 }
+
+func TestEnsureScratchTightensAnExistingRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "scratch")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := NewCache(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.EnsureScratch(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(cache.Scratch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o700 {
+		t.Fatalf("mode = %04o; a root left wider by an older command must be corrected", mode)
+	}
+}
