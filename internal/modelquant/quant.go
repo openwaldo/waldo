@@ -11,15 +11,26 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+	"unicode/utf8"
 )
 
 const Profile = "openwaldo-gguf-quant-schema-1"
+
+const (
+	toolProbeTimeout   = 10 * time.Second
+	toolProbeWaitDelay = 2 * time.Second
+	toolVersionMaximum = 4096
+	// llama-quantize answers an unknown flag with usage text and this status.
+	toolUsageExit = 1
+)
 
 var profiles = map[string]string{
 	"2": "Q2_K",
@@ -138,15 +149,77 @@ func resolveTool(ctx context.Context, name string) (Tool, error) {
 	if err != nil {
 		return Tool{}, err
 	}
-	output, err := exec.CommandContext(ctx, absolute, "--version").CombinedOutput()
+	version, err := probeVersion(ctx, absolute, toolProbeTimeout, declinesVersion(name))
 	if err != nil {
-		return Tool{}, fmt.Errorf("%s --version: %w: %s", absolute, err, strings.TrimSpace(string(output)))
-	}
-	version := strings.TrimSpace(string(output))
-	if version == "" {
-		return Tool{}, fmt.Errorf("%s --version returned no identity", absolute)
+		return Tool{}, err
 	}
 	return Tool{Name: name, Version: version, SHA256: digest, path: absolute}, nil
+}
+
+// declinesVersion reports the tools known not to implement --version.
+func declinesVersion(name string) bool { return name == "llama-quantize" }
+
+// probeVersion asks a tool to name itself within budget. The version is best
+// effort; only a tool that failed in a way it should not is an error.
+func probeVersion(ctx context.Context, absolute string, budget time.Duration, declines bool) (string, error) {
+	probeCtx, cancelProbe := context.WithTimeout(ctx, budget)
+	defer cancelProbe()
+	command := exec.CommandContext(probeCtx, absolute, "--version")
+	// A wrapper can leave a grandchild holding the pipe after the child is killed.
+	command.WaitDelay = toolProbeWaitDelay
+	output, probeErr := command.CombinedOutput()
+	var exitErr *exec.ExitError
+	switch {
+	// First: a late cancel reports ErrWaitDelay, which would read as success.
+	case ctx.Err() != nil:
+		return "", fmt.Errorf("%s --version: %w", absolute, ctx.Err())
+	case probeErr == nil:
+		return toolVersion(output), nil
+	case errors.Is(probeErr, exec.ErrWaitDelay):
+		return toolVersion(output), nil
+	// A slow host must not fail an export.
+	case probeCtx.Err() != nil:
+		return "", nil
+	// ExitCode is -1 for a signalled process, so a crash never lands here.
+	case declines && errors.As(probeErr, &exitErr) && exitErr.ExitCode() == toolUsageExit:
+		return "", nil
+	default:
+		return "", fmt.Errorf("%s --version: %w: %s", absolute, probeErr, bound(strings.TrimSpace(string(output))))
+	}
+}
+
+// toolVersion reduces a tool's output to the identity the release BOM keeps.
+// Diagnostics can precede the version, so prefer the line that names one; a
+// lone line is taken at its word and anything else reports nothing.
+func toolVersion(output []byte) string {
+	var seen []string
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToLower(line), "version:") {
+			return bound(line)
+		}
+		if line != "" {
+			seen = append(seen, line)
+		}
+	}
+	if len(seen) == 1 {
+		return bound(seen[0])
+	}
+	return ""
+}
+
+// bound keeps the value to what a provenance field can carry: valid UTF-8 that
+// reads back from the BOM as written, and short enough to stay a version.
+func bound(value string) string {
+	value = strings.ToValidUTF8(value, "")
+	if len(value) <= toolVersionMaximum {
+		return value
+	}
+	data := []byte(value)[:toolVersionMaximum]
+	for len(data) > 0 && !utf8.Valid(data) {
+		data = data[:len(data)-1]
+	}
+	return string(data)
 }
 
 func run(ctx context.Context, tool Tool, arguments []string) error {
