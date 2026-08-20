@@ -237,6 +237,10 @@ assert quant["requested"] == "4"
 assert quant["resolved"] == "Q4_K_M"
 assert quant["quantizer"]["name"] == "llama-quantize"
 assert quant["calibrator"]["name"] == "llama-imatrix"
+# llama-quantize reports no version, so the digest is the only identity the
+# release carries for it. It must never be empty.
+assert len(quant["quantizer"]["sha256"]) == 64
+assert len(quant["calibrator"]["sha256"]) == 64
 calibration = quant["calibration"]
 assert calibration["sampled_tokens"] > 0
 assert calibration["records"] > 0

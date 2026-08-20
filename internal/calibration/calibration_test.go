@@ -146,3 +146,24 @@ func calibrationCorpus(object, objectSHA string, objectBytes, tokens, records in
 	pin := corpus.ShardPin{Manifest: manifest.Path, URL: object, SHA256: objectSHA, Format: "parquet", RecordSchema: shard.TextRecordSchema, License: "CC0-1.0", ConvertedBy: conversion, Docs: records, Tokens: tokens, Bytes: objectBytes, Assessment: assessment, Redaction: redaction}
 	return corpus.BOM{Kind: "openwaldo-bom", Schema: 1, Subject: "corpus", Paths: []string{"core/test"}, Manifests: []corpus.ManifestPin{manifest}, Shards: []corpus.ShardPin{pin}, Totals: measure, Licenses: licenses}
 }
+
+func TestPrepareCreatesMissingScratchRoot(t *testing.T) {
+	object, objectSHA, objectBytes, referenceTokens := calibrationShard(t, []string{"alpha", "bravo", "charlie"})
+	absent := filepath.Join(t.TempDir(), "never-created")
+	cache, err := lookaside.NewCache(absent, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := Prepare(context.Background(), calibrationCorpus(object, objectSHA, objectBytes, referenceTokens, 3), cache, 8, 42, nil)
+	if err != nil {
+		t.Fatalf("calibration failed on a scratch root that did not exist yet: %v", err)
+	}
+	defer prepared.Cleanup()
+	info, err := os.Stat(cache.Scratch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o700 {
+		t.Fatalf("scratch root mode = %04o, want 0700 to match the lookaside cache", mode)
+	}
+}

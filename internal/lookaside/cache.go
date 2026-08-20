@@ -112,6 +112,16 @@ func DefaultCache() (*Cache, error) {
 
 func (cache *Cache) Root() string    { return cache.root }
 func (cache *Cache) Scratch() string { return cache.scratch }
+
+// EnsureScratch creates the scratch root and holds it at 0700. MkdirAll applies
+// its mode only on creation, so a root left wider by an older command is
+// corrected rather than inherited.
+func (cache *Cache) EnsureScratch() error {
+	if err := os.MkdirAll(cache.scratch, 0o700); err != nil {
+		return err
+	}
+	return os.Chmod(cache.scratch, 0o700)
+}
 func (cache *Cache) MaxBytes() int64 { return cache.maxBytes }
 func (cache *Cache) Retained() bool  { return cache.retain }
 
@@ -356,7 +366,7 @@ func (cache *Cache) fetchCandidate(ctx context.Context, objectURL, destination, 
 		return err
 	}
 	defer reader.Close()
-	if err := os.MkdirAll(cache.scratch, 0o700); err != nil {
+	if err := cache.EnsureScratch(); err != nil {
 		return err
 	}
 	temporary, err := os.CreateTemp(cache.scratch, ".waldo-download-*")

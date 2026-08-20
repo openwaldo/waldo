@@ -56,7 +56,10 @@ quantizer uses those measurements while encoding the lower-precision release.
 The release records:
 
 - the requested simple quant level and exact llama.cpp recipe;
-- SHA-256, version, and name of the quantizer and calibration executables;
+- SHA-256 and name of the quantizer and calibration executables, plus the
+  version each reports; the version is best effort and is absent when a tool
+  does not implement `--version` or does not answer promptly, so the SHA-256 is
+  what identifies a tool;
 - the source corpus BOM hash and selected index paths;
 - selected shard hashes, budget, seed, record count, and sample hash; and
 - the complete compact calibration evidence embedded in the release

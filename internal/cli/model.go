@@ -625,19 +625,20 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 	if err != nil {
 		return err
 	}
-	scratchRoot, err := config.EffectiveScratchRoot(configuration)
-	if err != nil {
-		return err
-	}
-	scratch := filepath.Join(scratchRoot, "train-worker", cluster.RendezvousID, fmt.Sprintf("node-%d", cluster.NodeRank))
-	if err := os.MkdirAll(scratch, 0o755); err != nil {
-		return err
-	}
-	defer os.RemoveAll(scratch)
 	cache, err := lookaside.DefaultCache()
 	if err != nil {
 		return err
 	}
+	// The cache owns the scratch root, including its mode. Creating a per-node
+	// directory beneath it must not decide how the shared root is created.
+	if err := cache.EnsureScratch(); err != nil {
+		return err
+	}
+	scratch := filepath.Join(cache.Scratch(), "train-worker", cluster.RendezvousID, fmt.Sprintf("node-%d", cluster.NodeRank))
+	if err := os.MkdirAll(scratch, 0o700); err != nil {
+		return err
+	}
+	defer os.RemoveAll(scratch)
 	defer func() {
 		if _, purgeErr := cache.PurgeUsed(); purgeErr != nil {
 			fmt.Fprintf(stderr, "warning: purge secondary training scratch: %v\n", purgeErr)
@@ -661,7 +662,7 @@ func runSecondaryStages(commandContext Context, cluster training.Cluster, modelR
 			return fmt.Errorf("primary published a %d-node run but this worker was started with --nodes %d; every node must agree on the topology", plan.Nodes, cluster.Nodes)
 		}
 		stageScratch := filepath.Join(scratch, plan.RunID)
-		if err := os.MkdirAll(stageScratch, 0o755); err != nil {
+		if err := os.MkdirAll(stageScratch, 0o700); err != nil {
 			return err
 		}
 		request, err := secondaryTrainingRequest(commandContext, plan, modelRoot, cache, stageScratch, stderr)
