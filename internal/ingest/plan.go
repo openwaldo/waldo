@@ -288,8 +288,8 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			input.Adapter = ProfileXMLRecord
 		default:
 			switch artifact.Format {
-			case "text", "markdown", "mbox":
-				input.Adapter = artifact.Format
+		case "text", "markdown", "mbox", "latex":
+			input.Adapter = artifact.Format
 			case "parquet":
 				if textColumn == "" {
 					return Plan{}, fmt.Errorf("%s: Parquet input requires a record input profile or an explicit text column; use a manifest [input] mapping or --input-profile/--text-column", artifact.Path)
@@ -545,6 +545,10 @@ func (plan Plan) Validate() error {
 		case "mbox":
 			if artifact.Format != "mbox" || input.TextColumn != "" || (artifact.Compression != "" && artifact.Compression != "gzip" && artifact.Compression != "zstd") {
 				return fmt.Errorf("input %s has an inconsistent mbox adapter", artifact.Path)
+			}
+		case "latex":
+			if artifact.Format != "latex" {
+					return fmt.Errorf("input %s has an inconsistent latex adapter", artifact.Path)
 			}
 		case "parquet":
 			if artifact.Format != "parquet" || input.TextColumn == "" {

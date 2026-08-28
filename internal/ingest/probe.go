@@ -298,6 +298,11 @@ func detect(file *os.File, sample []byte, artifact *Artifact) error {
 		artifact.Evidence = []string{"warc-header"}
 		return nil
 	}
+	if looksLatex(trimmed) {
+		artifact.Format = "latex"
+		artifact.Evidence = []string{"latex-root"}
+		return nil
+	}
 	if looksHTML(trimmed) {
 		artifact.Format = "html"
 		artifact.Evidence = []string{"html-root"}
@@ -462,7 +467,10 @@ func detectMedia(sample []byte, mediaType string) string {
 		return ""
 	}
 }
-
+func looksLatex(trimmed []byte) bool {
+	return bytes.Contains(trimmed, []byte("\\documentclass")) ||
+		bytes.Contains(trimmed, []byte("\\begin{document}"))
+}
 func looksHTML(trimmed []byte) bool {
 	lower := bytes.ToLower(trimmed)
 	return bytes.HasPrefix(lower, []byte("<!doctype html")) || bytes.HasPrefix(lower, []byte("<html"))

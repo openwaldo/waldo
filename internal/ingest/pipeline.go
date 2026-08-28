@@ -72,6 +72,8 @@ func StreamCanonicalTextBatches(ctx context.Context, plan Plan, consume func(Tex
 			err = StreamMboxTextBatches(ctx, inputPlan, consumeWithProgress)
 		case "opaque-base64":
 			err = StreamOpaqueTextBatches(ctx, inputPlan, consumeWithProgress)
+		case "latex":
+			err = StreamLatexTextBatches(ctx, inputPlan, consumeWithProgress)
 		default:
 			err = fmt.Errorf("unsupported accepted adapter %q", input.Adapter)
 		}
