@@ -217,7 +217,7 @@ func TestNewPlanRejectsManifestFormatMismatch(t *testing.T) {
 		Source:  PlanSource{Name: "example", URL: "https://example.test", Category: "public-dataset"},
 		Profile: InputProfile{Format: "jsonl", Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"text"}}},
 	})
-	if err == nil || !strings.Contains(err.Error(), `manifest declares input format "jsonl" but WALDO detected "text"`) || !strings.Contains(err.Error(), "correct the fetcher INI") {
+	if err == nil || !strings.Contains(err.Error(), `ingestion manifest declares input format "jsonl" but WALDO detected "text"`) || !strings.Contains(err.Error(), "correct the acquisition manifest") {
 		t.Fatalf("error = %v", err)
 	}
 }

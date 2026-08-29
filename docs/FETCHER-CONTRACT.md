@@ -46,7 +46,8 @@ The definitive handoff format is
   document model. A source tree may contain thousands of files; whether one
   file, one record, or a dependency closure becomes a canonical document is
   defined by the selected WALDO adapter.
-- Detect general physical formats, including compressed JSONL and mbox, and
+- Detect general physical formats, including compressed JSONL and mbox, PDF,
+  and EPUB, and
   reject disagreement with the source manifest's declared format.
 - Apply declarative logical mappings from the source manifest.
 - Reject unsupported or unmapped raw formats instead of creating fallback
@@ -90,6 +91,8 @@ Examples:
   an independent document.
 - For JSONL, each line is a logical record even though the raw artifact is one
   file.
+- For PDF and EPUB, each file is one logical document; pages and spine items
+  define deterministic internal reading order rather than separate records.
 - A future tree-aware format may combine a root document with dependencies
   inside the same boundary.
 

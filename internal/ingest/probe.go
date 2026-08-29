@@ -9,6 +9,7 @@
 package ingest
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -268,6 +269,27 @@ func detect(file *os.File, sample []byte, artifact *Artifact) error {
 		artifact.Parquet = &info
 		return nil
 	}
+	if bytes.HasPrefix(sample, []byte("%PDF-")) {
+		artifact.Format = "pdf"
+		artifact.Evidence = []string{"pdf-header"}
+		return nil
+	}
+	if len(sample) >= 4 && bytes.Equal(sample[:4], []byte{'P', 'K', 0x03, 0x04}) {
+		epub, err := detectEPUB(file, artifact.Bytes)
+		if err != nil {
+			if strings.EqualFold(filepath.Ext(artifact.Path), ".epub") {
+				return fmt.Errorf("invalid EPUB: %w", err)
+			}
+		} else if epub {
+			artifact.Format = "epub"
+			artifact.MediaType = "application/epub+zip"
+			artifact.Evidence = []string{"zip-magic", "epub-mimetype", "epub-container"}
+			return nil
+		}
+		if strings.EqualFold(filepath.Ext(artifact.Path), ".epub") {
+			return fmt.Errorf("invalid EPUB: ZIP container is missing the EPUB mimetype or META-INF/container.xml")
+		}
+	}
 	if compression := detectCompression(sample); compression != "" {
 		artifact.Format = "compressed"
 		artifact.Compression = compression
@@ -340,6 +362,42 @@ func detect(file *os.File, sample []byte, artifact *Artifact) error {
 	artifact.Format = "unknown"
 	artifact.Evidence = []string{"no-recognized-signature"}
 	return nil
+}
+
+func detectEPUB(file *os.File, size int64) (bool, error) {
+	reader, err := zip.NewReader(file, size)
+	if err != nil {
+		return false, err
+	}
+	var mimetype *zip.File
+	hasContainer := false
+	for _, entry := range reader.File {
+		switch entry.Name {
+		case "mimetype":
+			mimetype = entry
+		case "META-INF/container.xml":
+			hasContainer = true
+		}
+	}
+	if mimetype == nil || !hasContainer {
+		return false, nil
+	}
+	if mimetype.UncompressedSize64 > 64 {
+		return false, fmt.Errorf("mimetype entry is too large")
+	}
+	stream, err := mimetype.Open()
+	if err != nil {
+		return false, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(stream, 65))
+	closeErr := stream.Close()
+	if readErr != nil {
+		return false, readErr
+	}
+	if closeErr != nil {
+		return false, closeErr
+	}
+	return string(data) == "application/epub+zip", nil
 }
 
 func detectCompressedContent(file *os.File, artifactPath, compression string) (string, error) {

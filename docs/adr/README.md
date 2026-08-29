@@ -61,3 +61,4 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0062: Purge verified cache objects after successful use](0062-purge-successful-lookaside-cache.md)
 - [0063: Forecast the current host by default](0063-current-host-forecast.md)
 - [0064: Make manifest-backed raw directories the ingestion boundary](0064-manifest-backed-ingestion.md)
+- [0065: Ingest PDF and EPUB with built-in document adapters](0065-built-in-pdf-epub-adapters.md)

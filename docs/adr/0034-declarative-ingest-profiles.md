@@ -5,7 +5,8 @@ Status: accepted
 ## Decision
 
 Physical containers and logical record mappings are separate facts. Current
-built-in formats are text, Markdown, mbox, JSON, JSONL, Parquet, and XML.
+built-in formats are text, Markdown, mbox, JSON, JSONL, Parquet, XML, PDF, and
+EPUB.
 Compressed JSONL and mbox are streamed.
 
 Current logical profiles are `record-map`, `dialogue-pair`, `chat-messages`,

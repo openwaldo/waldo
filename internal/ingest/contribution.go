@@ -216,11 +216,23 @@ func sourceAcquisitionIdentity(plan Plan, sourceID string) (string, error) {
 func conversionProfile(plan Plan) string {
 	profiles := make([]InputProfile, len(plan.Inputs))
 	configured := false
+	documentAdapter := false
+	adapters := make([]string, len(plan.Inputs))
 	for position, input := range plan.Inputs {
 		profiles[position] = input.Profile
 		configured = configured || input.Profile.Type != ""
+		adapters[position] = input.Adapter
+		documentAdapter = documentAdapter || input.Adapter == PDFTextAdapter || input.Adapter == EPUBTextAdapter
 	}
 	if !configured {
+		if documentAdapter {
+			encoded, _ := json.Marshal(struct {
+				Adapters []string       `json:"adapters"`
+				Profiles []InputProfile `json:"profiles"`
+			}{adapters, profiles})
+			digest := sha256.Sum256(encoded)
+			return "canonical-document-text-v1@sha256:" + hex.EncodeToString(digest[:])
+		}
 		return "canonical-text-schema-2"
 	}
 	encoded, _ := json.Marshal(profiles)
