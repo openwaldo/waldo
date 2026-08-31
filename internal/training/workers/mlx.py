@@ -20,13 +20,27 @@ from mlx.utils import tree_flatten, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r7"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r8"
 
 
 def emit(kind, **payload):
     frame = {"kind": kind, "schema": PROTOCOL_SCHEMA}
     frame.update(payload)
     print(json.dumps(frame, separators=(",", ":")), flush=True)
+
+
+# WALDO_GPU_THROTTLE=0.25 caps training to ~25% of wall-clock time; GPU alternates between
+# full-speed and idle. Applies only to the MLX worker.
+def read_gpu_throttle():
+    try:
+        value = float(os.environ.get("WALDO_GPU_THROTTLE") or 1)
+    except ValueError:
+        value = math.nan
+    if not 0.01 <= value <= 1:
+        emit("event", event={"kind": "log", "message": "WALDO_GPU_THROTTLE must be a decimal between 0.01 and 1.0; throttling disabled"})
+        return 1
+    return value
+GPU_THROTTLE = read_gpu_throttle()
 
 
 def artifact(path, logical_path):
@@ -312,6 +326,7 @@ class Trainer:
             self.replay_steps -= 1
             self.batch = []
             return
+        step_started = time.perf_counter()
         tokens = mx.array([item[0] for item in self.batch], dtype=mx.int32)
         mask = mx.array([item[1] for item in self.batch], dtype=mx.float32)
         inputs = tokens[:, :-1]
@@ -323,6 +338,9 @@ class Trainer:
         loss, gradients = self.loss_and_grad(self.model, inputs, targets, mask)
         self.optimizer.update(self.model, gradients)
         mx.eval(self.model.parameters(), self.optimizer.state, loss)
+        if GPU_THROTTLE < 1:
+            # mx.eval already drained the GPU, so this never pauses mid command-buffer.
+            time.sleep((time.perf_counter() - step_started) * (1 / GPU_THROTTLE - 1))
         loss_value = float(loss.item())
         valid_tokens = int(mask.sum().item())
         self.step_number = next_step

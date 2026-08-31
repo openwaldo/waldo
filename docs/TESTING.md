@@ -1,7 +1,8 @@
 # Testing
 
 Focused Go tests live beside their packages. Process-level tests live under
-`testing/`.
+`testing/`. Python worker unit tests (stdlib `unittest`, no pip installs)
+live under `testing/python/`.
 
 ## Local checks
 
@@ -9,6 +10,7 @@ Focused Go tests live beside their packages. Process-level tests live under
 ./testing/unit.sh
 ./testing/vet.sh
 ./testing/docs.sh
+./testing/python.sh
 ```
 
 Run the complete local suite with:
