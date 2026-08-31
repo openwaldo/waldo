@@ -139,7 +139,7 @@ type ConversationTree struct {
 func (profile InputProfile) Validate() error {
 	if profile.Format != "" {
 		switch profile.Format {
-		case "text", "markdown", "mbox", "json", "jsonl", "parquet", "xml":
+		case "text", "markdown", "mbox", "json", "jsonl", "parquet", "xml", "pdf", "epub":
 		default:
 			return fmt.Errorf("unsupported input format %q", profile.Format)
 		}

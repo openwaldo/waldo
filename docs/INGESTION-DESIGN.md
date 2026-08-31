@@ -50,7 +50,14 @@ The current built-in adapters support:
 - mbox, including gzip and Zstandard compression;
 - JSON and JSONL with a declared record mapping;
 - Parquet with a declared mapping or text column; and
-- XML with the bounded `xml-record` mapping.
+- XML with the bounded `xml-record` mapping;
+- PDF text layers in page order; and
+- EPUB linear spine content in reading order.
+
+PDF and EPUB each produce one logical document per file. They use versioned
+built-in adapters, require no logical profile, and never invoke an external
+converter. PDF OCR is deliberately not implicit. EPUB containers are parsed
+in place with bounded expansion and no network access.
 
 LaTeX and other dependency-aware document trees are specified as future
 tree-aware adapters. They are not implemented. A new adapter must be built

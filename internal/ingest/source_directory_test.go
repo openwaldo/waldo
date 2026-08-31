@@ -81,3 +81,18 @@ func TestLoadSourceDirectoryRejectsUndeclaredRootFile(t *testing.T) {
 		t.Fatalf("LoadSourceDirectory() = ok %v, err %v", ok, err)
 	}
 }
+
+func TestSourceDirectoryAcceptsPDFAndEPUBFormats(t *testing.T) {
+	for _, format := range []string{"pdf", "epub"} {
+		t.Run(format, func(t *testing.T) {
+			source := SourceDirectorySource{
+				ID: "documents", License: "CC0-1.0",
+				Source: SourceMetadata{URL: "https://example.test/documents", Category: "public-dataset"},
+				Input:  InputProfile{Format: format},
+			}
+			if err := validateSourceDirectorySource(source); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

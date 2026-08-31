@@ -11,11 +11,14 @@ require (
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/klauspost/compress v1.17.9
+	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/parquet-go/parquet-go v0.30.1
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/pkoukk/tiktoken-go-loader v0.0.2
 	github.com/spf13/cobra v1.10.2
 	go.etcd.io/bbolt v1.4.0
+	golang.org/x/net v0.56.0
+	golang.org/x/sys v0.46.0
 	golang.org/x/term v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -80,8 +83,6 @@ require (
 	github.com/yuin/goldmark v1.7.8 // indirect
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.39.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect

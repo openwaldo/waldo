@@ -70,6 +70,10 @@ func StreamCanonicalTextBatches(ctx context.Context, plan Plan, consume func(Tex
 			err = StreamJSONLTextBatches(ctx, inputPlan, consumeWithProgress)
 		case "mbox":
 			err = StreamMboxTextBatches(ctx, inputPlan, consumeWithProgress)
+		case PDFTextAdapter:
+			err = StreamPDFTextBatches(ctx, inputPlan, consumeWithProgress)
+		case EPUBTextAdapter:
+			err = StreamEPUBTextBatches(ctx, inputPlan, consumeWithProgress)
 		case "opaque-base64":
 			err = StreamOpaqueTextBatches(ctx, inputPlan, consumeWithProgress)
 		default:

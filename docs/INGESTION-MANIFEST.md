@@ -181,11 +181,35 @@ probes the bytes to verify that declaration:
 | JSONL, plain/gzip/zstd | one object per nonblank line |
 | Parquet | one row |
 | XML | one file |
+| PDF | one file, embedded text in page order |
+| EPUB | one file, linear package spine in reading order |
 
 JSON/JSONL/Parquet mappings use `record-map`, `dialogue-pair`,
 `chat-messages`, or `ranked-conversation-tree`. Whole-file text may use
 `bounded-text`; XML uses `xml-record`. Acquisition tools retain general raw
 upstream formats and do not render corpus-specific conversation templates.
+
+PDF and EPUB are built-in document adapters and do not require a logical
+profile type:
+
+```json
+{"format":"pdf"}
+```
+
+```json
+{"format":"epub"}
+```
+
+Each file becomes one canonical document. PDF ingestion supports text-layer
+PDF 1.0 through 1.7 and rejects encrypted, malformed, PDF 2.x, image-only, and
+scanned documents; OCR is not implicit. EPUB ingestion verifies the ZIP/OCF structure,
+follows the package spine, skips navigation and `linear="no"` resources, and
+extracts supported local XHTML, HTML, or SVG text. It rejects unsafe paths,
+external references, unusable spine resources, encrypted content entries, and
+containers exceeding bounded expansion limits. Embedded document metadata is
+preserved as redacted row metadata. The source manifest remains authoritative
+for the effective license; EPUB rights declarations are retained as raw
+metadata and never silently interpreted as a normalized license.
 
 `chat-messages` accepts a `messages.role_aliases` object when upstream speaker
 labels differ from WALDO's canonical `system`, `user`, `assistant`, and `tool`

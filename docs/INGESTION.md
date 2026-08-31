@@ -52,8 +52,11 @@ dependency, or an explicitly supported non-content resource. Unsupported,
 ambiguous, or unclaimed files fail closed.
 
 The current built-in adapters support text, Markdown, mbox, JSON, JSONL,
-Parquet, and XML. LaTeX and other dependency-aware document trees require a
-future built-in adapter and are not accepted today.
+Parquet, XML, PDF, and EPUB. PDF and EPUB each produce one logical document per
+file. PDF requires an embedded text layer; WALDO does not perform OCR. EPUB is
+read directly from its container in package-spine order without unpacking it
+or fetching external resources. LaTeX and other dependency-aware document
+trees require a future built-in adapter and are not accepted today.
 
 ## Manifest authority
 

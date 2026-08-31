@@ -123,8 +123,8 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 	if strings.TrimSpace(request.Destination) == "" || strings.TrimSpace(request.Title) == "" {
 		return Plan{}, fmt.Errorf("destination and title are required")
 	}
-	if request.ForceFormat != "" && !slices.Contains([]string{"text", "markdown", "mbox", "json", "jsonl", "parquet", "xml"}, request.ForceFormat) {
-		return Plan{}, fmt.Errorf("unsupported --force-format %q; use text, markdown, mbox, json, jsonl, parquet, or xml", request.ForceFormat)
+	if request.ForceFormat != "" && !slices.Contains([]string{"text", "markdown", "mbox", "json", "jsonl", "parquet", "xml", "pdf", "epub"}, request.ForceFormat) {
+		return Plan{}, fmt.Errorf("unsupported --force-format %q; use text, markdown, mbox, json, jsonl, parquet, xml, pdf, or epub", request.ForceFormat)
 	}
 	if len(request.Sources) == 0 {
 		if strings.TrimSpace(request.License) == "" {
@@ -225,7 +225,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		}
 		if request.ForceFormat == "" && profile.Format != "" {
 			if !declaredFormatMatches(profile.Format, artifact, sourceCode) {
-				return Plan{}, fmt.Errorf("%s: manifest declares input format %q but WALDO detected %q; correct the fetcher INI and refetch, or correct the raw data", artifact.Path, profile.Format, artifact.Format)
+				return Plan{}, fmt.Errorf("%s: ingestion manifest declares input format %q but WALDO detected %q; correct the acquisition manifest and refetch, or correct the raw data", artifact.Path, profile.Format, artifact.Format)
 			}
 			if artifact.Format != profile.Format {
 				detected := artifact.Format
@@ -286,6 +286,10 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			switch artifact.Format {
 			case "text", "markdown", "mbox":
 				input.Adapter = artifact.Format
+			case "pdf":
+				input.Adapter = PDFTextAdapter
+			case "epub":
+				input.Adapter = EPUBTextAdapter
 			case "parquet":
 				if textColumn == "" {
 					return Plan{}, fmt.Errorf("%s: Parquet input requires a record input profile or an explicit text column; use a manifest [input] mapping or --input-profile/--text-column", artifact.Path)
@@ -520,7 +524,7 @@ func (plan Plan) Validate() error {
 		if _, license, err := plan.sourceFor(input); err != nil || license == "" {
 			return fmt.Errorf("input %s has invalid source assignment", artifact.Path)
 		}
-		if input.DetectedFormat != "" && !slices.Contains([]string{"empty", "text", "markdown", "mbox", "json", "jsonl", "parquet", "xml", "html", "warc", "compressed", "unknown"}, input.DetectedFormat) {
+		if input.DetectedFormat != "" && !slices.Contains([]string{"empty", "text", "markdown", "mbox", "json", "jsonl", "parquet", "xml", "pdf", "epub", "html", "warc", "compressed", "unknown"}, input.DetectedFormat) {
 			return fmt.Errorf("input %s has invalid overridden detected format %q", artifact.Path, input.DetectedFormat)
 		}
 		if err := input.Profile.Validate(); err != nil {
@@ -561,6 +565,14 @@ func (plan Plan) Validate() error {
 		case ProfileXMLRecord:
 			if artifact.Format != "xml" || input.Profile.Type != ProfileXMLRecord {
 				return fmt.Errorf("input %s has an inconsistent XML-record adapter", artifact.Path)
+			}
+		case PDFTextAdapter:
+			if artifact.Format != "pdf" || input.TextColumn != "" || input.Profile.Type != "" {
+				return fmt.Errorf("input %s has an inconsistent PDF adapter", artifact.Path)
+			}
+		case EPUBTextAdapter:
+			if artifact.Format != "epub" || input.TextColumn != "" || input.Profile.Type != "" {
+				return fmt.Errorf("input %s has an inconsistent EPUB adapter", artifact.Path)
 			}
 		default:
 			return fmt.Errorf("input %s has unsupported adapter %q", artifact.Path, input.Adapter)

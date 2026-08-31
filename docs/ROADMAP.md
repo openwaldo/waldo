@@ -8,7 +8,7 @@ contain completed implementation history.
 - Managed and explicit Git index workflows.
 - Corpus inspection, verification, audit, ingestion, update, and export.
 - Manifest-backed ingestion with built-in text, Markdown, mbox, JSON, JSONL,
-  Parquet, and XML adapters.
+  Parquet, XML, PDF, and EPUB adapters.
 - Canonical text and structured-conversation Parquet records.
 - Local and S3 lookaside publication, verification, and explicit removal.
 - Corpus, run, origin, model, release, and EU disclosure BOMs.
