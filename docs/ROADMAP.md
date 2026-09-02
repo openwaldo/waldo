@@ -23,6 +23,9 @@ contain completed implementation history.
 - Built-in tree-aware document adapters, including LaTeX.
 - Multimodal ingestion.
 - Broader model architecture and tokenizer compatibility.
+- Foundation-model lineages, native sparse-MoE artifacts, and a NeMo/Megatron
+  execution backend; see the
+  [foundation and sparse-MoE plan](FOUNDATION-MOE-PLAN.md).
 - Preference-training objectives.
 - PyTorch generation.
 - Hugging Face publication.

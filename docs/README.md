@@ -31,6 +31,8 @@ Read these in order:
 - [Model compose](MODEL-COMPOSE.md): portable training-plan schema.
 - [Model lifecycle](MODEL-LIFECYCLE.md): managed models, runs, and backends.
 - [Model exports](MODEL-EXPORTS.md): release formats and quantization.
+- [Foundation and sparse-MoE plan](FOUNDATION-MOE-PLAN.md): planned model
+  lineages, native artifacts, and NeMo/Megatron execution.
 - [EU GPAI disclosure](EU-GPAI-DISCLOSURE.md): regulatory JSON projection.
 
 ## Project direction and decisions

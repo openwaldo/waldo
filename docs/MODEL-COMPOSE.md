@@ -604,6 +604,13 @@ declared architecture and objective; it does not promise that every compose
 fits every machine. Run `waldo model forecast` before allocating substantial
 compute.
 
+Schema 1 is limited to WALDO's dense decoder architecture and current training
+strategies. The planned contract for foundation adaptation, native imported
+architectures, parameter-efficient tuning, stage lineages, and sparse-MoE
+models is maintained in the
+[Foundation, post-training, and sparse-MoE plan](FOUNDATION-MOE-PLAN.md). That
+plan is not accepted schema-1 compose syntax.
+
 See the measured examples in [`composes/`](../composes/), the broader
 [model lifecycle](MODEL-LIFECYCLE.md), and the
 [model export guide](MODEL-EXPORTS.md).

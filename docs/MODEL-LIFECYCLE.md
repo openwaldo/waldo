@@ -552,3 +552,10 @@ ranks participate when gathering checkpoints, optimizer state, runtime random
 state, and terminal weights; only rank zero writes and reports the portable
 full artifacts. Multi-node rendezvous, scheduler integration, and
 tensor/pipeline parallelism remain explicit later orchestration work.
+
+NeMo/Megatron and native sparse-MoE execution are planned, not current
+behavior. WALDO will remain the lifecycle and provenance control plane while a
+separate adapter owns native architecture construction, distributed topology,
+training, and distributed checkpoints. The prepared-data boundary, native
+artifact sets, reference B200 host, and acceptance gates are defined in the
+[Foundation, post-training, and sparse-MoE plan](FOUNDATION-MOE-PLAN.md).

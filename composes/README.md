@@ -98,3 +98,14 @@ The current `waldo model chat` interface can exercise learned textual tool-call
 syntax, but it does not yet accept a tool registry or execute a tool loop. That
 runtime boundary must be implemented and tested before WALDO describes the
 model as an end-to-end tool-using assistant.
+
+## Planned foundation and sparse-MoE lineage
+
+The numbered schema-1 ladder remains the executable reference for WALDO's
+current dense models. The planned path for continued pretraining of imported
+foundation models, behavioral post-training, specialization, sparse-MoE
+metadata, native artifact sets, and a NeMo/Megatron backend is documented in
+the
+[Foundation, post-training, and sparse-MoE plan](../docs/FOUNDATION-MOE-PLAN.md).
+Planned schema-2 examples must not be added to this directory as executable
+YAML until the corresponding schema and lifecycle contracts are implemented.
