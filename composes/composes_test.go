@@ -159,23 +159,29 @@ func TestToolUseComposeHasSizedBaseAndStructuredToolStage(t *testing.T) {
 	if tooling.Interaction.Template != model.InteractionUserAssistantV1 || !tooling.Interaction.Tools || tooling.Stages[2].Objective != "assistant-response-modeling" || tooling.Stages[2].Conversation == nil || tooling.Stages[2].Conversation.Tools || !reflect.DeepEqual(tooling.Stages[2].Conversation.SupervisedRoles, []string{"assistant"}) {
 		t.Fatalf("tool interaction contract = %+v / %+v", tooling.Interaction, tooling.Stages[2])
 	}
-	wantTools := []string{"post-train/sft/hermes-function-calling", "post-train/sft/toolace", "post-train/sft/xlam-function-calling-60k", "post-train/sft/smoltalk2-tools", "post-train/sft/openthoughts-agent", "post-train/sft/interaction-contract-v1"}
+	wantTools := []string{"post-train/sft/hermes-function-calling", "post-train/sft/interaction-contract-v1", "post-train/sft/helpsteer2"}
 	if got := corpusPaths(tooling.Stages[2].Corpora); !reflect.DeepEqual(got, wantTools) {
 		t.Fatalf("tool-use corpora = %v, want %v", got, wantTools)
 	}
-	if tooling.Stages[2].Parameters.Epochs != 1 {
-		t.Fatalf("tool-use epochs = %d, want one bounded pass", tooling.Stages[2].Parameters.Epochs)
+	wantWeights := []uint64{4, 4, 2}
+	for index, selection := range tooling.Stages[2].Corpora {
+		if selection.Weight == nil || *selection.Weight != wantWeights[index] {
+			t.Fatalf("tool-use corpus %s weight = %v, want %d", selection.Path, selection.Weight, wantWeights[index])
+		}
+	}
+	if tooling.Stages[2].Parameters.Tokens != 20000000 || tooling.Stages[2].Parameters.Epochs != 0 {
+		t.Fatalf("tool-use budget = %d tokens/%d epochs", tooling.Stages[2].Parameters.Tokens, tooling.Stages[2].Parameters.Epochs)
 	}
 	forecast, err := model.ForecastCompose(tooling)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const pretrainingTokens = int64(24000004096)
-	if forecast.ApproximateParameters != 1178476544 || tooling.Stages[0].Parameters.Tokens != pretrainingTokens {
+	const pretrainingTokens = int64(16000000000)
+	if forecast.ApproximateParameters != 649512960 || tooling.Stages[0].Parameters.Tokens != pretrainingTokens {
 		t.Fatalf("tool forecast = %d parameters/%d pretraining tokens", forecast.ApproximateParameters, tooling.Stages[0].Parameters.Tokens)
 	}
 	tokensPerParameter := float64(pretrainingTokens) / float64(forecast.ApproximateParameters)
-	if tokensPerParameter < 20 || tokensPerParameter > 21 {
+	if tokensPerParameter < 24 || tokensPerParameter > 25 {
 		t.Fatalf("tool pretraining ratio = %.2f tokens/parameter", tokensPerParameter)
 	}
 	if tooling.Stages[1].Parameters.Tokens > int64(forecast.ApproximateParameters/4) {

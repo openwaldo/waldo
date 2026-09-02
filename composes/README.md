@@ -8,7 +8,7 @@ must demonstrate a capability before a higher rung is added.
 | `0000-canary.yaml` | Exercise training and inference cheaply | Ready |
 | `0001-babble.yaml` | Produce coherent text and basic interaction | Ready |
 | `0002-conversation.yaml` | Sustain a simple user/assistant exchange | Ready |
-| `0003-tool-use.yaml` | Select tools, construct calls, consume results, and answer | Waiting for `core/synthetic/cosmopedia-v2` |
+| `0003-tool-use.yaml` | Select tools, construct calls, consume results, and answer | Revised after first tool-use run; ready for validation |
 
 Run `waldo model forecast` before allocating a training host. A reference
 compose is ready only when every corpus path exists, required record semantics
@@ -53,22 +53,45 @@ evaluation gate has passed.
     checkpoint behavior, representative prompts, corpus consumption, runtime,
     and failure modes. Remove or revise a rung that does not improve its stated
     capability.
+11. **Teach when not to call a tool.** Tool-call traces must be mixed with
+    ordinary assistant responses rendered through the same interaction
+    contract. A corpus where every prompt requires a call teaches call syntax,
+    not tool selection.
+12. **Do not mix textual call protocols.** Bare JSON arrays, tagged JSON calls,
+    and terminal-agent transcripts are different output contracts. Select one
+    reviewed protocol for a reference run; add another corpus only after its
+    calls have been normalized to that contract.
 
 ## Tool-use gate
 
-`0003-tool-use.yaml` uses ChatML because system, user, assistant, and tool roles
-must remain distinct. Its approximately 1.18B parameters are matched to 24B
-pretraining tokens. Cosmopedia supplies clean explanatory and procedural text;
-it improves the foundation but does not itself teach tool calling. Hermes,
-ToolACE, xLAM, SmolTalk2 tool traces, OpenThoughts Agent, and the OpenWALDO
-interaction contract provide complementary structured tool examples. The tool
-stage makes one complete pass over that mixture to limit synthetic overtraining.
+`0003-tool-use.yaml` uses the same `user-assistant-v1` interaction contract as
+the validated conversation rung, with structured system, user, assistant, and
+tool roles preserved by the canonical conversation records. Its approximately
+650M parameters receive 16B pretraining tokens. Cosmopedia supplies clean
+explanatory and procedural text; it improves the foundation but does not itself
+teach tool calling.
+
+The first tool-use experiment used approximately 1.18B parameters, 24B
+pretraining tokens, and a complete pass over six heterogeneous tool and agent
+corpora. It took about ten days on one H200. The resulting model could emit
+recognizable call-like text, but it also invented tools for ordinary questions,
+mixed tagged and bare-array call syntax, and repeated calls when no tool registry
+was present. That run demonstrated syntax exposure, not reliable tool selection.
+
+The revised rung is intentionally an iteration model rather than a capability
+maximum. Its final 20M-token stage uses Hermes as the sole tool-call protocol and
+mixes it with ordinary Interaction Contract and HelpSteer responses. xLAM,
+ToolACE, SmolTalk2 tool traces, and OpenThoughts Agent remain valuable source
+material, but they are excluded from this reference compose until their call
+representations are normalized and their effect can be evaluated independently.
 
 Before training this rung:
 
 - ingest Cosmopedia-v2 and confirm its logical path;
-- inspect samples from each tool corpus to confirm tools, assistant calls, tool
-  results, and final answers all survived conversion; and
+- inspect Hermes samples to confirm tool definitions, strict JSON assistant
+  calls, tool results, and final answers all survived conversion;
+- confirm the ordinary-response corpora contain no implicit tool-call targets;
+  and
 - forecast the compose and verify memory and runtime on the intended host.
 
 The current `waldo model chat` interface can exercise learned textual tool-call

@@ -9,11 +9,11 @@ architecture:
   family: decoder-transformer
   context_tokens: 4096
   vocabulary_size: 100259
-  hidden_size: 2048
-  intermediate_size: 8192
-  layers: 16
-  attention_heads: 32
-  key_value_heads: 8
+  hidden_size: 1536
+  intermediate_size: 4096
+  layers: 20
+  attention_heads: 24
+  key_value_heads: 6
   dropout: 0.1
   tie_embeddings: true
   parameter_dtype: bfloat16
@@ -21,8 +21,10 @@ architecture:
     name: tiktoken/cl100k_base
     revision: tiktoken-cl100k-base
 stages:
-  # About 1.18B parameters and 24B pretraining tokens: approximately 20.4
-  # pretraining tokens per parameter. Cosmopedia is the only pending corpus.
+  # Keep this rung small enough to iterate. The previous 1.18B/24B experiment
+  # took ten days on one H200; this roughly 650M/16B base retains the code,
+  # multilingual, and structured-data capacity needed for tool syntax while
+  # targeting a materially shorter validation cycle.
   - name: pretrain
     type: pre-training
     objective: causal-language-modeling
@@ -42,17 +44,17 @@ stages:
       - {path: code/cloud-native-core, weight: 1}
     parameters:
       profile: causal-pretrain-weighted
-      tokens: 24000004096
+      tokens: 16000000000
       batch_size: 8
       sequence_length: 4096
       learning_rate: 0.00012
       seed: 62
       weight_decay: 0.15
-      warmup_steps: 7324
+      warmup_steps: 4883
       shuffle_buffer_records: 65536
       shuffle_buffer_bytes: 2147483648
-      checkpoint_every: 36621
-      evaluate_every: 36621
+      checkpoint_every: 24414
+      evaluate_every: 24414
       evaluation_max_records: 2048
       evaluation_max_bytes: 67108864
 
@@ -79,22 +81,25 @@ stages:
       - {path: post-train/sft/interaction-contract-v1, weight: 3}
     parameters:
       profile: causal-pretrain-weighted
-      tokens: 250019840
+      tokens: 150000000
       batch_size: 8
       sequence_length: 4096
       learning_rate: 0.00002
       seed: 63
       weight_decay: 0.06
-      warmup_steps: 382
+      warmup_steps: 229
       shuffle_buffer_records: 32768
       shuffle_buffer_bytes: 1073741824
-      checkpoint_every: 763
-      evaluate_every: 763
+      checkpoint_every: 458
+      evaluate_every: 458
       evaluation_max_records: 2048
       evaluation_max_bytes: 67108864
 
-  # Tool outputs are context, not prediction targets. Supervise assistant tool
-  # calls and final answers while preserving tool definitions and results.
+  # Tool outputs are context, not prediction targets. Keep one reviewed call
+  # syntax and mix it with ordinary assistant responses. The previous complete
+  # pass over xLAM, SmolTalk2, and OpenThoughts taught incompatible bare-array
+  # and agent-call patterns strongly enough that the model called invented
+  # tools even when no tool registry was present.
   - name: tool-use-sft
     type: fine-tuning
     objective: assistant-response-modeling
@@ -103,24 +108,21 @@ stages:
       supervised_roles: [assistant]
     filter: *quality
     corpora:
-      - post-train/sft/hermes-function-calling
-      - post-train/sft/toolace
-      - post-train/sft/xlam-function-calling-60k
-      - post-train/sft/smoltalk2-tools
-      - post-train/sft/openthoughts-agent
-      - post-train/sft/interaction-contract-v1
+      - {path: post-train/sft/hermes-function-calling, weight: 4}
+      - {path: post-train/sft/interaction-contract-v1, weight: 4}
+      - {path: post-train/sft/helpsteer2, weight: 2}
     parameters:
-      profile: causal-pretrain-shuffled
-      epochs: 1
+      profile: causal-pretrain-weighted
+      tokens: 20000000
       batch_size: 8
       sequence_length: 4096
-      learning_rate: 0.000006
+      learning_rate: 0.000004
       seed: 64
       weight_decay: 0.03
-      warmup_steps: 32
+      warmup_steps: 61
       shuffle_buffer_records: 32768
       shuffle_buffer_bytes: 1073741824
-      checkpoint_every: 128
-      evaluate_every: 128
+      checkpoint_every: 152
+      evaluate_every: 152
       evaluation_max_records: 2048
       evaluation_max_bytes: 67108864
