@@ -1,66 +1,187 @@
-# Reference model ladder
+# Model-building ladder
 
-Each compose must end at a capability that can be tested before the next model
-starts. When architecture and tokenizer are unchanged, the next compose should
-initialize from the promoted checkpoint. When either changes, a new weight
-lineage begins and must repeat the earlier capability tests.
+Each model must reach a testable endpoint before the next rung begins. A model
+inherits the previous checkpoint when its architecture and tokenizer remain
+compatible. A larger or different architecture starts new weights, but reuses
+the proven corpus recipe, training process, and evaluation gates.
 
-The four current composes build on lessons from the prior rung, but not its
-weights: their architectures differ. The immediate goal is to stop restarting
-at `0003` and prove tool tuning directly on the working conversation model.
+## Canary / smoke test (`0000-canary.yaml`)
 
-## Current ladder
+- **Builds from:** Random initialization.
+- **Success criteria:** The model may be unusable, but training, checkpointing,
+  resume, evaluation, export, and inference all complete correctly.
+- **Model type:** Small dense monolithic model.
+- **Corpus requirements:** Small raw-text and structured-conversation samples.
+- **WALDO requirements:** Basic ingestion, compose, training, lifecycle,
+  artifact verification, and inference pipelines.
 
-| Compose | Builds from | Successful endpoint | Corpus requirements | WALDO requirements |
-| --- | --- | --- | --- | --- |
-| `0000-canary.yaml` | Random initialization | Training, checkpoint, resume, evaluation, export, and inference complete with verified artifacts | Small raw-text and structured-conversation samples; current selection is sufficient | Current lifecycle and backends are sufficient |
-| `0001-babble.yaml` | Random initialization; canary-proven pipeline | Stable short language, improving held-out loss, simple corpus recall, and no repetition collapse | Edited prose, reference text, and scientific exposition; Gutenberg, Wikimedia, and PLOS are sufficient for this pilot | Add a fixed generation test set so promotion is not based only on loss |
-| `0002-conversation.yaml` | New architecture; replays the language gate | Direct answers, constraint following, prior-turn context, correction handling, and no tool-call syntax | Natural multi-turn dialogue, broad instruction data, quality-filtered answers, and the bounded Interaction Contract | Change its SFT objectives to `assistant-response-modeling`; add a fixed behavioral evaluation set and regression gate |
-| `0003-tool-use.yaml` | Currently another new architecture; should instead be redone from the promoted `0002` checkpoint | Decide whether a tool is needed, select only a provided tool, produce valid arguments, consume results and errors, and retain conversation quality | One normalized call protocol; matched tool/no-tool cases; unavailable-tool, clarification, invalid-argument, empty-result, error, and result-grounding examples | Select corpus categories and fixed evaluation splits; report behavioral metrics; eventually add an inference tool registry and execution loop |
+## Babbling model (`0001-babble.yaml`)
 
-### Redoing tool use from conversation
+- **Builds from:** Random initialization using the canary-proven pipeline.
+- **Success criteria:** Produces stable short-form language, improves held-out
+  loss, recalls simple corpus facts, and does not collapse into repetition.
+- **Model type:** Small dense monolithic foundation model.
+- **Corpus requirements:** Edited prose, reference text, and scientific
+  exposition. Gutenberg, Wikimedia, and PLOS are sufficient for this rung.
+- **WALDO requirements:** Fixed generation tests in addition to held-out loss.
 
-We should revise `0003` to use the exact architecture, tokenizer, and promoted
-checkpoint from `0002`, then train only the tool-specific stage. This isolates
-the effect of tool data, avoids repeating foundation and conversation training,
-and makes conversation regression measurable.
+## Conversation model (`0002-conversation.yaml`)
 
-The existing `0003` architecture has a larger tokenizer and context, so its
-weights cannot inherit from `0002`. If 2,048 tokens prove insufficient for the
-controlled tool experiment, start a new 4K conversation lineage first and only
-add tools after that conversation checkpoint passes. Do not change architecture
-and behavior in the same experiment.
+- **Builds from:** A newly initialized larger dense model using the babbling
+  model's proven foundation recipe and tests.
+- **Success criteria:** Answers directly, follows simple constraints, uses
+  prior-turn context, accepts corrections, asks necessary clarifying questions,
+  and does not emit tool-call syntax.
+- **Model type:** Dense monolithic foundation plus conversation SFT.
+- **Corpus requirements:** Natural multi-turn dialogue, broad instruction data,
+  quality-filtered answers, and a bounded Interaction Contract mixture.
+- **WALDO requirements:** Use `assistant-response-modeling` for SFT, preserve
+  assistant-only loss masks, and add fixed conversation and regression tests.
 
-## Next full-size lineage
+## Tool-use model (`0003-tool-use.yaml`, to be revised)
 
-The 30B Nemotron sparse-MoE work starts a new weight lineage, but reuses the
-corpus lessons and evaluation gates established above.
+- **Builds from:** The promoted `0002` conversation checkpoint, using the same
+  architecture and tokenizer. It should not repeat foundation or conversation
+  training.
+- **Success criteria:** Decides whether a tool is needed, calls only a provided
+  tool with valid arguments, handles results and errors, produces a grounded
+  answer, and retains the complete conversation capability.
+- **Model type:** Dense conversation model plus tool-use SFT.
+- **Corpus requirements:** One normalized call protocol; matched tool and
+  no-tool cases; unavailable-tool, clarification, invalid-argument,
+  empty-result, error, and result-grounding examples.
+- **WALDO requirements:** Selectable tool-data categories, fixed behavioral and
+  regression tests, tool metrics, and eventually an inference tool registry
+  and execution loop.
 
-| Planned compose | Builds from | Successful endpoint | Corpus requirements | WALDO requirements |
-| --- | --- | --- | --- | --- |
-| Nemotron foundation adaptation | Pinned Nemotron-3 Nano 30B-A3B Base | Improved WALDO-domain knowledge without unacceptable regression in the original base | Balanced reference prose, science, code, technical documentation, law, education, and math; add open textbooks, stronger math exposition, and Stack V2 Edu | Native checkpoint import, sparse-MoE model facts and forecasting, packed datasets, artifact sets, and a NeMo/Megatron backend |
-| Nemotron conversation | Promoted Nemotron foundation checkpoint | Pass the same conversation gate as `0002` at full scale | OASST1/2, natural dialogue, filtered Tulu 3 and UltraChat, HelpSteer2, and bounded Interaction Contract examples | Native Nemotron tokenizer/chat template, assistant-only loss, full SFT or LoRA, and behavioral evaluation |
-| Nemotron tool use | Promoted Nemotron conversation checkpoint | Pass the complete tool gate while retaining foundation and conversation quality | Normalized Hermes-style calls plus matched negatives, clarification, tool errors, multi-step results, and ordinary conversation anchors | Nemotron-native tool rendering, selectable tool categories, tool evaluation, adapter lineage, and the inference tool loop |
+## Capable dense foundation model
 
-Later reasoning, preference, safety, and domain models should branch from a
-promoted foundation or conversation checkpoint. They should not be mixed into
-the first tool-use proof.
+- **Builds from:** New larger-model initialization using the proven dense
+  recipes and all earlier foundation tests. It does not inherit the smaller
+  model's incompatible weights.
+- **Success criteria:** Demonstrates useful general language, factual knowledge,
+  summarization, technical understanding, code, and mathematical competence
+  before any assistant tuning.
+- **Model type:** Production-oriented dense foundation model.
+- **Corpus requirements:** Balanced reference prose, books, education, science,
+  technical documentation, code, mathematics, law, and measured multilingual
+  material. Add open textbooks, stronger mathematical exposition and verified
+  problems, Stack V2 Edu, and explicit cross-corpus deduplication.
+- **WALDO requirements:** Corpus-mixture reporting, contamination checks,
+  domain-specific held-out evaluations, scaling forecasts, and checkpoint
+  comparison.
 
-The supporting native-model and backend design is in the
-[foundation and sparse-MoE plan](../docs/FOUNDATION-MOE-PLAN.md).
+## Capable dense assistant
+
+- **Builds from:** The promoted capable dense foundation checkpoint.
+- **Success criteria:** Passes the conversation model's tests at materially
+  higher quality while retaining the foundation evaluations.
+- **Model type:** Dense foundation model plus conversation and instruction SFT.
+- **Corpus requirements:** Human and natural dialogue anchors, filtered broad
+  instruction data, high-quality scored responses, and the reviewed Interaction
+  Contract.
+- **WALDO requirements:** Explicit parent artifacts, immutable behavioral
+  evaluation splits, assistant-only loss, and regression reporting.
+
+## Reasoning assistant
+
+- **Builds from:** The promoted capable dense assistant checkpoint.
+- **Success criteria:** Solves multi-step mathematical, scientific, coding, and
+  planning problems with verifiable answers while retaining conversation and
+  foundation quality.
+- **Model type:** Dense assistant plus reasoning post-training.
+- **Corpus requirements:** Redistributable worked problems, proofs, executable
+  code tasks, scientific reasoning, and OpenWALDO-generated examples with
+  independently verified answers and complete provenance.
+- **WALDO requirements:** Reasoning-specific data types, answer verification,
+  code/test execution where applicable, contamination controls, and benchmark
+  regression gates.
+
+## Reliable tool and agent assistant
+
+- **Builds from:** The promoted reasoning assistant checkpoint.
+- **Success criteria:** Preserves the earlier tool-use gate and adds multi-step
+  planning, multiple-tool selection, recovery, bounded retries, and correct
+  stopping behavior.
+- **Model type:** Dense reasoning assistant plus agentic tool post-training.
+- **Corpus requirements:** Normalized multi-step tool traces, alternate plans,
+  partial results, failures, retries, permission boundaries, and ordinary
+  no-tool conversation anchors.
+- **WALDO requirements:** Stateful tool-loop evaluation, sandboxed executable
+  environments, trajectory metrics, and end-to-end agent regression tests.
+
+## Small sparse-MoE proof
+
+- **Builds from:** Random initialization using the proven dense pipeline,
+  corpus contracts, and evaluations. It starts a new weight lineage.
+- **Success criteria:** Trains and resumes reliably, uses experts without
+  collapse or severe imbalance, and matches a comparable dense control on a
+  bounded language task.
+- **Model type:** Small sparse mixture-of-experts foundation model.
+- **Corpus requirements:** The babbling-model foundation mixture is sufficient;
+  this rung tests architecture and routing rather than additional knowledge.
+- **WALDO requirements:** Sparse-MoE architecture declarations, total/active/
+  trainable parameter accounting, expert parallelism, router metrics,
+  distributed checkpoints, and MoE-aware forecasting.
+
+## OpenWALDO sparse-MoE foundation and assistant
+
+- **Builds from:** A scaled sparse-MoE configuration after the small MoE proof.
+  The foundation starts new weights; conversation, reasoning, and tool stages
+  inherit its promoted checkpoints in order.
+- **Success criteria:** Meets the capable dense foundation and assistant gates,
+  demonstrates useful compute efficiency, and retains healthy expert routing
+  through each post-training stage.
+- **Model type:** Sparse-MoE foundation with successive conversation, reasoning,
+  and tool adapters or checkpoints.
+- **Corpus requirements:** The complete capable-model mixture, with enough
+  domain and language diversity to exercise expert specialization without
+  allowing one source to dominate routing.
+- **WALDO requirements:** Packed training data, distributed topology planning,
+  native artifact sets, expert-level telemetry, and a NeMo/Megatron backend.
+
+## Nemotron 30B foundation adaptation
+
+- **Builds from:** A pinned Nemotron-3 Nano 30B-A3B Base checkpoint after WALDO's
+  sparse-MoE pipeline has passed its smaller proof. This starts an external
+  model lineage rather than inheriting OpenWALDO weights.
+- **Success criteria:** Improves the selected WALDO knowledge domains without
+  unacceptable regression in the original base model or unhealthy routing.
+- **Model type:** Native hybrid Mamba/Transformer sparse-MoE model using
+  full-parameter continued pretraining.
+- **Corpus requirements:** The reviewed capable-foundation mixture, initially
+  bounded to a measurable 1B-token proof before a larger continuation.
+- **WALDO requirements:** Pinned native-model import, Nemotron configuration and
+  tokenizer support, packed data, NeMo/Megatron execution, native distributed
+  checkpoints, MoE telemetry, and base-model regression evaluation.
+
+## Nemotron 30B post-training
+
+- **Builds from:** The promoted Nemotron foundation-adaptation checkpoint.
+  Conversation, reasoning, and tool training produce separate ordered
+  checkpoints rather than one undifferentiated fine-tuning run.
+- **Success criteria:** Each stage passes the corresponding capable-model gate
+  while retaining every earlier foundation and behavior gate.
+- **Model type:** Native sparse-MoE foundation plus full SFT or LoRA adapters.
+- **Corpus requirements:** The same reviewed conversation, reasoning, and
+  normalized tool mixtures used by the smaller models, rendered through
+  Nemotron's native interaction protocol.
+- **WALDO requirements:** Native chat and tool templates, adapter lineage,
+  stage-specific evaluation, native and merged exports, and the inference tool
+  loop.
 
 ## Next steps
 
-- Freeze small, non-training language, conversation, and tool evaluation sets.
-- Correct `0002` to use assistant-only SFT, rerun it, and select a promoted
-  conversation checkpoint.
-- Revise `0003` to initialize from that checkpoint and remove its repeated
-  pretraining and general conversation stages.
-- Split tool data into selectable decision, call, result, error, clarification,
-  and no-tool categories; normalize all retained calls to one protocol.
-- Run the revised tool stage and reject it if conversation behavior regresses or
-  tool/no-tool selection remains confused.
-- Fill the foundation corpus gaps: open textbooks, mathematical exposition and
-  verified reasoning seeds, Stack V2 Edu, and measured multilingual coverage.
-- Add the native artifact, sparse-MoE, packed-data, and NeMo/Megatron support
-  required for the three-stage Nemotron lineage.
+- Freeze the language, conversation, and tool evaluation sets.
+- Correct and rerun `0002`, then promote a conversation checkpoint.
+- Revise `0003` to fine-tune that exact checkpoint on normalized tool data.
+- Build the capable dense foundation, assistant, reasoning, and agent rungs.
+- Fill the textbook, mathematics, technical, and tool-corpus gaps identified
+  by those rungs.
+- Implement and validate the small sparse-MoE proof before scaling MoE work.
+- Build the OpenWALDO sparse-MoE lineage before adapting Nemotron 30B.
+- Run Nemotron foundation adaptation first, followed by separate conversation,
+  reasoning, and tool post-training stages.
+
+The supporting native-model and backend design is in the
+[foundation and sparse-MoE plan](../docs/FOUNDATION-MOE-PLAN.md).
