@@ -33,6 +33,8 @@ Read these in order:
 - [Model exports](MODEL-EXPORTS.md): release formats and quantization.
 - [Foundation and sparse-MoE plan](FOUNDATION-MOE-PLAN.md): planned model
   lineages, native artifacts, and NeMo/Megatron execution.
+- [Reference compose strategy](../composes/README.md): capability ladder,
+  promotion gates, and corpus requirements for model experiments.
 - [EU GPAI disclosure](EU-GPAI-DISCLOSURE.md): regulatory JSON projection.
 
 ## Project direction and decisions
