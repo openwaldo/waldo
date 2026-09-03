@@ -153,43 +153,35 @@ func TestToolUseComposeHasSizedBaseAndStructuredToolStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tooling.Stages) != 3 || tooling.Stages[2].Name != "tool-use-sft" {
+	if tooling.Base == nil || tooling.Base.Model != "conversation" {
+		t.Fatalf("tooling base = %+v", tooling.Base)
+	}
+	if len(tooling.Stages) != 1 || tooling.Stages[0].Name != "tool-use-sft" {
 		t.Fatalf("tooling curriculum = %+v", tooling.Stages)
 	}
-	if tooling.Interaction.Template != model.InteractionUserAssistantV1 || !tooling.Interaction.Tools || tooling.Stages[2].Objective != "assistant-response-modeling" || tooling.Stages[2].Conversation == nil || tooling.Stages[2].Conversation.Tools || !reflect.DeepEqual(tooling.Stages[2].Conversation.SupervisedRoles, []string{"assistant"}) {
-		t.Fatalf("tool interaction contract = %+v / %+v", tooling.Interaction, tooling.Stages[2])
+	stage := tooling.Stages[0]
+	if tooling.Interaction.Template != model.InteractionUserAssistantV1 || !tooling.Interaction.Tools || stage.Objective != "assistant-response-modeling" || stage.Conversation == nil || stage.Conversation.Tools || !reflect.DeepEqual(stage.Conversation.SupervisedRoles, []string{"assistant"}) {
+		t.Fatalf("tool interaction contract = %+v / %+v", tooling.Interaction, stage)
 	}
 	wantTools := []string{"post-train/sft/hermes-function-calling", "post-train/sft/interaction-contract-v1", "post-train/sft/helpsteer2"}
-	if got := corpusPaths(tooling.Stages[2].Corpora); !reflect.DeepEqual(got, wantTools) {
+	if got := corpusPaths(stage.Corpora); !reflect.DeepEqual(got, wantTools) {
 		t.Fatalf("tool-use corpora = %v, want %v", got, wantTools)
 	}
 	wantWeights := []uint64{4, 4, 2}
-	for index, selection := range tooling.Stages[2].Corpora {
+	for index, selection := range stage.Corpora {
 		if selection.Weight == nil || *selection.Weight != wantWeights[index] {
 			t.Fatalf("tool-use corpus %s weight = %v, want %d", selection.Path, selection.Weight, wantWeights[index])
 		}
 	}
-	if tooling.Stages[2].Parameters.Tokens != 20000000 || tooling.Stages[2].Parameters.Epochs != 0 {
-		t.Fatalf("tool-use budget = %d tokens/%d epochs", tooling.Stages[2].Parameters.Tokens, tooling.Stages[2].Parameters.Epochs)
+	if stage.Parameters.Tokens != 20000000 || stage.Parameters.Epochs != 0 {
+		t.Fatalf("tool-use budget = %d tokens/%d epochs", stage.Parameters.Tokens, stage.Parameters.Epochs)
 	}
 	forecast, err := model.ForecastCompose(tooling)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const pretrainingTokens = int64(16000000000)
-	if forecast.ApproximateParameters != 649512960 || tooling.Stages[0].Parameters.Tokens != pretrainingTokens {
-		t.Fatalf("tool forecast = %d parameters/%d pretraining tokens", forecast.ApproximateParameters, tooling.Stages[0].Parameters.Tokens)
-	}
-	tokensPerParameter := float64(pretrainingTokens) / float64(forecast.ApproximateParameters)
-	if tokensPerParameter < 24 || tokensPerParameter > 25 {
-		t.Fatalf("tool pretraining ratio = %.2f tokens/parameter", tokensPerParameter)
-	}
-	if tooling.Stages[1].Parameters.Tokens > int64(forecast.ApproximateParameters/4) {
-		t.Fatalf("conversation SFT budget %d is too large for %d parameters", tooling.Stages[1].Parameters.Tokens, forecast.ApproximateParameters)
-	}
-	wantPretraining := []string{"core/synthetic/cosmopedia-v2", "core/common-pile/wikimedia", "core/common-pile/stackexchange", "core/common-pile/pressbooks", "science/plos", "science/arxiv-abstracts", "code/permissive", "code/cloud-native-core"}
-	if got := corpusPaths(tooling.Stages[0].Corpora); !reflect.DeepEqual(got, wantPretraining) {
-		t.Fatalf("tool pretraining corpora = %v, want %v", got, wantPretraining)
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 20004864 {
+		t.Fatalf("tool forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
 
@@ -219,6 +211,9 @@ func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
 	}
 	if compose.Stages[2].Corpora[0].Path != "post-train/sft/interaction-contract-v1" || compose.Stages[2].Corpora[1].Path != "post-train/sft/helpsteer2" {
 		t.Fatalf("basic conversation post-training corpora = %+v", compose.Stages[2].Corpora)
+	}
+	if compose.Stages[1].Objective != "assistant-response-modeling" || compose.Stages[2].Objective != "assistant-response-modeling" {
+		t.Fatalf("basic conversation SFT objectives = %s/%s", compose.Stages[1].Objective, compose.Stages[2].Objective)
 	}
 	if compose.Stages[0].Parameters.LearningRate <= compose.Stages[1].Parameters.LearningRate || compose.Stages[1].Parameters.LearningRate <= compose.Stages[2].Parameters.LearningRate {
 		t.Fatalf("basic conversation learning rates do not decay by phase: %+v", compose.Stages)

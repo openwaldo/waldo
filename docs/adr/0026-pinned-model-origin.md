@@ -25,9 +25,10 @@ normalized artifacts. The immutable model plan pins the origin-BOM hash. The
 aggregate model BOM selects that origin until a later complete, non-simulated
 run produces current weights.
 
-A model compose may name a local pulled base and optionally assert its
-origin hash. The architecture must match exactly and the origin must still be
-current. The new plan pins the resolved origin; the base is never mutated.
+A model compose may name a local pulled base and optionally assert its origin
+hash. The architecture must match exactly. The new plan pins the resolved
+origin and the base is never mutated. ADR 0066 extends `base.model` to prefer a
+verified completed training run when one exists.
 
 Compatibility is explicit and fail-closed. The first profile accepts standard
 bias-free Llama Safetensors using the OpenWALDO byte tokenizer. Supporting a new

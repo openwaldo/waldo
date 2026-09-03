@@ -111,9 +111,14 @@ func (interaction Interaction) CompleteTurn(prompt, response string) string {
 }
 
 type ComposeBase struct {
-	Model        string `json:"model,omitempty" yaml:"model,omitempty"`
-	Source       string `json:"source,omitempty" yaml:"source,omitempty"`
-	OriginSHA256 string `json:"origin_sha256,omitempty" yaml:"origin_sha256,omitempty"`
+	Model          string `json:"model,omitempty" yaml:"model,omitempty"`
+	Source         string `json:"source,omitempty" yaml:"source,omitempty"`
+	OriginSHA256   string `json:"origin_sha256,omitempty" yaml:"origin_sha256,omitempty"`
+	ModelID        string `json:"model_id,omitempty" yaml:"model_id,omitempty"`
+	RunID          string `json:"run_id,omitempty" yaml:"run_id,omitempty"`
+	RunBOMSHA256   string `json:"run_bom_sha256,omitempty" yaml:"run_bom_sha256,omitempty"`
+	ArtifactSHA256 string `json:"artifact_sha256,omitempty" yaml:"artifact_sha256,omitempty"`
+	ArtifactBytes  int64  `json:"artifact_bytes,omitempty" yaml:"artifact_bytes,omitempty"`
 }
 
 type Architecture struct {
@@ -466,6 +471,9 @@ func (compose Compose) Validate() error {
 			return fmt.Errorf("base.model must name a locally managed model")
 		}
 		if hasSource {
+			if compose.Base.ModelID != "" || compose.Base.RunID != "" || compose.Base.RunBOMSHA256 != "" || compose.Base.ArtifactSHA256 != "" || compose.Base.ArtifactBytes != 0 {
+				return fmt.Errorf("base.source cannot declare managed-model run pins")
+			}
 			_, revision, err := parseHuggingFaceSource(compose.Base.Source)
 			if err != nil {
 				return fmt.Errorf("base.source: %w", err)
@@ -473,6 +481,9 @@ func (compose Compose) Validate() error {
 			if !huggingFaceCommit.MatchString(revision) {
 				return fmt.Errorf("base.source must pin an immutable Hugging Face commit")
 			}
+		}
+		if compose.Base.ArtifactBytes < 0 {
+			return fmt.Errorf("base artifact_bytes cannot be negative")
 		}
 	}
 	if len(compose.Stages) == 0 {

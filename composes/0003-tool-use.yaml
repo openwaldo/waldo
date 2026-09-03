@@ -1,100 +1,28 @@
-# Tool-capable conversation model: build a correctly sized general base, teach
-# concise conversation, then specialize on structured tool interactions.
+# Tool-capable conversation model: specialize the completed conversation model
+# on reviewed structured tool interactions without relearning its foundation.
 kind: waldo-model-compose
 schema: 1
+base:
+  model: conversation
 interaction:
   template: user-assistant-v1
   tools: true
 architecture:
   family: decoder-transformer
-  context_tokens: 4096
-  vocabulary_size: 100259
-  hidden_size: 1536
-  intermediate_size: 4096
+  context_tokens: 2048
+  vocabulary_size: 50259
+  hidden_size: 1152
+  intermediate_size: 3072
   layers: 20
-  attention_heads: 24
-  key_value_heads: 6
+  attention_heads: 16
+  key_value_heads: 4
   dropout: 0.1
   tie_embeddings: true
   parameter_dtype: bfloat16
   tokenizer:
-    name: tiktoken/cl100k_base
-    revision: tiktoken-cl100k-base
+    name: tiktoken/r50k_base
+    revision: tiktoken-r50k-base
 stages:
-  # Keep this rung small enough to iterate. The previous 1.18B/24B experiment
-  # took ten days on one H200; this roughly 650M/16B base retains the code,
-  # multilingual, and structured-data capacity needed for tool syntax while
-  # targeting a materially shorter validation cycle.
-  - name: pretrain
-    type: pre-training
-    objective: causal-language-modeling
-    filter: &quality
-      main_content: true
-      exclude:
-        repetitive_content: true
-        boilerplate_content: true
-    corpora:
-      - {path: core/synthetic/cosmopedia-v2, weight: 6}
-      - {path: core/common-pile/wikimedia, weight: 4}
-      - {path: core/common-pile/stackexchange, weight: 2}
-      - {path: core/common-pile/pressbooks, weight: 2}
-      - {path: science/plos, weight: 2}
-      - {path: science/arxiv-abstracts, weight: 1}
-      - {path: code/permissive, weight: 2}
-      - {path: code/cloud-native-core, weight: 1}
-    parameters:
-      profile: causal-pretrain-weighted
-      tokens: 16000000000
-      batch_size: 8
-      sequence_length: 4096
-      learning_rate: 0.00012
-      seed: 62
-      weight_decay: 0.15
-      warmup_steps: 4883
-      shuffle_buffer_records: 65536
-      shuffle_buffer_bytes: 2147483648
-      checkpoint_every: 24414
-      evaluate_every: 24414
-      evaluation_max_records: 2048
-      evaluation_max_bytes: 67108864
-
-  # Keep general dialogue adaptation bounded. The previous technology compose
-  # allowed synthetic instruction data to overwhelm the learned base.
-  - name: conversation-sft
-    type: fine-tuning
-    objective: assistant-response-modeling
-    conversation: &assistant
-      template: user-assistant-v1
-      supervised_roles: [assistant]
-    filter: *quality
-    corpora:
-      - path: post-train/sft/tulu3
-        weight: 4
-        filter:
-          sources:
-            exclude:
-              - ai2-adapt-dev/no_robots_converted
-              - ai2-adapt-dev/oasst1_converted
-              - ai2-adapt-dev/tulu_v3.9_aya_100k
-      - {path: post-train/sft/ultrachat-200k, weight: 2}
-      - {path: post-train/sft/oasst2, weight: 2}
-      - {path: post-train/sft/interaction-contract-v1, weight: 3}
-    parameters:
-      profile: causal-pretrain-weighted
-      tokens: 150000000
-      batch_size: 8
-      sequence_length: 4096
-      learning_rate: 0.00002
-      seed: 63
-      weight_decay: 0.06
-      warmup_steps: 229
-      shuffle_buffer_records: 32768
-      shuffle_buffer_bytes: 1073741824
-      checkpoint_every: 458
-      evaluate_every: 458
-      evaluation_max_records: 2048
-      evaluation_max_bytes: 67108864
-
   # Tool outputs are context, not prediction targets. Keep one reviewed call
   # syntax and mix it with ordinary assistant responses. The previous complete
   # pass over xLAM, SmolTalk2, and OpenThoughts taught incompatible bare-array
@@ -106,7 +34,11 @@ stages:
     conversation:
       template: user-assistant-v1
       supervised_roles: [assistant]
-    filter: *quality
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
     corpora:
       - {path: post-train/sft/hermes-function-calling, weight: 4}
       - {path: post-train/sft/interaction-contract-v1, weight: 4}
@@ -115,14 +47,14 @@ stages:
       profile: causal-pretrain-weighted
       tokens: 20000000
       batch_size: 8
-      sequence_length: 4096
+      sequence_length: 2048
       learning_rate: 0.000004
-      seed: 64
+      seed: 45
       weight_decay: 0.03
       warmup_steps: 61
       shuffle_buffer_records: 32768
-      shuffle_buffer_bytes: 1073741824
+      shuffle_buffer_bytes: 536870912
       checkpoint_every: 152
       evaluate_every: 152
-      evaluation_max_records: 2048
-      evaluation_max_bytes: 67108864
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432

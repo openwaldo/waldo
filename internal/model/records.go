@@ -40,6 +40,15 @@ type Plan struct {
 	Forecast           ArchitectureForecast `json:"forecast"`
 	Stages             []PlannedStage       `json:"stages,omitempty"`
 	OriginBOMSHA256    string               `json:"origin_bom_sha256,omitempty"`
+	Parent             *ModelParent         `json:"parent,omitempty"`
+}
+
+type ModelParent struct {
+	Model        string            `json:"model"`
+	ModelID      string            `json:"model_id"`
+	RunID        string            `json:"run_id"`
+	RunBOMSHA256 string            `json:"run_bom_sha256"`
+	Artifact     training.Artifact `json:"artifact"`
 }
 
 type OriginSource struct {
@@ -96,6 +105,7 @@ type ModelRecord struct {
 	Runs               []RunPin             `json:"runs"`
 	OriginBOMSHA256    string               `json:"origin_bom_sha256,omitempty"`
 	OriginArtifacts    []OriginArtifact     `json:"origin_artifacts,omitempty"`
+	Parent             *ModelParent         `json:"parent,omitempty"`
 }
 
 type RunState string
@@ -226,6 +236,7 @@ type ModelBOM struct {
 	CurrentRunID        string          `json:"current_run_id,omitempty"`
 	CurrentOriginSHA256 string          `json:"current_origin_sha256,omitempty"`
 	Origin              *ModelBOMOrigin `json:"origin,omitempty"`
+	Parent              *ModelParent    `json:"parent,omitempty"`
 	Runs                []ModelBOMRun   `json:"runs"`
 	Generated           string          `json:"generated"`
 }
@@ -294,8 +305,20 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 	if err != nil {
 		return Inspection{}, err
 	}
-	if plan.Kind != "waldo-model-plan" || plan.Schema != PlanSchema || planHash != record.PlanSHA256 || record.ID != planHash || plan.Name != record.Name || plan.ArchitectureSHA256 != record.ArchitectureSHA256 || plan.OriginBOMSHA256 != record.OriginBOMSHA256 || !reflect.DeepEqual(plan.Architecture, record.Architecture) || !reflect.DeepEqual(plan.Interaction, record.Interaction) || !reflect.DeepEqual(plan.Forecast, record.Forecast) {
+	if plan.Kind != "waldo-model-plan" || plan.Schema != PlanSchema || planHash != record.PlanSHA256 || record.ID != planHash || plan.Name != record.Name || plan.ArchitectureSHA256 != record.ArchitectureSHA256 || plan.OriginBOMSHA256 != record.OriginBOMSHA256 || !reflect.DeepEqual(plan.Parent, record.Parent) || !reflect.DeepEqual(plan.Architecture, record.Architecture) || !reflect.DeepEqual(plan.Interaction, record.Interaction) || !reflect.DeepEqual(plan.Forecast, record.Forecast) {
 		return Inspection{}, fmt.Errorf("%s has an invalid immutable model plan", directory)
+	}
+	if record.Parent != nil && record.OriginBOMSHA256 != "" {
+		return Inspection{}, fmt.Errorf("%s cannot have both parent-run and origin initialization", directory)
+	}
+	if record.Parent != nil {
+		parent := record.Parent
+		if parent.Model == "" || parent.ModelID == "" || parent.RunID == "" || parent.RunBOMSHA256 == "" || parent.Artifact.Path != "base/model.safetensors" {
+			return Inspection{}, fmt.Errorf("%s has an invalid parent-run pin", directory)
+		}
+		if err := VerifyArtifactFile(filepath.Join(directory, filepath.FromSlash(parent.Artifact.Path)), parent.Artifact); err != nil {
+			return Inspection{}, fmt.Errorf("model parent: %w", err)
+		}
 	}
 	var origin *OriginBOM
 	if record.OriginBOMSHA256 != "" {
@@ -572,6 +595,10 @@ func modelBOM(record ModelRecord) ModelBOM {
 		}
 		bom.CurrentOriginSHA256 = record.OriginBOMSHA256
 	}
+	if record.Parent != nil {
+		parent := *record.Parent
+		bom.Parent = &parent
+	}
 	for _, pin := range record.Runs {
 		directory := filepath.ToSlash(filepath.Join("runs", runDirectoryName(pin)))
 		run := ModelBOMRun{
@@ -633,7 +660,7 @@ func hasWeightArtifact(artifacts []training.Artifact) bool {
 }
 
 func legacyModelBOMMatches(bom ModelBOM, record ModelRecord, pins []RunPin) bool {
-	if bom.PathBase != "" || bom.CurrentRunID != "" || len(bom.Runs) != len(pins) {
+	if record.Parent != nil || bom.PathBase != "" || bom.CurrentRunID != "" || len(bom.Runs) != len(pins) {
 		return false
 	}
 	for index, pin := range pins {

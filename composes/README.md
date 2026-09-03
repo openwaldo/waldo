@@ -71,7 +71,7 @@ WALDO requirements:
 
 | Field | Plan |
 | --- | --- |
-| Status | Existing compose; promising prior result, but not formally promoted |
+| Status | Compose updated for assistant-only SFT; ready for a fresh formally evaluated run |
 | Builds from | New larger initialization using the babbling model's proven recipe and tests |
 | Model type | Dense monolithic foundation plus conversation SFT; approximately 337M parameters |
 | Recommended hardware | 1x 8-GPU NVIDIA H100 SXM system |
@@ -93,20 +93,19 @@ Corpus requirements:
 
 WALDO requirements:
 
-- Change SFT to `assistant-response-modeling`.
-- Preserve assistant-only loss masks.
+- Assistant-response modeling and assistant-only loss masks (supported).
 - Add fixed conversation tests.
 - Replay foundation regression tests.
 
-## Tool-use model (`0003-tool-use.yaml`, revision required)
+## Tool-use model (`0003-tool-use.yaml`)
 
 | Field | Plan |
 | --- | --- |
-| Status | Existing replacement candidate is not approved; redesign before running |
+| Status | Compose updated; awaits a promoted `conversation` model and fixed tool evaluations |
 | Builds from | Promoted `0002` checkpoint with the same architecture and tokenizer; do not repeat foundation or conversation training |
 | Model type | Dense conversation model plus tool-use SFT; approximately 337M parameters after revision |
 | Recommended hardware | 1x NVIDIA H200 141 GB |
-| Approximate runtime | 1-2 hours for the revised tool-only stage; do not run the current from-scratch YAML |
+| Approximate runtime | 1-2 hours for the 20M-token tool-only stage |
 
 Success criteria:
 
@@ -126,6 +125,7 @@ Corpus requirements:
 
 WALDO requirements:
 
+- Verified trained-parent initialization and lineage (supported).
 - Selectable tool-data categories.
 - Fixed tool and conversation regression tests.
 - Tool-specific metrics.
@@ -369,8 +369,8 @@ WALDO requirements:
 ## Next steps
 
 - Freeze the language, conversation, and tool evaluation sets.
-- Correct and rerun `0002`, then promote a conversation checkpoint.
-- Revise `0003` to fine-tune that checkpoint on normalized tool data.
+- Run and promote `0002` as the managed model named `conversation`.
+- Run `0003` from that pinned conversation checkpoint.
 - Build the capable dense foundation, assistant, reasoning, and agent rungs.
 - Fill the textbook, mathematics, technical, and tool-corpus gaps.
 - Implement and validate the small sparse-MoE proof.

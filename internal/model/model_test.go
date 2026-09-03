@@ -399,6 +399,89 @@ func TestInitializeAndTrainKeepStableModelIdentity(t *testing.T) {
 	}
 }
 
+func TestComposeInitializesFromCompletedManagedModelRun(t *testing.T) {
+	root := t.TempDir()
+	ids := []string{"parentrun", "childrun"}
+	calls := 0
+	backend := backendFunc(func(_ context.Context, request training.Request) (training.Observation, error) {
+		calls++
+		if calls == 1 && request.Initialization != nil {
+			return training.Observation{}, fmt.Errorf("parent unexpectedly has initialization: %+v", request.Initialization)
+		}
+		if calls == 2 {
+			if request.Initialization == nil || request.Initialization.SourceType != "run" || request.Initialization.SourceRunID != "parentrun" {
+				return training.Observation{}, fmt.Errorf("child initialization = %+v", request.Initialization)
+			}
+		}
+		if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
+			return training.Observation{}, err
+		}
+		data := []byte("weights-" + request.RunID)
+		path := filepath.Join(request.ArtifactDirectory, "model.safetensors")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return training.Observation{}, err
+		}
+		digest := sha256.Sum256(data)
+		return training.Observation{
+			Steps: 2, ConsumedTokens: 128,
+			Evaluations: []training.Evaluation{{Step: 2, Tokens: 128, Metrics: map[string]float64{"heldout_loss": 1}}},
+			Artifacts:   []training.Artifact{{Path: "artifacts/model.safetensors", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}},
+		}, nil
+	})
+	builder := Builder{
+		Root: root,
+		NewID: func() (string, error) {
+			id := ids[0]
+			ids = ids[1:]
+			return id, nil
+		},
+		Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+			return testSelection(backend), nil
+		}),
+	}
+	if _, err := builder.Initialize("conversation", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := builder.Train(context.Background(), "conversation", preparedFixture(t, testStage("conversation")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := testStage("tool-use")
+	compose := Compose{
+		Kind: "waldo-model-compose", Schema: 1,
+		Base:         &ComposeBase{Model: "conversation"},
+		Architecture: testArchitecture(),
+		Stages:       []Stage{stage},
+	}
+	resolved, err := builder.ResolveCompose(context.Background(), compose, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Base.ModelID != parent.Model.ID || resolved.Base.RunID != "parentrun" || resolved.Base.RunBOMSHA256 != parent.Model.Runs[0].BOMSHA256 || resolved.Base.ArtifactSHA256 == "" || resolved.Base.ArtifactBytes == 0 {
+		t.Fatalf("resolved parent pins = %+v", resolved.Base)
+	}
+	compose = resolved
+	child, err := builder.Compose(context.Background(), "tool-use", compose, []PreparedStage{preparedFixture(t, stage)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.Model.Parent == nil || child.Model.Parent.Model != "conversation" || child.Model.Parent.ModelID != parent.Model.ID || child.Model.Parent.RunID != "parentrun" || child.Model.Parent.RunBOMSHA256 != parent.Model.Runs[0].BOMSHA256 {
+		t.Fatalf("parent pin = %+v", child.Model.Parent)
+	}
+	if child.RunBOMs[0].Initialization == nil || child.RunBOMs[0].Initialization.SourceRunID != "parentrun" || child.RunBOMs[0].Initialization.Artifact.Path != "base/model.safetensors" {
+		t.Fatalf("child initialization = %+v", child.RunBOMs[0].Initialization)
+	}
+	if child.BOM.Parent == nil || !reflect.DeepEqual(child.BOM.Parent, child.Model.Parent) {
+		t.Fatalf("child BOM parent = %+v", child.BOM.Parent)
+	}
+	if err := os.RemoveAll(parent.Path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Inspect(root, "tool-use"); err != nil {
+		t.Fatalf("child depends on parent files after initialization: %v", err)
+	}
+}
+
 func TestTrainRejectsExhaustedStreamBeforeBackend(t *testing.T) {
 	root := t.TempDir()
 	called := false

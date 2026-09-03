@@ -721,8 +721,40 @@ func cloneMetrics(metrics map[string]float64) map[string]float64 {
 }
 
 func resolveInitialization(inspection Inspection) (*training.Initialization, error) {
+	if initialization, err := resolveRunInitialization(inspection, ""); initialization != nil || err != nil {
+		return initialization, err
+	}
+	if inspection.Model.Parent != nil {
+		parent := inspection.Model.Parent
+		path := filepath.Join(inspection.Path, filepath.FromSlash(parent.Artifact.Path))
+		if err := VerifyArtifactFile(path, parent.Artifact); err != nil {
+			return nil, fmt.Errorf("initialize from parent run %s: %w", parent.RunID, err)
+		}
+		return &training.Initialization{SourceType: "run", SourceID: parent.ModelID, SourceRunID: parent.RunID, Artifact: parent.Artifact, Path: path}, nil
+	}
+	if inspection.Origin != nil {
+		for _, artifact := range inspection.Origin.Artifacts {
+			if artifact.Role != "weights" {
+				continue
+			}
+			path := filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path))
+			trainingArtifact := training.Artifact{Path: artifact.Path, SHA256: artifact.SHA256, Bytes: artifact.Bytes}
+			if err := VerifyArtifactFile(path, trainingArtifact); err != nil {
+				return nil, fmt.Errorf("initialize from model origin %s: %w", inspection.Model.OriginBOMSHA256, err)
+			}
+			return &training.Initialization{SourceType: "origin", SourceID: inspection.Model.OriginBOMSHA256, Artifact: trainingArtifact, Path: path}, nil
+		}
+		return nil, fmt.Errorf("model origin %s has no weights artifact", inspection.Model.OriginBOMSHA256)
+	}
+	return nil, nil
+}
+
+func resolveRunInitialization(inspection Inspection, requestedRunID string) (*training.Initialization, error) {
 	for index := len(inspection.Runs) - 1; index >= 0; index-- {
 		run := inspection.Runs[index]
+		if requestedRunID != "" && run.ID != requestedRunID {
+			continue
+		}
 		if run.State != RunComplete || run.Observation == nil || run.Observation.Simulated {
 			continue
 		}
@@ -747,19 +779,8 @@ func resolveInitialization(inspection Inspection) (*training.Initialization, err
 			return &training.Initialization{SourceType: "run", SourceID: run.ID, SourceRunID: run.ID, Artifact: artifact, Path: path}, nil
 		}
 	}
-	if inspection.Origin != nil {
-		for _, artifact := range inspection.Origin.Artifacts {
-			if artifact.Role != "weights" {
-				continue
-			}
-			path := filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path))
-			trainingArtifact := training.Artifact{Path: artifact.Path, SHA256: artifact.SHA256, Bytes: artifact.Bytes}
-			if err := VerifyArtifactFile(path, trainingArtifact); err != nil {
-				return nil, fmt.Errorf("initialize from model origin %s: %w", inspection.Model.OriginBOMSHA256, err)
-			}
-			return &training.Initialization{SourceType: "origin", SourceID: inspection.Model.OriginBOMSHA256, Artifact: trainingArtifact, Path: path}, nil
-		}
-		return nil, fmt.Errorf("model origin %s has no weights artifact", inspection.Model.OriginBOMSHA256)
+	if requestedRunID != "" {
+		return nil, fmt.Errorf("model %q has no complete real weights for run %s", inspection.Model.Name, requestedRunID)
 	}
 	return nil, nil
 }
@@ -837,6 +858,9 @@ func validateComposeTarget(target Inspection, compose Compose) error {
 	}
 	if compose.Base != nil && compose.Base.OriginSHA256 != "" && target.Model.OriginBOMSHA256 != compose.Base.OriginSHA256 {
 		return fmt.Errorf("compose base does not match existing model %q; use a new model name", target.Model.Name)
+	}
+	if compose.Base != nil && compose.Base.RunID != "" && !reflect.DeepEqual(target.Model.Parent, composeParent(compose)) {
+		return fmt.Errorf("compose parent does not match existing model %q; use a new model name", target.Model.Name)
 	}
 	return nil
 }
@@ -916,17 +940,56 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		}
 		return compose, nil, nil
 	}
-	if base.Origin == nil || base.BOM.CurrentOriginSHA256 == "" {
-		return Compose{}, nil, fmt.Errorf("compose base must have pulled origin weights as its current weights")
+	if compose.Base.Model != "" {
+		if compose.Base.ModelID != "" && compose.Base.ModelID != base.Model.ID {
+			return Compose{}, nil, fmt.Errorf("compose base model ID is %s, not requested %s", base.Model.ID, compose.Base.ModelID)
+		}
+		compose.Base.ModelID = base.Model.ID
 	}
-	if compose.Base.OriginSHA256 != "" && compose.Base.OriginSHA256 != base.Model.OriginBOMSHA256 {
-		return Compose{}, nil, fmt.Errorf("compose base origin is %s, not requested %s", base.Model.OriginBOMSHA256, compose.Base.OriginSHA256)
+	initialization, err := resolveRunInitialization(base, compose.Base.RunID)
+	if err != nil {
+		return Compose{}, nil, err
+	}
+	if initialization != nil {
+		var pin RunPin
+		for _, candidate := range base.Model.Runs {
+			if candidate.ID == initialization.SourceRunID {
+				pin = candidate
+				break
+			}
+		}
+		if compose.Base.OriginSHA256 != "" {
+			return Compose{}, nil, fmt.Errorf("trained compose base cannot assert origin_sha256; pin run_id and artifact_sha256 instead")
+		}
+		if compose.Base.RunBOMSHA256 != "" && compose.Base.RunBOMSHA256 != pin.BOMSHA256 {
+			return Compose{}, nil, fmt.Errorf("compose base run BOM is %s, not requested %s", pin.BOMSHA256, compose.Base.RunBOMSHA256)
+		}
+		if compose.Base.ArtifactSHA256 != "" && compose.Base.ArtifactSHA256 != initialization.Artifact.SHA256 {
+			return Compose{}, nil, fmt.Errorf("compose base artifact is %s, not requested %s", initialization.Artifact.SHA256, compose.Base.ArtifactSHA256)
+		}
+		if compose.Base.ArtifactBytes != 0 && compose.Base.ArtifactBytes != initialization.Artifact.Bytes {
+			return Compose{}, nil, fmt.Errorf("compose base artifact has %d bytes, not requested %d", initialization.Artifact.Bytes, compose.Base.ArtifactBytes)
+		}
+		compose.Base.RunID = initialization.SourceRunID
+		compose.Base.RunBOMSHA256 = pin.BOMSHA256
+		compose.Base.ArtifactSHA256 = initialization.Artifact.SHA256
+		compose.Base.ArtifactBytes = initialization.Artifact.Bytes
+	} else {
+		if base.Origin == nil || base.BOM.CurrentOriginSHA256 == "" {
+			return Compose{}, nil, fmt.Errorf("compose base model has no complete real weights")
+		}
+		if compose.Base.RunID != "" || compose.Base.RunBOMSHA256 != "" || compose.Base.ArtifactSHA256 != "" || compose.Base.ArtifactBytes != 0 {
+			return Compose{}, nil, fmt.Errorf("origin compose base cannot assert managed-model run pins")
+		}
+		if compose.Base.OriginSHA256 != "" && compose.Base.OriginSHA256 != base.Model.OriginBOMSHA256 {
+			return Compose{}, nil, fmt.Errorf("compose base origin is %s, not requested %s", base.Model.OriginBOMSHA256, compose.Base.OriginSHA256)
+		}
+		compose.Base.OriginSHA256 = base.Model.OriginBOMSHA256
 	}
 	if compose.Architecture != (Architecture{}) && !reflect.DeepEqual(compose.Architecture, base.Model.Architecture) {
-		return Compose{}, nil, fmt.Errorf("compose architecture does not match base origin")
+		return Compose{}, nil, fmt.Errorf("compose architecture does not match base model")
 	}
 	compose.Architecture = base.Model.Architecture
-	compose.Base.OriginSHA256 = base.Model.OriginBOMSHA256
 	if err := compose.Validate(); err != nil {
 		return Compose{}, nil, err
 	}
@@ -1042,7 +1105,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 				finishFailedCompose(workspace)
 				return Inspection{}, err
 			}
-		} else if _, err := builder.initializeFromOrigin(name, compose, *base); err != nil {
+		} else if _, err := builder.initializeFromBase(name, compose, *base); err != nil {
 			finishFailedCompose(workspace)
 			return Inspection{}, err
 		}
@@ -1084,7 +1147,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	if staged.Model.ArchitectureSHA256 != architectureHash {
 		return Inspection{}, fmt.Errorf("composing model %s does not match the requested architecture", destination)
 	}
-	if transaction.ModelID == "" && staged.Model.OriginBOMSHA256 != composeOriginHash(compose) {
+	if transaction.ModelID == "" && (staged.Model.OriginBOMSHA256 != composeOriginHash(compose) || !reflect.DeepEqual(staged.Model.Parent, composeParent(compose))) {
 		return Inspection{}, fmt.Errorf("composing model %s does not match the requested architecture or origin", destination)
 	}
 	if transaction.ModelID != "" && staged.Model.ID != transaction.ModelID {
@@ -1236,6 +1299,17 @@ func composeOriginHash(compose Compose) string {
 	return compose.Base.OriginSHA256
 }
 
+func composeParent(compose Compose) *ModelParent {
+	if compose.Base == nil || compose.Base.RunID == "" {
+		return nil
+	}
+	return &ModelParent{
+		Model: compose.Base.Model, ModelID: compose.Base.ModelID,
+		RunID: compose.Base.RunID, RunBOMSHA256: compose.Base.RunBOMSHA256,
+		Artifact: training.Artifact{Path: "base/model.safetensors", SHA256: compose.Base.ArtifactSHA256, Bytes: compose.Base.ArtifactBytes},
+	}
+}
+
 func lockComposeTransaction(path string) (*os.File, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -1323,6 +1397,48 @@ func equivalentTrainingParameters(left, right training.ResolvedParameters) bool 
 	return reflect.DeepEqual(training.NormalizeResolvedParameters(left), training.NormalizeResolvedParameters(right))
 }
 
+func (builder Builder) initializeFromBase(name string, compose Compose, base Inspection) (Inspection, error) {
+	if compose.Base.RunID != "" {
+		return builder.initializeFromRun(name, compose, base)
+	}
+	return builder.initializeFromOrigin(name, compose, base)
+}
+
+func (builder Builder) initializeFromRun(name string, compose Compose, base Inspection) (Inspection, error) {
+	initialization, err := resolveRunInitialization(base, compose.Base.RunID)
+	if err != nil {
+		return Inspection{}, err
+	}
+	if initialization == nil {
+		return Inspection{}, fmt.Errorf("compose base model %q has no complete real weights", base.Model.Name)
+	}
+	plan, err := composePlan(name, compose)
+	if err != nil {
+		return Inspection{}, err
+	}
+	planHash, err := hashJSON(plan)
+	if err != nil {
+		return Inspection{}, err
+	}
+	now := builder.clock()()
+	parent := composeParent(compose)
+	record := ModelRecord{
+		Kind: "waldo-model", Schema: ModelSchema, ID: planHash, Name: name,
+		PlanSHA256: planHash, ArchitectureSHA256: plan.ArchitectureSHA256,
+		Architecture: plan.Architecture, Interaction: plan.Interaction, Forecast: plan.Forecast,
+		Created: formatTime(now), Updated: formatTime(now), Parent: parent,
+	}
+	destination := filepath.Join(builder.Root, name)
+	if err := initializeModel(builder.Root, destination, plan, record); err != nil {
+		return Inspection{}, err
+	}
+	target := filepath.Join(destination, filepath.FromSlash(parent.Artifact.Path))
+	if err := copyArtifactFile(initialization.Path, target); err != nil {
+		return Inspection{}, err
+	}
+	return Inspect(builder.Root, name)
+}
+
 func (builder Builder) initializeFromOrigin(name string, compose Compose, base Inspection) (Inspection, error) {
 	plan, err := composePlan(name, compose)
 	if err != nil {
@@ -1348,7 +1464,7 @@ func (builder Builder) initializeFromOrigin(name string, compose Compose, base I
 	for _, artifact := range base.Origin.Artifacts {
 		source := filepath.Join(base.Path, filepath.FromSlash(artifact.Path))
 		target := filepath.Join(destination, filepath.FromSlash(artifact.Path))
-		if err := copyOriginFile(source, target); err != nil {
+		if err := copyArtifactFile(source, target); err != nil {
 			return Inspection{}, err
 		}
 	}
@@ -1358,7 +1474,7 @@ func (builder Builder) initializeFromOrigin(name string, compose Compose, base I
 	return Inspect(builder.Root, name)
 }
 
-func copyOriginFile(source, destination string) error {
+func copyArtifactFile(source, destination string) error {
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		return err
 	}

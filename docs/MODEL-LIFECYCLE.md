@@ -341,12 +341,14 @@ maps, duplicate stage names, and invalid parameters are rejected. Corpus values
 are index paths, never raw directories or corpus exports. Explicit paths
 discover their checkout; logical paths use the current or configured checkout.
 
-When `base.model` is present, it must name a pulled model whose origin remains
-its current weights. `base.source` instead accepts a pinned supported external
-source and uses the same verified importer as `model pull`. WALDO verifies every
-origin artifact, checks the optional hash assertion and exact architecture
-equality when declared, then initializes the new model from that origin. A
-compose never mutates a named base model.
+When `base.model` is present, WALDO selects its explicitly requested completed
+run or its latest completed run with real weights. If it has no such run, WALDO
+uses the model's verified pulled origin. WALDO pins the parent model ID, run ID,
+run BOM hash, weight hash, and size, then hard-links or copies trained parent
+weights into the destination as `base/model.safetensors`. `base.source` instead
+accepts a pinned supported external source and uses the same verified importer
+as `model pull`. In every mode WALDO verifies artifacts and exact architecture
+equality, and a compose never mutates its base model.
 
 WALDO resolves and hash-verifies every stage and creates the active model at
 `<model.root>/<name>` when absent. When the name already exists, its normalized
@@ -380,8 +382,9 @@ stage is cleared; interrupted work is retained.
 ├── PLAN.json
 ├── MODEL.json
 ├── MODEL-BOM.json
-├── ORIGIN-BOM.json        # pulled models and derived composes only
+├── ORIGIN-BOM.json        # pulled/external-origin models only
 ├── origin/artifacts/      # one normalized, verified starting checkpoint
+├── base/model.safetensors # trained managed-model parent only
 └── runs/
     └── 0001-<stage>-<run-id>/
         ├── RUN-BOM.json
@@ -397,8 +400,10 @@ stage is cleared; interrupted work is retained.
 ```
 
 - `PLAN.json` content-identifies the immutable architecture and local model
-  name plus any external origin BOM. Adding training does not change model
-  identity.
+  name plus either an external origin BOM or a trained-parent pin. The parent
+  pin names the model and run and hashes both the run BOM and copied weight
+  artifact. `MODEL.json` and `MODEL-BOM.json` repeat that lineage. Adding
+  training does not change model identity.
 - `RUN-BOM.json` embeds the hash-pinned corpus OpenWALDO BOM and pins
   architecture, backend, objective, parameters, and execution environment
   before launch. With `--audit`, it additionally carries each embedded shard

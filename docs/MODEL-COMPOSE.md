@@ -37,7 +37,7 @@ currently executable objective is the same for every accepted stage type.
 ## Complete annotated compose
 
 This example shows every schema-1 field. The optional `base` block is commented
-out because it is valid only when the named model has compatible pulled origin
+out because it is valid only when the named model has compatible verified
 weights.
 
 ```yaml
@@ -46,7 +46,12 @@ schema: 1
 
 # Optional: choose one base form, never both.
 # base:
-#   model: llama-base
+#   model: conversation
+#   model_id: <optional-expected-model-id>
+#   run_id: <optional-completed-run-id>
+#   run_bom_sha256: <optional-run-bom-sha256>
+#   artifact_sha256: <optional-checkpoint-sha256>
+#   artifact_bytes: <optional-checkpoint-size>
 #   origin_sha256: <expected-origin-bom-sha256> # optional assertion
 #
 # Or acquire a supported external origin directly. With this form only,
@@ -126,7 +131,7 @@ field names and structure.
 | --- | --- | --- | --- |
 | `kind` | yes | `waldo-model-compose` | Identifies the document as a model compose. |
 | `schema` | yes | `1` | Selects the compose schema. |
-| `base` | no | object | Optionally initializes a new model from pulled origin weights. |
+| `base` | no | object | Optionally initializes a new model from verified managed or external weights. |
 | `architecture` | normally | object | Defines immutable model structure and tokenizer identity. It may be omitted with `base.source`, in which case WALDO inherits the verified source architecture. |
 | `interaction` | no | object | Declares a versioned inference-time prompt contract. Omit it for raw causal continuation. |
 | `stages` | yes | non-empty list | Ordered training stages. Stage names must be unique. |
@@ -166,9 +171,14 @@ model-level contract. New composes should use only `interaction.tools`.
 
 | Field | Required | Value | Meaning |
 | --- | --- | --- | --- |
-| `base.model` | exactly one of `model` or `source` | `^[a-z0-9][a-z0-9._-]{0,63}$` | Names a managed model whose current weights are still its pulled origin. |
-| `base.source` | exactly one of `model` or `source` | pinned model source | Acquires a supported external model through the same verified importer as `model pull`. Schema 1 accepts `huggingface://organization/model@<commit>`. |
-| `base.origin_sha256` | no | SHA-256 | Asserts the expected origin BOM. WALDO always resolves and pins the actual value. |
+| `model` | exactly one of `model` or `source` | `^[a-z0-9][a-z0-9._-]{0,63}$` | Names a managed model with a verified completed checkpoint or pulled origin. |
+| `source` | exactly one of `model` or `source` | pinned model source | Acquires a supported external model through the same verified importer as `model pull`. Schema 1 accepts `huggingface://organization/model@<commit>`. |
+| `origin_sha256` | no | SHA-256 | Asserts the expected origin BOM. WALDO always resolves and pins the actual value. |
+| `model_id` | no | model ID | Asserts the identity of a managed base. WALDO fills it during resolution. |
+| `run_id` | no | run ID | Selects a completed run. When omitted, WALDO resolves the latest completed run with real weights. |
+| `run_bom_sha256` | no | SHA-256 | Asserts the selected run BOM. WALDO fills it during resolution. |
+| `artifact_sha256` | no | SHA-256 | Asserts the selected checkpoint bytes. WALDO fills it during resolution. |
+| `artifact_bytes` | no | non-negative bytes | Asserts the selected checkpoint size. WALDO fills it during resolution. |
 
 ## Base initialization
 
@@ -179,27 +189,32 @@ to `waldo model train`. A compose supports three initialization modes:
 | Compose declaration | Initial weights | Architecture rule |
 | --- | --- | --- |
 | no `base` | Newly initialized weights | `architecture` is required. |
-| `base.model` | Verified origin weights from a named managed model | `architecture` is required and must exactly match the managed model. |
+| `base.model` | Verified completed checkpoint from a named managed model, falling back to its origin when it has no completed run | `architecture` is required and must exactly match the managed model. |
 | `base.source` | Verified origin weights acquired from an external source | `architecture` may be omitted and inherited; when present, it must exactly match. |
 
 `model` and `source` are mutually exclusive. A base initializes the destination
-model and is never mutated by its training. `origin_sha256` is an optional
-fail-closed assertion against the canonical origin BOM hash. WALDO always pins
-the resolved hash in the destination plan and model BOM whether or not the
-assertion is declared.
+model and is never mutated by its training. For a trained managed base, WALDO
+resolves the latest completed run containing real weights unless `run_id` is
+specified. It verifies and persists the parent model ID, run ID, run BOM hash,
+artifact hash, and artifact size. The destination hard-links or copies those
+weights to `base/model.safetensors`, so it remains usable if the parent is later
+changed or removed. For an origin base, `origin_sha256` is an optional
+fail-closed assertion against the canonical origin BOM hash; WALDO always pins
+the resolved hash.
 
 ### Named managed base
 
 ```yaml
 base:
-  model: llama-base
-  origin_sha256: <expected-origin-bom-sha256>
+  model: conversation
+  # run_id: <optional-completed-run-id>
+  # artifact_sha256: <optional-checkpoint-sha256>
 ```
 
-The named model must still expose its pulled origin as its current weights. The
-compose must contain a complete, exactly matching `architecture`. Use this form
-when the base should be visible to `waldo model list` and independently
-inspectable with `waldo model summary llama-base`.
+The compose must contain a complete architecture exactly matching the named
+model. Use this form when the base should be visible to `waldo model list` and
+independently inspectable with `waldo model summary conversation`. Resolution
+turns omitted pins into immutable values before training starts.
 
 ### Direct external base
 
@@ -514,16 +529,16 @@ stages:
       seed: 42
 ```
 
-### Initialize from pulled weights
+### Initialize from managed weights
 
 ```yaml
 base:
-  model: llama-base
-  origin_sha256: <expected-origin-bom-sha256>
+  model: conversation
 ```
 
 Add this block to a complete compose whose architecture exactly matches
-`llama-base`. The base must have pulled origin weights as its current weights.
+`conversation`. WALDO selects and pins its latest completed real checkpoint,
+falling back to a verified pulled origin if no completed checkpoint exists.
 
 To acquire the origin directly from a supported external source, pin its
 immutable commit and omit `architecture` to inherit the verified definition:

@@ -155,6 +155,13 @@ func composePlan(name string, compose Compose) (Plan, error) {
 	}
 	if compose.Base != nil {
 		plan.OriginBOMSHA256 = compose.Base.OriginSHA256
+		if compose.Base.RunID != "" {
+			plan.Parent = &ModelParent{
+				Model: compose.Base.Model, ModelID: compose.Base.ModelID,
+				RunID: compose.Base.RunID, RunBOMSHA256: compose.Base.RunBOMSHA256,
+				Artifact: training.Artifact{Path: "base/model.safetensors", SHA256: compose.Base.ArtifactSHA256, Bytes: compose.Base.ArtifactBytes},
+			}
+		}
 	}
 	return plan, nil
 }
