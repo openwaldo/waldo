@@ -1,4 +1,5 @@
-# Conversation model: broad language, dialogue adaptation, and reviewed interaction tuning.
+# Conversation level 2: the complete conversation1 recipe plus broader
+# compact-model dialogue data with assistant-only supervision.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -117,5 +118,37 @@ stages:
       shuffle_buffer_bytes: 268435456
       checkpoint_every: 160
       evaluate_every: 160
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
+
+  - name: expanded-conversation-sft
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/smol-smoltalk
+        weight: 5
+      - path: post-train/sft/ultrachat-200k
+        weight: 4
+    parameters:
+      profile: causal-pretrain-weighted
+      tokens: 100000000
+      batch_size: 8
+      sequence_length: 2048
+      learning_rate: 0.000008
+      seed: 45
+      weight_decay: 0.04
+      warmup_steps: 305
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 536870912
+      checkpoint_every: 763
+      evaluate_every: 763
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432

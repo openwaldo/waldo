@@ -67,11 +67,11 @@ WALDO requirements:
 - Current dense training.
 - Fixed generation tests in addition to held-out loss.
 
-## Conversation model (`0002-conversation.yaml`)
+## Conversation level 1 (`0002-conversation1.yaml`)
 
 | Field | Plan |
 | --- | --- |
-| Status | Existing known-good compose preserved; assistant-only supervision is isolated in `0002-conversation-test-1.yaml` for comparison |
+| Status | Existing known-good compose preserved |
 | Builds from | New larger initialization using the babbling model's proven recipe and tests |
 | Model type | Dense monolithic foundation plus conversation SFT; approximately 337M parameters |
 | Recommended hardware | 1x 8-GPU NVIDIA H100 SXM system |
@@ -93,16 +93,43 @@ Corpus requirements:
 
 WALDO requirements:
 
-- Assistant-response modeling and assistant-only loss masks (supported and isolated in the test compose).
+- Assistant-response modeling and assistant-only loss masks (supported).
 - Add fixed conversation tests.
 - Replay foundation regression tests.
+
+## Conversation level 2 (`0002-conversation2.yaml`)
+
+| Field | Plan |
+| --- | --- |
+| Status | Ready after conversation1 is trained and evaluated |
+| Builds from | Continues the same managed `conversation` model; completed conversation1 corpus paths are skipped |
+| Model type | Same approximately 337M-parameter dense model with expanded conversation SFT |
+| Recommended hardware | 1x NVIDIA H200 141 GB |
+| Approximate runtime | 1-2 hours for the 100M-token conversation stage |
+
+Success criteria:
+
+- Improves instruction following and multi-turn coherence over `conversation`.
+- Preserves the baseline's directness, correction handling, and no-tool behavior.
+- Passes the baseline conversation and foundation regression tests.
+
+Corpus requirements:
+
+- Smol-SmolTalk for compact-model instruction breadth.
+- UltraChat 200k for additional multi-turn dialogue.
+
+WALDO requirements:
+
+- Append-only continuation with completed-path skipping (supported).
+- Fixed side-by-side conversation evaluations.
+- Promote only when it beats the previous rung without material regression.
 
 ## Tool-use model (`0003-tool-use.yaml`)
 
 | Field | Plan |
 | --- | --- |
-| Status | Compose updated; awaits a promoted `conversation` model and fixed tool evaluations |
-| Builds from | Promoted `0002` checkpoint with the same architecture and tokenizer; do not repeat foundation or conversation training |
+| Status | Compose updated; run after the desired conversation level is promoted |
+| Builds from | Current verified checkpoint of the managed `conversation` model |
 | Model type | Dense conversation model plus tool-use SFT; approximately 337M parameters after revision |
 | Recommended hardware | 1x NVIDIA H200 141 GB |
 | Approximate runtime | 1-2 hours for the 20M-token tool-only stage |
@@ -369,8 +396,10 @@ WALDO requirements:
 ## Next steps
 
 - Freeze the language, conversation, and tool evaluation sets.
-- Run and promote `0002` as the managed model named `conversation`.
-- Run `0003` from that pinned conversation checkpoint.
+- Run `0002-conversation1` as the managed model named `conversation`.
+- Apply `0002-conversation2` to that same model and compare its new run with the previous checkpoint.
+- Define each later conversation compose cumulatively and continue the same model.
+- Run `0003` after the desired `conversation` checkpoint is current.
 - Build the capable dense foundation, assistant, reasoning, and agent rungs.
 - Fill the textbook, mathematics, technical, and tool-corpus gaps.
 - Implement and validate the small sparse-MoE proof.
