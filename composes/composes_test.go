@@ -125,7 +125,7 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation.yaml", "0003-tool-use.yaml"}
+	want := []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation-test-1.yaml", "0002-conversation.yaml", "0003-tool-use.yaml"}
 	if !reflect.DeepEqual(files, want) {
 		t.Fatalf("reference composes = %v, want %v", files, want)
 	}
@@ -212,7 +212,7 @@ func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
 	if compose.Stages[2].Corpora[0].Path != "post-train/sft/interaction-contract-v1" || compose.Stages[2].Corpora[1].Path != "post-train/sft/helpsteer2" {
 		t.Fatalf("basic conversation post-training corpora = %+v", compose.Stages[2].Corpora)
 	}
-	if compose.Stages[1].Objective != "assistant-response-modeling" || compose.Stages[2].Objective != "assistant-response-modeling" {
+	if compose.Stages[1].Objective != "causal-language-modeling" || compose.Stages[2].Objective != "causal-language-modeling" {
 		t.Fatalf("basic conversation SFT objectives = %s/%s", compose.Stages[1].Objective, compose.Stages[2].Objective)
 	}
 	if compose.Stages[0].Parameters.LearningRate <= compose.Stages[1].Parameters.LearningRate || compose.Stages[1].Parameters.LearningRate <= compose.Stages[2].Parameters.LearningRate {
@@ -224,6 +224,25 @@ func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
 	}
 	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 11999969280 || len(forecast.EpochDerivedStages) != 2 {
 		t.Fatalf("basic conversation forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
+	}
+}
+
+func TestConversationTestOneChangesOnlySFTSupervision(t *testing.T) {
+	baseline, _, err := model.LoadCompose("0002-conversation.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	variant, _, err := model.LoadCompose("0002-conversation-test-1.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if variant.Stages[1].Objective != "assistant-response-modeling" || variant.Stages[2].Objective != "assistant-response-modeling" {
+		t.Fatalf("conversation test objectives = %s/%s", variant.Stages[1].Objective, variant.Stages[2].Objective)
+	}
+	variant.Stages[1].Objective = baseline.Stages[1].Objective
+	variant.Stages[2].Objective = baseline.Stages[2].Objective
+	if !reflect.DeepEqual(variant, baseline) {
+		t.Fatal("conversation-test-1 changes more than the two SFT objectives")
 	}
 }
 

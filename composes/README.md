@@ -71,7 +71,7 @@ WALDO requirements:
 
 | Field | Plan |
 | --- | --- |
-| Status | Compose updated for assistant-only SFT; ready for a fresh formally evaluated run |
+| Status | Existing known-good compose preserved; assistant-only supervision is isolated in `0002-conversation-test-1.yaml` for comparison |
 | Builds from | New larger initialization using the babbling model's proven recipe and tests |
 | Model type | Dense monolithic foundation plus conversation SFT; approximately 337M parameters |
 | Recommended hardware | 1x 8-GPU NVIDIA H100 SXM system |
@@ -93,7 +93,7 @@ Corpus requirements:
 
 WALDO requirements:
 
-- Assistant-response modeling and assistant-only loss masks (supported).
+- Assistant-response modeling and assistant-only loss masks (supported and isolated in the test compose).
 - Add fixed conversation tests.
 - Replay foundation regression tests.
 

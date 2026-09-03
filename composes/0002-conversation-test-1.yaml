@@ -1,4 +1,5 @@
-# Conversation model: broad language, dialogue adaptation, and reviewed interaction tuning.
+# Conversation test 1: the 0002 recipe with assistant-only supervision in its
+# two conversational fine-tuning stages. All other settings remain identical.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -54,7 +55,7 @@ stages:
 
   - name: conversational-midtrain
     type: fine-tuning
-    objective: causal-language-modeling
+    objective: assistant-response-modeling
     conversation:
       template: user-assistant-v1
       supervised_roles: [assistant]
@@ -90,7 +91,7 @@ stages:
 
   - name: post-train
     type: fine-tuning
-    objective: causal-language-modeling
+    objective: assistant-response-modeling
     conversation:
       template: user-assistant-v1
       supervised_roles: [assistant]
