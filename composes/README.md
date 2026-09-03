@@ -103,18 +103,22 @@ WALDO requirements:
 | --- | --- |
 | Status | Ready after conversation1 is trained and evaluated |
 | Builds from | Continues the same managed `conversation` model; completed conversation1 corpus paths are skipped |
-| Model type | Same approximately 337M-parameter dense model with expanded conversation SFT |
+| Model type | Same approximately 337M-parameter dense model with English software midtraining and expanded conversation SFT |
 | Recommended hardware | 1x NVIDIA H200 141 GB |
-| Approximate runtime | 1-2 hours for the 100M-token conversation stage |
+| Approximate runtime | 2-4 hours for 400M technical tokens plus 100M conversation tokens |
 
 Success criteria:
 
 - Improves instruction following and multi-turn coherence over `conversation`.
+- Improves familiarity with software development, systems, debugging, review, and technical documentation.
 - Preserves the baseline's directness, correction handling, and no-tool behavior.
 - Passes the baseline conversation and foundation regression tests.
 
 Corpus requirements:
 
+- English-only development mailing lists spanning Linux, Git, Python, Apache,
+  GCC, glibc, GNU, QEMU, Alpine, and other open-source communities.
+- English technical issue, pull-request, review, and repository-documentation text.
 - Smol-SmolTalk for compact-model instruction breadth.
 - UltraChat 200k for additional multi-turn dialogue.
 

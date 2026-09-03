@@ -121,6 +121,48 @@ stages:
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
 
+  # Continue pretraining on English software-engineering discourse before the
+  # final conversation refresh. Keep this rung technical: no science,
+  # multilingual mixture, or tool-use traces.
+  - name: technical-midtrain
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      languages:
+        include: [en]
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - {path: community/linux-kernel-mailing-list, weight: 4}
+      - {path: community/git-mailing-list, weight: 3}
+      - {path: community/python-mailing-lists, weight: 3}
+      - {path: community/apache-mailing-lists, weight: 2}
+      - {path: community/gcc-mailing-lists, weight: 2}
+      - {path: community/glibc-mailing-lists, weight: 2}
+      - {path: community/gnu-mailing-lists, weight: 2}
+      - {path: community/qemu-devel-mailing-list, weight: 2}
+      - {path: community/alpine-linux-mailing-list, weight: 1}
+      - {path: community/opensource-mailing-lists, weight: 1}
+      - {path: community/github-archive, weight: 3}
+      - {path: code/stack-v2-html, weight: 2}
+    parameters:
+      profile: causal-pretrain-weighted
+      tokens: 400000000
+      batch_size: 8
+      sequence_length: 2048
+      learning_rate: 0.00001
+      seed: 45
+      weight_decay: 0.08
+      warmup_steps: 1221
+      shuffle_buffer_records: 65536
+      shuffle_buffer_bytes: 1073741824
+      checkpoint_every: 3052
+      evaluate_every: 3052
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
+
   - name: expanded-conversation-sft
     type: fine-tuning
     objective: assistant-response-modeling
@@ -143,7 +185,7 @@ stages:
       batch_size: 8
       sequence_length: 2048
       learning_rate: 0.000008
-      seed: 45
+      seed: 46
       weight_decay: 0.04
       warmup_steps: 305
       shuffle_buffer_records: 32768

@@ -239,8 +239,24 @@ func TestConversationTwoExtendsConversationOneWithNewDialogueData(t *testing.T) 
 	if variant.Base != nil || variant.Architecture != baseline.Architecture || variant.Interaction != baseline.Interaction {
 		t.Fatalf("conversation2 model contract = %+v", variant)
 	}
-	if len(variant.Stages) != len(baseline.Stages)+1 || !reflect.DeepEqual(variant.Stages[:len(baseline.Stages)], baseline.Stages) {
+	if len(variant.Stages) != len(baseline.Stages)+2 || !reflect.DeepEqual(variant.Stages[:len(baseline.Stages)], baseline.Stages) {
 		t.Fatalf("conversation2 does not preserve the complete conversation1 curriculum")
+	}
+	technical := variant.Stages[len(baseline.Stages)]
+	if technical.Name != "technical-midtrain" || technical.Type != "pre-training" || technical.Objective != "causal-language-modeling" {
+		t.Fatalf("conversation2 technical stage = %+v", technical)
+	}
+	wantTechnical := []string{
+		"community/linux-kernel-mailing-list", "community/git-mailing-list", "community/python-mailing-lists",
+		"community/apache-mailing-lists", "community/gcc-mailing-lists", "community/glibc-mailing-lists",
+		"community/gnu-mailing-lists", "community/qemu-devel-mailing-list", "community/alpine-linux-mailing-list",
+		"community/opensource-mailing-lists", "community/github-archive", "code/stack-v2-html",
+	}
+	if got := corpusPaths(technical.Corpora); !reflect.DeepEqual(got, wantTechnical) {
+		t.Fatalf("conversation2 technical corpora = %v, want %v", got, wantTechnical)
+	}
+	if technical.Parameters.Tokens != 400000000 || technical.Filter == nil || technical.Filter.Languages == nil || !reflect.DeepEqual(technical.Filter.Languages.Include, []string{"en"}) {
+		t.Fatalf("conversation2 technical budget/filter = %+v / %+v", technical.Parameters, technical.Filter)
 	}
 	stage := variant.Stages[len(variant.Stages)-1]
 	if stage.Name != "expanded-conversation-sft" || stage.Objective != "assistant-response-modeling" {
@@ -254,7 +270,7 @@ func TestConversationTwoExtendsConversationOneWithNewDialogueData(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 12099977216 {
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 12499992576 {
 		t.Fatalf("conversation2 forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
