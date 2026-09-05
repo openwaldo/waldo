@@ -619,6 +619,21 @@ func runModelBOM(context Context, args []string, stdout, stderr io.Writer) error
 }
 
 func runModelTrain(context Context, args []string, stdout, stderr io.Writer) error {
+	hostfilePath := strings.TrimSpace(stringOption(context, "hostfile"))
+	if hostfilePath != "" {
+		return runModelTrainHostfile(context, args, hostfilePath, stdout, stderr)
+	}
+	if context.Command != nil && context.Command.Flags().Changed("rendezvous-port") {
+		return fmt.Errorf("--rendezvous-port requires --hostfile")
+	}
+	cluster, err := trainingClusterFromFlags(context, 0)
+	if err != nil {
+		return err
+	}
+	return runModelTrainWithCluster(context, args, cluster, nil, stdout, stderr)
+}
+
+func runModelTrainWithCluster(context Context, args []string, cluster training.Cluster, handoff *model.MultiNodeHandoff, stdout, stderr io.Writer) error {
 	name, inputs := args[0], args[1:]
 	composePath, err := trainingComposeInput(inputs)
 	if err != nil {
@@ -633,11 +648,7 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 				return fmt.Errorf("--%s cannot be used with compose %q; compose stages define their own parameters", flag, composePath)
 			}
 		}
-		cluster, err := trainingClusterFromFlags(context, 0)
-		if err != nil {
-			return err
-		}
-		return runModelComposeTraining(context, name, composePath, cluster, stdout, stderr)
+		return runModelComposeTrainingWithHandoff(context, name, composePath, cluster, handoff, stdout, stderr)
 	}
 	epochs := int64Option(context, "epochs")
 	if epochs < 1 || epochs > 1_000_000 {
@@ -667,13 +678,12 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
-	cluster, err := trainingClusterFromFlags(context, 0)
-	if err != nil {
-		return err
-	}
 	builder, err := configuredModelBuilderForCluster(context, stderr, cluster)
 	if err != nil {
 		return err
+	}
+	if handoff != nil {
+		builder.MultiNode = *handoff
 	}
 	if err := builder.CheckBackend(context.Execution, inspection.Model.Architecture, []string{"causal-language-modeling"}); err != nil {
 		return err
@@ -741,12 +751,22 @@ func trainingClusterFromFlags(commandContext Context, nodeRank int) (training.Cl
 			return training.Cluster{}, fmt.Errorf("--rendezvous-id %q must start with a letter or digit and contain only letters, digits, '.', '_', and '-'; it names the shared plan path on every node", cluster.RendezvousID)
 		}
 	}
-	configuration, err := config.Load()
-	if err != nil {
-		return training.Cluster{}, err
+	interfaceOverride := commandContext.Command != nil && commandContext.Command.Flags().Lookup("nccl-interface") != nil && commandContext.Command.Flags().Changed("nccl-interface")
+	hcaOverride := commandContext.Command != nil && commandContext.Command.Flags().Lookup("nccl-hca") != nil && commandContext.Command.Flags().Changed("nccl-hca")
+	if !interfaceOverride || !hcaOverride {
+		configuration, err := config.Load()
+		if err != nil {
+			return training.Cluster{}, err
+		}
+		cluster.Interface = configuration.Model.NCCLInterface
+		cluster.HCA = configuration.Model.NCCLHCA
 	}
-	cluster.Interface = configuration.Model.NCCLInterface
-	cluster.HCA = configuration.Model.NCCLHCA
+	if interfaceOverride {
+		cluster.Interface = strings.TrimSpace(stringOption(commandContext, "nccl-interface"))
+	}
+	if hcaOverride {
+		cluster.HCA = strings.TrimSpace(stringOption(commandContext, "nccl-hca"))
+	}
 	return cluster, nil
 }
 
@@ -770,8 +790,23 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 	if planWait <= 0 {
 		return fmt.Errorf("--plan-wait %q must be a positive duration such as 30m", planWaitValue)
 	}
-	if err := training.CheckSecondaryTorchTitan(commandContext.Execution, cluster); err != nil {
+	capabilities, err := training.InspectTorchTitanHost(commandContext.Execution)
+	if err != nil {
 		return fmt.Errorf("secondary training preflight: %w", err)
+	}
+	if boolOption(commandContext, "check") {
+		return writeJSON(stdout, capabilities)
+	}
+	if boolOption(commandContext, "plan-stdin") {
+		scratch := strings.TrimSpace(stringOption(commandContext, "scratch"))
+		if scratch == "" || !filepath.IsAbs(scratch) {
+			return fmt.Errorf("launcher-managed train-worker requires an absolute --scratch path")
+		}
+		if err := os.MkdirAll(scratch, 0o700); err != nil {
+			return fmt.Errorf("create launcher-managed scratch: %w", err)
+		}
+		defer os.RemoveAll(scratch)
+		return runSecondaryStreamPlans(commandContext, cluster, scratch, commandContext.Command.InOrStdin(), stdout, stderr)
 	}
 	configuration, err := config.Load()
 	if err != nil {
@@ -837,6 +872,89 @@ func runSecondaryStages(commandContext Context, cluster training.Cluster, modelR
 		}
 		fmt.Fprintf(stderr, "stage %d/%d complete; awaiting the next stage plan\n", plan.StageOrdinal, plan.StageCount)
 	}
+}
+
+func runSecondaryStreamPlans(commandContext Context, cluster training.Cluster, scratch string, input io.Reader, stdout, stderr io.Writer) error {
+	return runSecondaryStreamPlansWithRunner(commandContext, cluster, scratch, input, training.RunSecondaryTorchTitan, stdout, stderr)
+}
+
+func runSecondaryStreamPlansWithRunner(commandContext Context, cluster training.Cluster, scratch string, input io.Reader, run func(context.Context, training.Cluster, training.Request) error, stdout, stderr io.Writer) error {
+	decoder := json.NewDecoder(input)
+	lastRunID := ""
+	for {
+		var plan model.MultiNodePlan
+		if err := decoder.Decode(&plan); err != nil {
+			if errors.Is(err, io.EOF) && lastRunID != "" {
+				return fmt.Errorf("launcher plan stream ended before the final stage")
+			}
+			return fmt.Errorf("read launcher training plan: %w", err)
+		}
+		if err := validateStreamedMultiNodePlan(plan, cluster, lastRunID); err != nil {
+			return err
+		}
+		stageScratch := filepath.Join(scratch, plan.RunID)
+		if err := os.MkdirAll(stageScratch, 0o700); err != nil {
+			return err
+		}
+		request, err := secondaryStreamRequest(plan, stageScratch)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stderr, "joining rendezvous %s as node %d of %d for stage %d/%d\n", cluster.Rendezvous, cluster.NodeRank, cluster.Nodes, plan.StageOrdinal, plan.StageCount)
+		if err := run(commandContext.Execution, cluster, request); err != nil {
+			return err
+		}
+		_ = os.RemoveAll(stageScratch)
+		lastRunID = plan.RunID
+		if plan.StageOrdinal == plan.StageCount {
+			fmt.Fprintln(stdout, "secondary node completed")
+			return nil
+		}
+		fmt.Fprintf(stderr, "stage %d/%d complete; awaiting the next launcher plan\n", plan.StageOrdinal, plan.StageCount)
+	}
+}
+
+func validateStreamedMultiNodePlan(plan model.MultiNodePlan, cluster training.Cluster, previousRunID string) error {
+	if plan.Kind != model.MultiNodePlanKind || plan.Schema != model.MultiNodePlanSchema {
+		return fmt.Errorf("launcher sent unsupported multi-node plan %q schema %d", plan.Kind, plan.Schema)
+	}
+	if plan.Nodes != cluster.Nodes {
+		return fmt.Errorf("launcher plan declares %d nodes, worker expects %d", plan.Nodes, cluster.Nodes)
+	}
+	if plan.StageOrdinal < 1 || plan.StageCount < plan.StageOrdinal {
+		return fmt.Errorf("launcher plan has invalid stage accounting %d/%d", plan.StageOrdinal, plan.StageCount)
+	}
+	if !validRunLabel.MatchString(plan.RunID) || plan.RunID == previousRunID {
+		return fmt.Errorf("launcher plan has invalid or repeated run id %q", plan.RunID)
+	}
+	return nil
+}
+
+func secondaryStreamRequest(plan model.MultiNodePlan, scratch string) (training.Request, error) {
+	if plan.EvaluationSet == nil {
+		return training.Request{}, fmt.Errorf("launcher plan carries no held-out split")
+	}
+	var architecture struct {
+		VocabularySize uint64 `json:"vocabulary_size"`
+		Tokenizer      struct {
+			Name     string `json:"name"`
+			Revision string `json:"revision"`
+		} `json:"tokenizer"`
+	}
+	if err := json.Unmarshal(plan.Architecture, &architecture); err != nil {
+		return training.Request{}, fmt.Errorf("decode launcher plan architecture: %w", err)
+	}
+	tokenizer, _, err := training.ResolveTokenizer(architecture.Tokenizer.Name, architecture.Tokenizer.Revision, architecture.VocabularySize)
+	if err != nil {
+		return training.Request{}, fmt.Errorf("resolve launcher plan tokenizer: %w", err)
+	}
+	return training.Request{
+		RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
+		Conversation: plan.Conversation, ArchitectureSHA256: plan.ArchitectureSHA256,
+		Architecture: plan.Architecture, Parameters: plan.Parameters,
+		EvaluationSet: *plan.EvaluationSet, Tokenizer: tokenizer,
+		ArtifactDirectory: scratch, ArtifactPrefix: "artifacts",
+	}, nil
 }
 
 func awaitMultiNodePlan(ctx context.Context, modelRoot, rendezvousID string, wait time.Duration, skipRunID string, progress io.Writer) (model.MultiNodePlan, error) {
@@ -970,6 +1088,10 @@ func looksLikeIndexPath(value string) bool {
 }
 
 func runModelComposeTraining(context Context, name, path string, cluster training.Cluster, stdout, stderr io.Writer) error {
+	return runModelComposeTrainingWithHandoff(context, name, path, cluster, nil, stdout, stderr)
+}
+
+func runModelComposeTrainingWithHandoff(context Context, name, path string, cluster training.Cluster, handoff *model.MultiNodeHandoff, stdout, stderr io.Writer) error {
 	compose, composePath, err := model.LoadCompose(path)
 	if err != nil {
 		return err
@@ -977,6 +1099,9 @@ func runModelComposeTraining(context Context, name, path string, cluster trainin
 	builder, err := configuredModelBuilderForCluster(context, stderr, cluster)
 	if err != nil {
 		return err
+	}
+	if handoff != nil {
+		builder.MultiNode = *handoff
 	}
 	compose, err = builder.ResolveCompose(context.Execution, compose, true)
 	if err != nil {
@@ -1132,7 +1257,7 @@ func runModelContinue(context Context, args []string, stdout, stderr io.Writer) 
 		fmt.Fprintf(stderr, "continue               recovering checkpoint-backed finalization failure for %s\n", name)
 	}
 	if pending && len(inspection.RunBOMs) > 0 && inspection.RunBOMs[len(inspection.RunBOMs)-1].Execution.Nodes > 1 {
-		return fmt.Errorf("model %q has an interrupted multi-node compose; continue runs single-node and would silently change the topology — re-run `waldo model train %s <compose>` with the original --nodes, --rendezvous, and --rendezvous-id", name, name)
+		return fmt.Errorf("model %q has an interrupted multi-host compose; continue runs single-host and would silently change the topology — re-run `waldo model train %s <compose>` with the original multi-host options (normally --hostfile)", name, name)
 	}
 	composePath, err := model.LatestComposePath(inspection.Path)
 	if err != nil {

@@ -20,7 +20,7 @@ import torch.nn.functional as functional
 
 PROTOCOL_SCHEMA = 1
 WORKER_REVISION = "builtin-pytorch-worker-schema-1-r7"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r8"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r9"
 IS_PRIMARY = True
 
 
@@ -334,11 +334,12 @@ class Trainer:
         self.model.initialize()
         self.initialization = begin.get("initialization")
         if self.initialization is not None:
-            if not self.initialization.get("path"):
+            if self.rank == 0 and not self.initialization.get("path"):
                 raise ValueError("initialization weights frame is missing a path")
-            missing, unexpected = self.model.load_state_dict(load_safetensors(self.initialization["path"]), strict=False)
-            if missing or unexpected:
-                raise ValueError(f"initialization weights do not match architecture: missing={missing}, unexpected={unexpected}")
+            if not self.distributed or self.rank == 0:
+                missing, unexpected = self.model.load_state_dict(load_safetensors(self.initialization["path"]), strict=False)
+                if missing or unexpected:
+                    raise ValueError(f"initialization weights do not match architecture: missing={missing}, unexpected={unexpected}")
         self.resume = begin.get("resume")
         self.resume_paths = None
         if self.resume is not None:
@@ -357,6 +358,9 @@ class Trainer:
         # compute and portable-artifact format, not optimizer state.
         self.model.to(device=self.device, dtype=torch.float32)
         if self.distributed:
+            if self.initialization is not None:
+                for parameter in self.model.parameters():
+                    torch.distributed.broadcast(parameter.data, src=0)
             from torch.distributed._composable.fsdp import fully_shard
 
             fsdp_mesh = self.parallel_dims.get_mesh("fsdp")
@@ -817,40 +821,29 @@ class Trainer:
 def stream_lines(distributed):
     """Yield the canonical input stream's lines on every rank.
 
-    Each node receives its own copy of the stream on the torchrun parent's
-    stdin. With one local rank the process reads the pipe directly. With
-    several local ranks a direct read would race on the shared inherited
-    pipe descriptor and tear frames apart, so local rank 0 reads and fans
-    each line out over a node-local process group.
+    Global rank zero alone receives the stream on its torchrun parent's stdin.
+    It broadcasts each frame to every rank. Secondary hosts therefore need no
+    corpus checkout, object cache, tokenizer, or duplicate record stream.
     """
-    local_world = int(os.environ.get("LOCAL_WORLD_SIZE", "1")) if distributed else 1
-    if distributed:
-        world = torch.distributed.get_world_size()
-        sizes = [None] * world
-        torch.distributed.all_gather_object(sizes, local_world)
-        if len(set(sizes)) != 1:
-            raise ValueError(f"local world sizes differ across nodes: {sorted(set(sizes))}")
-    if local_world <= 1:
+    if not distributed:
         while True:
             line = sys.stdin.readline()
             if not line:
                 return
             yield line
+
     rank = torch.distributed.get_rank()
     world = torch.distributed.get_world_size()
-    if world % local_world != 0:
-        raise ValueError(f"world size {world} is not divisible by local world size {local_world}")
+    local_world = int(os.environ.get("LOCAL_WORLD_SIZE", "1"))
+    sizes = [None] * world
+    torch.distributed.all_gather_object(sizes, local_world)
+    if len(set(sizes)) != 1:
+        raise ValueError(f"local world sizes differ across nodes: {sorted(set(sizes))}")
     local_rank = int(os.environ["LOCAL_RANK"])
-    node_group = None
-    for first in range(0, world, local_world):
-        group = torch.distributed.new_group(list(range(first, first + local_world)))
-        if first <= rank < first + local_world:
-            node_group = group
-    source = (rank // local_world) * local_world
     device = torch.device(f"cuda:{local_rank}")
     while True:
-        values = [sys.stdin.readline() if local_rank == 0 else None]
-        torch.distributed.broadcast_object_list(values, src=source, group=node_group, device=device)
+        values = [sys.stdin.readline() if rank == 0 else None]
+        torch.distributed.broadcast_object_list(values, src=0, device=device)
         if not values[0]:
             return
         yield values[0]

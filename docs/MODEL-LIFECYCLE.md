@@ -550,15 +550,15 @@ pinned in the new run BOM. Instruction tuning and chat templates remain
 separate work.
 
 TorchTitan uses WALDO's same PyTorch model and optimizer implementation but
-launches it through `torch.distributed.run`. Each node receives the same
-deterministic schema-1 stream; local rank zero fans it out to that node's
-ranks. TorchTitan constructs a global device mesh and PyTorch FSDP2 shards
+launches it through `torch.distributed.run`. Global rank zero receives WALDO's
+deterministic, pre-tokenized schema-1 stream and broadcasts it to every rank
+through NCCL. TorchTitan constructs a global device mesh and PyTorch FSDP2 shards
 model parameters across every rank. All ranks participate when gathering
 checkpoints, optimizer state, runtime random state, and terminal weights; only
 global rank zero writes and reports the portable full artifacts. Multi-node
-rendezvous is supported. Scheduler integration, elastic restart, and
-tensor/pipeline parallelism remain later orchestration work. See
-[Multi-node training](MULTI-NODE-TRAINING.md) for the current cluster contract
+rendezvous and rank-0 hostfile launching are supported. Scheduler integration,
+elastic restart, and tensor/pipeline parallelism remain later orchestration
+work. See [Multi-host training](MULTI-NODE-TRAINING.md) for the current cluster contract
 and operator procedure.
 
 NeMo/Megatron and native sparse-MoE execution are planned, not current

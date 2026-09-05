@@ -74,6 +74,32 @@ func TestPublishMultiNodePlanRoundTrips(t *testing.T) {
 	}
 }
 
+func TestPublishMultiNodePlanUsesLauncherCallback(t *testing.T) {
+	root := t.TempDir()
+	var published MultiNodePlan
+	builder := Builder{Root: root, MultiNode: MultiNodeHandoff{
+		RendezvousID: "hostfile-42", Nodes: 2, StageOrdinal: 1, StageCount: 1,
+		Publish: func(plan MultiNodePlan) error {
+			published = plan
+			return nil
+		},
+	}}
+	stage := Stage{Name: "pretrain", Type: "pre-training", Objective: "causal-language-modeling"}
+	if err := builder.publishMultiNodePlan(
+		RunPin{ID: "run0001", Stage: "pretrain"},
+		RunBOM{EvaluationSet: &training.EvaluationSet{Selection: "lowest-sha256-v1"}},
+		PreparedStage{}, json.RawMessage(`{"family":"decoder-transformer"}`), stage, nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if published.RunID != "run0001" || published.Nodes != 2 {
+		t.Fatalf("published plan = %+v", published)
+	}
+	if _, err := os.Stat(MultiNodePlanPath(root, "hostfile-42")); !os.IsNotExist(err) {
+		t.Fatalf("launcher callback must not create a shared plan file: %v", err)
+	}
+}
+
 func TestPublishMultiNodePlanRejectsUnportableInitialization(t *testing.T) {
 	root := t.TempDir()
 	stage := Stage{Name: "train-0001", Type: "pre-training", Objective: "causal-language-modeling"}

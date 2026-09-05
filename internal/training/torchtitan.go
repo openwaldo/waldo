@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-const TorchTitanRevision = "builtin-torchtitan-worker-schema-1-r8"
+const TorchTitanRevision = "builtin-torchtitan-worker-schema-1-r9"
 
 type TorchTitan struct {
 	Python     string
@@ -65,6 +65,7 @@ func (backend TorchTitan) Run(ctx context.Context, request Request) (Observation
 	if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
 		return Observation{}, fmt.Errorf("create TorchTitan artifact directory: %w", err)
 	}
+	request.PreTokenize = true
 	worker, err := os.CreateTemp(request.ArtifactDirectory, ".waldo-torchtitan-worker-*.py")
 	if err != nil {
 		return Observation{}, fmt.Errorf("stage embedded TorchTitan worker: %w", err)
@@ -136,6 +137,14 @@ type torchTitanProbe struct {
 	TorchVersion      string             `json:"torch_version"`
 	TorchTitanVersion string             `json:"torchtitan_version"`
 	Devices           []torchTitanDevice `json:"devices"`
+}
+
+type TorchTitanHost struct {
+	Python            string        `json:"python"`
+	PythonVersion     string        `json:"python_version"`
+	TorchVersion      string        `json:"torch_version"`
+	TorchTitanVersion string        `json:"torchtitan_version"`
+	Accelerators      []Accelerator `json:"accelerators"`
 }
 
 type TorchTitanResolver struct {
@@ -316,6 +325,32 @@ func CheckSecondaryTorchTitan(ctx context.Context, cluster Cluster) error {
 	return err
 }
 
+// InspectTorchTitanHost probes the runtime and every visible accelerator on a
+// prospective TorchTitan node without resolving a model architecture.
+func InspectTorchTitanHost(ctx context.Context) (TorchTitanHost, error) {
+	if runtime.GOOS != "linux" {
+		return TorchTitanHost{}, fmt.Errorf("TorchTitan training requires Linux; this host is %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	python, facts, failures := firstUsableTorchTitan(ctx, pythonCandidates(), probeTorchTitan)
+	if python == "" {
+		detail := strings.Join(failures, "; ")
+		if detail != "" {
+			detail = ": " + detail
+		}
+		return TorchTitanHost{}, fmt.Errorf("no usable TorchTitan runtime found%s", detail)
+	}
+	host := TorchTitanHost{
+		Python: python, PythonVersion: facts.PythonVersion, TorchVersion: facts.TorchVersion,
+		TorchTitanVersion: facts.TorchTitanVersion,
+	}
+	for _, device := range facts.Devices {
+		host.Accelerators = append(host.Accelerators, Accelerator{
+			Manufacturer: device.Manufacturer, Model: device.Model, MemoryBytes: device.MemoryBytes,
+		})
+	}
+	return host, nil
+}
+
 func resolveSecondaryTorchTitan(ctx context.Context, cluster Cluster) (TorchTitan, error) {
 	if runtime.GOOS != "linux" {
 		return TorchTitan{}, fmt.Errorf("TorchTitan training requires Linux; this host is %s/%s", runtime.GOOS, runtime.GOARCH)
@@ -329,13 +364,18 @@ func resolveSecondaryTorchTitan(ctx context.Context, cluster Cluster) (TorchTita
 	if cluster.Rendezvous == "" || cluster.RendezvousID == "" {
 		return TorchTitan{}, fmt.Errorf("secondary TorchTitan requires a rendezvous endpoint and id")
 	}
-	python, facts, failures := firstUsableTorchTitan(ctx, pythonCandidates(), probeTorchTitan)
-	if python == "" {
-		detail := strings.Join(failures, "; ")
-		if detail != "" {
-			detail = ": " + detail
-		}
-		return TorchTitan{}, fmt.Errorf("no usable TorchTitan runtime found for the secondary node%s", detail)
+	host, err := InspectTorchTitanHost(ctx)
+	if err != nil {
+		return TorchTitan{}, fmt.Errorf("secondary node: %w", err)
 	}
-	return backendForCluster(python, facts, cluster, true), nil
+	facts := torchTitanProbe{
+		PythonVersion: host.PythonVersion, TorchVersion: host.TorchVersion,
+		TorchTitanVersion: host.TorchTitanVersion,
+	}
+	for _, device := range host.Accelerators {
+		facts.Devices = append(facts.Devices, torchTitanDevice{
+			Manufacturer: device.Manufacturer, Model: device.Model, MemoryBytes: device.MemoryBytes,
+		})
+	}
+	return backendForCluster(host.Python, facts, cluster, true), nil
 }

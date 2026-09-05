@@ -202,10 +202,11 @@ func defaultedTokenizer(spec TokenizerSpec) TokenizerSpec {
 }
 
 func workerBeginFromRequest(request Request) WorkerBegin {
+	tokenizer := defaultedTokenizer(request.Tokenizer)
 	begin := WorkerBegin{
 		RunID: request.RunID, Stage: request.Stage, Objective: request.Objective,
 		ArchitectureSHA256: request.ArchitectureSHA256, Architecture: request.Architecture,
-		Parameters: request.Parameters, EvaluationSet: request.EvaluationSet, Tokenizer: request.Tokenizer,
+		Parameters: request.Parameters, EvaluationSet: request.EvaluationSet, Tokenizer: tokenizer,
 	}
 	if request.Initialization != nil {
 		begin.Initialization = &WorkerInitialization{
@@ -228,8 +229,9 @@ func workerBeginFromRequest(request Request) WorkerBegin {
 
 func tokenizedWorkerSources(request Request) (RecordSource, RecordSource, error) {
 	records, evaluationRecords := request.Records, request.EvaluationRecords
-	if request.Tokenizer.Name != "byte" || request.Objective == "assistant-response-modeling" || request.Conversation.Template != "" {
-		_, codec, err := ResolveTokenizer(request.Tokenizer.Name, request.Tokenizer.Revision, uint64(request.Tokenizer.VocabularySize))
+	tokenizer := defaultedTokenizer(request.Tokenizer)
+	if request.PreTokenize || tokenizer.Name != "byte" || request.Objective == "assistant-response-modeling" || request.Conversation.Template != "" {
+		_, codec, err := ResolveTokenizer(tokenizer.Name, tokenizer.Revision, uint64(tokenizer.VocabularySize))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -242,20 +244,8 @@ func tokenizedWorkerSources(request Request) (RecordSource, RecordSource, error)
 }
 
 func runWorkerStreamJoin(ctx context.Context, label string, command *exec.Cmd, request Request) (Observation, error) {
-	if request.Records == nil {
-		return Observation{}, fmt.Errorf("%s secondary node received no canonical record stream", label)
-	}
-	request.Tokenizer = defaultedTokenizer(request.Tokenizer)
-	records, evaluationRecords, tokenizerErr := tokenizedWorkerSources(request)
-	if tokenizerErr != nil {
-		return Observation{}, tokenizerErr
-	}
 	if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
 		return Observation{}, fmt.Errorf("create %s artifact directory: %w", label, err)
-	}
-	stdin, err := command.StdinPipe()
-	if err != nil {
-		return Observation{}, err
 	}
 	var output cappedBuffer
 	command.Stdout = &output
@@ -267,34 +257,14 @@ func runWorkerStreamJoin(ctx context.Context, label string, command *exec.Cmd, r
 	if err := command.Start(); err != nil {
 		return Observation{}, fmt.Errorf("start %s secondary node: %w", label, err)
 	}
-	exited := make(chan error, 1)
-	go func() {
-		exitErr := awaitProcessExit(command)
-		_ = stdin.Close()
-		exited <- exitErr
-	}()
 	defer func() { go func() { _ = command.Wait() }() }()
-	writeErr := WriteWorkerInput(ctx, stdin, workerBeginFromRequest(request), records, evaluationRecords)
-	closeErr := stdin.Close()
-	if errors.Is(closeErr, os.ErrClosed) {
-		closeErr = nil
-	}
-	if writeStoppedByWorkerExit(writeErr) {
-		writeErr = nil
-	}
-	waitErr := <-exited
+	waitErr := awaitProcessExit(command)
 	if waitErr != nil {
 		terminateWorkerGroup(command)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return Observation{}, ctxErr
 		}
 		return Observation{}, fmt.Errorf("%s secondary node exited: %w%s", label, waitErr, workerStderr(output.String()))
-	}
-	if writeErr != nil && !errors.Is(writeErr, io.ErrClosedPipe) {
-		return Observation{}, fmt.Errorf("stream records to %s secondary node: %w%s", label, writeErr, workerStderr(output.String()))
-	}
-	if closeErr != nil {
-		return Observation{}, fmt.Errorf("close %s secondary node input: %w", label, closeErr)
 	}
 	return Observation{}, nil
 }

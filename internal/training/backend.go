@@ -185,6 +185,7 @@ type Request struct {
 	Records            RecordSource
 	EvaluationRecords  RecordSource
 	EvaluationSet      EvaluationSet
+	PreTokenize        bool
 	Initialization     *Initialization
 	Resume             *ResumePoint
 	ArtifactDirectory  string

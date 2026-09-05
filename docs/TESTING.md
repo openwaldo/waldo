@@ -38,16 +38,16 @@ Individual end-to-end tests are available under `testing/e2e/`:
 ```
 
 `model-torchtitan-multinode.sh` is opt-in and uses two GPUs on one Linux host
-to exercise the same two-node rendezvous and plan-handoff code without needing
-two machines:
+to exercise the internal node-rank compatibility path without needing two
+machines:
 
 ```bash
 WALDO_E2E_MULTINODE=1 ./testing/e2e/model-torchtitan-multinode.sh
 ```
 
 It is not a substitute for the two-host acceptance test in
-[Multi-node training](MULTI-NODE-TRAINING.md), which additionally exercises
-shared storage, routing, firewall, and NCCL interface configuration.
+[Multi-host training](MULTI-NODE-TRAINING.md), which additionally exercises
+hostfile parsing, SSH staging, routing, firewall, and inter-host NCCL.
 
 ## Live tests
 

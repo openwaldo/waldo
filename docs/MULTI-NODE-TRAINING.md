@@ -1,121 +1,104 @@
-# Multi-node TorchTitan training
+# Multi-host TorchTitan training
 
-WALDO supports homogeneous, non-elastic multi-node training through TorchTitan
-and PyTorch FSDP2. This is model sharding across all ranks, not a scheduler.
+WALDO supports homogeneous, non-elastic multi-host training through TorchTitan
+and PyTorch FSDP2. The normal interface is one rank-0 command with a hostfile.
 
-## Cluster contract
+## Hostfile
 
-Every host must have:
+The hostfile contains one SSH host per line. Empty lines and `#` comments are
+ignored. The first host is rank 0 and must be the host running the command:
 
-- Linux, the same WALDO binary, and compatible PyTorch and TorchTitan installs;
-- the same number and class of visible GPUs;
-- a shared, writable `model.root` mounted at the same absolute path;
-- access to every corpus object and the same lookaside credentials; and
-- unrestricted node-to-node traffic on the selected training interface.
-
-The primary writes stage plans beneath
-`<model.root>/.multinode/<rendezvous-id>/`. Secondary hosts read those plans,
-independently materialize and verify the pinned corpus shards, reproduce the
-held-out split, and join the TorchTitan rendezvous. The shared model root also
-makes initialization weights available to every host. Lookaside cache and
-scratch paths should be fast node-local storage; they do not need to be shared.
-
-All hosts must expose the same GPU count. The current worker checks that local
-world sizes agree before training. Use equivalent GPU models and memory sizes;
-the run BOM records the primary host's detected accelerator topology as the
-homogeneous topology for the cluster.
-
-The compose `batch_size` is one logical batch processed by the globally sharded
-model. It is not multiplied by the number of nodes.
-
-## Configure each host
-
-Use the same shared model path and backend everywhere. Give each host its own
-local cache and scratch paths:
-
-```console
-waldo config set model.root /shared/waldo/models
-waldo config set model.backend torchtitan
-waldo config set lookaside s3://openwaldo/lookaside
-waldo config set lookaside.cache /local/waldo/cache
-waldo config set lookaside.scratch /local/waldo/scratch
+```text
+train-0
+train-1
+train-2
+train-3
 ```
 
-When automatic NCCL interface selection is unsuitable, set the interface on
-every host. Set the HCA only when using InfiniBand or RoCE and use the value
-appropriate to that host:
+Hostfile entries contain no slots or GPU counts. WALDO uses every visible GPU
+and rejects hosts whose GPU count, model, memory, Python, PyTorch, or TorchTitan
+versions differ. Names may be SSH aliases, but the first name must also be
+resolvable by every training host as the rank-0 rendezvous address.
+
+`--hostfile` selects TorchTitan. It accepts `model.backend=auto` or
+`model.backend=torchtitan` and rejects explicit MLX, PyTorch, or fake backends.
+
+## Host requirements
+
+Every host needs:
+
+- Linux with compatible GPU drivers, PyTorch, TorchTitan, and NCCL;
+- passwordless, non-interactive SSH from rank 0;
+- the same number and class of visible GPUs; and
+- unrestricted node-to-node traffic on the selected training interface.
+
+WALDO copies the exact rank-0 binary to a SHA-256-addressed directory under
+`/tmp/waldo-launch/` on each secondary and verifies it before use. WALDO does
+not install or modify Python, PyTorch, TorchTitan, GPU drivers, or NCCL.
+
+NFS and shared paths are not required. Rank 0 alone uses the index, lookaside
+credentials, corpus cache, and durable `model.root`. Secondary hosts use only
+launcher-managed local scratch.
+
+Rank 0 resolves, verifies, filters, orders, and tokenizes the corpus. It sends
+compact token frames and masks through the NCCL process group; raw Parquet
+objects are not copied to secondary hosts. Every rank participates in the
+globally FSDP2-sharded model step. The compose `batch_size` remains one logical
+batch and is not multiplied by the host count.
+
+## Network configuration
+
+When automatic NCCL interface selection is unsuitable, configure rank 0. The
+launcher passes the resolved settings to every worker:
 
 ```console
 waldo config set model.nccl.interface ib0
 waldo config set model.nccl.hca mlx5_0
 ```
 
-The primary's rendezvous address must be reachable from every secondary. Allow
-the rendezvous port and NCCL peer traffic through host and network firewalls.
+The HCA setting is only appropriate for InfiniBand or RoCE. Allow the selected
+rendezvous port and NCCL peer traffic through every firewall.
 
 ## Start a run
 
-For four hosts, choose one unique rendezvous ID. Start ranks 1 through 3 first,
-one command on each secondary host:
+Run one command on the first host:
 
 ```console
-# host 1
-waldo model train-worker --nodes 4 --node-rank 1 \
-  --rendezvous train-0.example:29500 --rendezvous-id experiment-001 \
-  --plan-wait 24h
-
-# host 2
-waldo model train-worker --nodes 4 --node-rank 2 \
-  --rendezvous train-0.example:29500 --rendezvous-id experiment-001 \
-  --plan-wait 24h
-
-# host 3
-waldo model train-worker --nodes 4 --node-rank 3 \
-  --rendezvous train-0.example:29500 --rendezvous-id experiment-001 \
-  --plan-wait 24h
+waldo model train my-model /path/to/compose.yaml --hostfile /path/to/hosts
 ```
 
-Then start rank 0 on the primary host:
+The default rendezvous port is 29500. Override it when necessary:
 
 ```console
 waldo model train my-model /path/to/compose.yaml \
-  --nodes 4 \
-  --rendezvous train-0.example:29500 \
-  --rendezvous-id experiment-001
+  --hostfile /path/to/hosts --rendezvous-port 29600
 ```
 
-The values of `--nodes`, `--rendezvous`, and `--rendezvous-id` must match on
-every host. Node ranks must be unique and cover `0..nodes-1`; `model train`
-owns rank 0. A multi-stage compose needs only these commands: each secondary
-waits for and joins every stage in order.
+WALDO performs all host and runtime checks before corpus materialization. It
+then launches and supervises every secondary, relays their output with host
+labels, and publishes each compose stage directly over the launcher channel.
 
-The primary resolves and verifies every stage before publishing the first
-plan. Set `--plan-wait` long enough for that preflight; the default is 24 hours.
-Secondaries validate their TorchTitan runtime immediately, before waiting for a
-plan or downloading corpus objects.
+## Failure behavior
 
-## Failure and restart behavior
+This implementation is deliberately non-elastic. A secondary failure cancels
+rank 0; a rank-0 failure terminates the SSH workers. Multi-host checkpoint
+resume is not yet supported. Remove an incomplete model explicitly or choose a
+new model name, then restart with a fresh command.
 
-This first implementation is deliberately non-elastic. If any host exits, stop
-the remaining commands. WALDO does not currently resume a multi-node run from
-its distributed checkpoint. Remove the incomplete model explicitly or choose a
-new model name, then start every host again with a fresh rendezvous ID.
-
-The primary owns the model record, run BOM, telemetry, checkpoints, and terminal
-Safetensors. Secondary hosts never author model lifecycle records. A successful
-stage removes its temporary plan handoff.
+Rank 0 owns the model record, run BOM, telemetry, checkpoints, and terminal
+Safetensors. Secondary hosts never author durable lifecycle records.
 
 ## Acceptance test
 
-Before a long run, use a tiny compose with two optimizer steps, checkpoint and
-evaluation intervals of one, and disposable model and rendezvous names. Verify:
+Before a long run, use a disposable model and a tiny compose with two optimizer
+steps and checkpoint/evaluation intervals of one. Verify:
 
-1. every host reports that its process group joined;
-2. the run BOM records the intended node count and total world size;
-3. the primary writes two complete checkpoints and terminal Safetensors;
+1. every host passes topology preflight and reports its process group joined;
+2. the run BOM records the intended node count and global world size;
+3. rank 0 writes both checkpoints and terminal Safetensors;
 4. every secondary exits successfully; and
-5. `<model.root>/.multinode/<rendezvous-id>` is absent after completion.
+5. no secondary downloads a corpus object.
 
-The repository's hardware test validates this lifecycle on one host with two
-GPUs. A real two-host smoke test must additionally confirm the shared mount,
-rendezvous route, firewall, and NCCL transport.
+The repository's opt-in multi-node hardware test exercises rendezvous and FSDP2
+on two GPUs in one Linux host. A real hostfile smoke test additionally validates
+SSH launch, routing, firewall, and inter-host NCCL transport.

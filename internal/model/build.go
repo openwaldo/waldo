@@ -51,6 +51,8 @@ type MultiNodeHandoff struct {
 	Nodes        int
 	StageOrdinal int
 	StageCount   int
+	Publish      func(MultiNodePlan) error
+	Cleanup      func()
 }
 
 // ResolveBackend selects and validates the same training harness used by a
@@ -398,7 +400,11 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 		if err := builder.publishMultiNodePlan(pin, runBOM, prepared, architectureJSON, stage, resume); err != nil {
 			return Inspection{}, err
 		}
-		defer os.RemoveAll(filepath.Dir(MultiNodePlanPath(builder.Root, builder.MultiNode.RendezvousID)))
+		if builder.MultiNode.Cleanup != nil {
+			defer builder.MultiNode.Cleanup()
+		} else {
+			defer os.RemoveAll(filepath.Dir(MultiNodePlanPath(builder.Root, builder.MultiNode.RendezvousID)))
+		}
 	}
 	now := builder.clock()
 	runDirectory := filepath.Join(modelPath, "runs", runDirectoryName(pin))
@@ -556,12 +562,6 @@ func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared 
 	if builder.MultiNode.Nodes < 2 {
 		return fmt.Errorf("stage %s: multi-node plan would publish %d nodes; a multi-node run needs at least two", stage.Name, builder.MultiNode.Nodes)
 	}
-	path := MultiNodePlanPath(builder.Root, builder.MultiNode.RendezvousID)
-	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("stage %s: a multi-node plan already exists at %s (leftover from a previous run); remove it or use a fresh --rendezvous-id", stage.Name, path)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stage %s: check for an existing multi-node plan: %w", stage.Name, err)
-	}
 	plan := MultiNodePlan{
 		Kind: MultiNodePlanKind, Schema: MultiNodePlanSchema,
 		RunID: pin.ID, Stage: stage.Name, StageOrdinal: builder.MultiNode.StageOrdinal, StageCount: builder.MultiNode.StageCount,
@@ -575,13 +575,26 @@ func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared 
 	}
 	if runBOM.Initialization != nil {
 		if runBOM.Initialization.Path == "" {
-			return fmt.Errorf("stage %s: initialization weights have no path to share with secondary nodes", stage.Name)
+			return fmt.Errorf("stage %s: initialization weights have no managed path on the primary host", stage.Name)
 		}
 		relative, err := filepath.Rel(builder.Root, runBOM.Initialization.Path)
 		if err != nil || !filepath.IsLocal(relative) {
-			return fmt.Errorf("stage %s: initialization weights at %s are outside the shared model root %s; secondary nodes cannot reach them", stage.Name, runBOM.Initialization.Path, builder.Root)
+			return fmt.Errorf("stage %s: initialization weights at %s are outside the primary model root %s; multi-host initialization must use a managed model artifact", stage.Name, runBOM.Initialization.Path, builder.Root)
 		}
 		plan.InitializationPath = filepath.ToSlash(relative)
+	}
+	if builder.MultiNode.Publish != nil {
+		if err := builder.MultiNode.Publish(plan); err != nil {
+			return fmt.Errorf("publish multi-node plan to secondary nodes: %w", err)
+		}
+		builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunRunning, Message: "published multi-node plan to secondary nodes"})
+		return nil
+	}
+	path := MultiNodePlanPath(builder.Root, builder.MultiNode.RendezvousID)
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("stage %s: a multi-node plan already exists at %s (leftover from a previous run); remove it or use a fresh --rendezvous-id", stage.Name, path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stage %s: check for an existing multi-node plan: %w", stage.Name, err)
 	}
 	if err := writeJSONAtomic(path, plan); err != nil {
 		return fmt.Errorf("publish multi-node plan for secondary nodes: %w", err)
