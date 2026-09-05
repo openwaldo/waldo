@@ -153,6 +153,11 @@ esac
 	if !strings.Contains(output.String(), "[train-1] worker accepted launcher plan") {
 		t.Fatalf("worker output = %q", output.String())
 	}
+	for _, expected := range []string{"multi-host preflight  rank 0 ready", "multi-host preflight  staging WALDO on train-1", "multi-host preflight  train-1 ready"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("preflight output %q omits %q", output.String(), expected)
+		}
+	}
 }
 
 func TestHostfileWorkerArgumentsCarryNCCLSettings(t *testing.T) {
@@ -169,5 +174,13 @@ func TestHostfileWorkerArgumentsCarryNCCLSettings(t *testing.T) {
 		if !strings.Contains(arguments, expected) {
 			t.Fatalf("worker arguments %q omit %q", arguments, expected)
 		}
+	}
+}
+
+func TestHostfileRemoteInvocationSelectsRankZeroPythonDirectory(t *testing.T) {
+	session := hostfileSession{pythonDir: "/opt/waldo-python/bin"}
+	invocation := session.remoteInvocation([]string{"/tmp/waldo", "model", "train-worker"})
+	if !strings.HasPrefix(invocation, "PATH='/opt/waldo-python/bin:/usr/local/bin:/usr/bin:/bin' ") {
+		t.Fatalf("remote invocation = %q", invocation)
 	}
 }

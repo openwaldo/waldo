@@ -139,6 +139,7 @@ type hostfileSession struct {
 	binarySHA256 string
 	remoteBinary string
 	remoteRoot   string
+	pythonDir    string
 	workers      []*hostfileWorker
 	output       io.Writer
 	outputMu     sync.Mutex
@@ -170,8 +171,11 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 		cancel()
 		return nil, fmt.Errorf("rank 0 TorchTitan preflight: %w", err)
 	}
+	session.pythonDir = filepath.Dir(local.Python)
+	fmt.Fprintf(output, "multi-host preflight  rank 0 ready: %s\n", torchTitanHostSummary(local))
 	for rank, host := range hostfile.Hosts[1:] {
 		nodeRank := rank + 1
+		fmt.Fprintf(output, "multi-host preflight  staging WALDO on %s\n", host)
 		if err := session.stageBinary(host); err != nil {
 			session.abort()
 			return nil, err
@@ -185,6 +189,7 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 			session.abort()
 			return nil, fmt.Errorf("host %s is incompatible with rank 0: %w", host, err)
 		}
+		fmt.Fprintf(output, "multi-host preflight  %s ready: %s\n", host, torchTitanHostSummary(remote))
 	}
 	for rank, host := range hostfile.Hosts[1:] {
 		worker, err := session.startWorker(host, rank+1)
@@ -236,7 +241,7 @@ func (session *hostfileSession) stageBinary(host string) error {
 
 func (session *hostfileSession) probeHost(host string, rank int) (training.TorchTitanHost, error) {
 	arguments := session.workerArguments(rank, true)
-	command := session.sshCommand(host, joinRemoteArguments(arguments))
+	command := session.sshCommand(host, session.remoteInvocation(arguments))
 	var stdout, stderr strings.Builder
 	command.Stdout, command.Stderr = &stdout, &stderr
 	if err := command.Run(); err != nil {
@@ -247,6 +252,10 @@ func (session *hostfileSession) probeHost(host string, rank int) (training.Torch
 		return training.TorchTitanHost{}, fmt.Errorf("decode TorchTitan preflight from %s: %w%s", host, err, commandOutput(stdout.String()))
 	}
 	return capabilities, nil
+}
+
+func torchTitanHostSummary(host training.TorchTitanHost) string {
+	return fmt.Sprintf("%d GPUs, Python %s, PyTorch %s, TorchTitan %s", len(host.Accelerators), host.PythonVersion, host.TorchVersion, host.TorchTitanVersion)
 }
 
 func compareTorchTitanHosts(primary, secondary training.TorchTitanHost) error {
@@ -276,7 +285,7 @@ func (session *hostfileSession) workerArguments(rank int, check bool) []string {
 }
 
 func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWorker, error) {
-	command := session.sshCommand(host, joinRemoteArguments(session.workerArguments(rank, false)))
+	command := session.sshCommand(host, session.remoteInvocation(session.workerArguments(rank, false)))
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := command.StdinPipe()
 	if err != nil {
@@ -304,6 +313,11 @@ func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWor
 		}
 	}()
 	return worker, nil
+}
+
+func (session *hostfileSession) remoteInvocation(arguments []string) string {
+	path := strings.Join([]string{session.pythonDir, "/usr/local/bin", "/usr/bin", "/bin"}, ":")
+	return "PATH=" + shellQuote(path) + " " + joinRemoteArguments(arguments)
 }
 
 func (session *hostfileSession) copyWorkerOutput(host string, source io.Reader) {

@@ -337,7 +337,7 @@ func InspectTorchTitanHost(ctx context.Context) (TorchTitanHost, error) {
 		if detail != "" {
 			detail = ": " + detail
 		}
-		return TorchTitanHost{}, fmt.Errorf("no usable TorchTitan runtime found%s", detail)
+		return TorchTitanHost{}, fmt.Errorf("no usable TorchTitan runtime found; install a matching PyTorch and TorchTitan environment, then verify `python3 -c 'import torch, torchtitan; print(torch.__version__, torch.cuda.is_available())'`; see https://pytorch.org/get-started/locally/ and https://github.com/pytorch/torchtitan#installation%s", detail)
 	}
 	host := TorchTitanHost{
 		Python: python, PythonVersion: facts.PythonVersion, TorchVersion: facts.TorchVersion,
