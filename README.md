@@ -15,8 +15,8 @@ contract to evolve.
 - Read and publish canonical Parquet objects through local or S3 lookaside
   storage.
 - Create corpus, training-run, model, and release provenance records.
-- Forecast and train models through MLX, PyTorch, or single-node TorchTitan
-  when the required runtime is installed.
+- Forecast and train models through MLX, PyTorch, or single- and multi-node
+  TorchTitan when the required runtime is installed.
 - Export native WALDO, Hugging Face, MLX, GGUF, and Ollama packages.
 
 WALDO does not prove that a license assertion is legally correct, that model

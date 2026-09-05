@@ -770,6 +770,9 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 	if planWait <= 0 {
 		return fmt.Errorf("--plan-wait %q must be a positive duration such as 30m", planWaitValue)
 	}
+	if err := training.CheckSecondaryTorchTitan(commandContext.Execution, cluster); err != nil {
+		return fmt.Errorf("secondary training preflight: %w", err)
+	}
 	configuration, err := config.Load()
 	if err != nil {
 		return err

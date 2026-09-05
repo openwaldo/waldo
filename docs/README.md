@@ -30,6 +30,8 @@ Read these in order:
 
 - [Model compose](MODEL-COMPOSE.md): portable training-plan schema.
 - [Model lifecycle](MODEL-LIFECYCLE.md): managed models, runs, and backends.
+- [Multi-node training](MULTI-NODE-TRAINING.md): TorchTitan cluster
+  requirements and exact operator commands.
 - [Model exports](MODEL-EXPORTS.md): release formats and quantization.
 - [Foundation and sparse-MoE plan](FOUNDATION-MOE-PLAN.md): planned model
   lineages, native artifacts, and NeMo/Megatron execution.

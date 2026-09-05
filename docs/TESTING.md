@@ -37,6 +37,18 @@ Individual end-to-end tests are available under `testing/e2e/`:
 ./testing/e2e/model-torchtitan-multinode.sh
 ```
 
+`model-torchtitan-multinode.sh` is opt-in and uses two GPUs on one Linux host
+to exercise the same two-node rendezvous and plan-handoff code without needing
+two machines:
+
+```bash
+WALDO_E2E_MULTINODE=1 ./testing/e2e/model-torchtitan-multinode.sh
+```
+
+It is not a substitute for the two-host acceptance test in
+[Multi-node training](MULTI-NODE-TRAINING.md), which additionally exercises
+shared storage, routing, firewall, and NCCL interface configuration.
+
 ## Live tests
 
 Live tests are never run by `testing/all.sh`. Their environment variables are

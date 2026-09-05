@@ -298,20 +298,36 @@ func probeTorchTitan(ctx context.Context, python string) (torchTitanProbe, error
 }
 
 func RunSecondaryTorchTitan(ctx context.Context, cluster Cluster, request Request) error {
-	if runtime.GOOS != "linux" {
-		return fmt.Errorf("TorchTitan training requires Linux; this host is %s/%s", runtime.GOOS, runtime.GOARCH)
-	}
-	if cluster.Nodes < 2 {
-		return fmt.Errorf("secondary TorchTitan requires at least two nodes")
-	}
-	if cluster.NodeRank < 1 || cluster.NodeRank >= cluster.Nodes {
-		return fmt.Errorf("secondary TorchTitan node rank %d is out of range for %d nodes", cluster.NodeRank, cluster.Nodes)
-	}
-	if cluster.Rendezvous == "" || cluster.RendezvousID == "" {
-		return fmt.Errorf("secondary TorchTitan requires a rendezvous endpoint and id")
+	backend, err := resolveSecondaryTorchTitan(ctx, cluster)
+	if err != nil {
+		return err
 	}
 	if err := validateTorchArchitecture(request.Architecture, "TorchTitan"); err != nil {
 		return err
+	}
+	_, err = backend.Run(ctx, request)
+	return err
+}
+
+// CheckSecondaryTorchTitan verifies the secondary host runtime before WALDO
+// waits for a primary plan or materializes any corpus objects.
+func CheckSecondaryTorchTitan(ctx context.Context, cluster Cluster) error {
+	_, err := resolveSecondaryTorchTitan(ctx, cluster)
+	return err
+}
+
+func resolveSecondaryTorchTitan(ctx context.Context, cluster Cluster) (TorchTitan, error) {
+	if runtime.GOOS != "linux" {
+		return TorchTitan{}, fmt.Errorf("TorchTitan training requires Linux; this host is %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	if cluster.Nodes < 2 {
+		return TorchTitan{}, fmt.Errorf("secondary TorchTitan requires at least two nodes")
+	}
+	if cluster.NodeRank < 1 || cluster.NodeRank >= cluster.Nodes {
+		return TorchTitan{}, fmt.Errorf("secondary TorchTitan node rank %d is out of range for %d nodes", cluster.NodeRank, cluster.Nodes)
+	}
+	if cluster.Rendezvous == "" || cluster.RendezvousID == "" {
+		return TorchTitan{}, fmt.Errorf("secondary TorchTitan requires a rendezvous endpoint and id")
 	}
 	python, facts, failures := firstUsableTorchTitan(ctx, pythonCandidates(), probeTorchTitan)
 	if python == "" {
@@ -319,9 +335,7 @@ func RunSecondaryTorchTitan(ctx context.Context, cluster Cluster, request Reques
 		if detail != "" {
 			detail = ": " + detail
 		}
-		return fmt.Errorf("no usable TorchTitan runtime found for the secondary node%s", detail)
+		return TorchTitan{}, fmt.Errorf("no usable TorchTitan runtime found for the secondary node%s", detail)
 	}
-	backend := backendForCluster(python, facts, cluster, true)
-	_, err := backend.Run(ctx, request)
-	return err
+	return backendForCluster(python, facts, cluster, true), nil
 }
