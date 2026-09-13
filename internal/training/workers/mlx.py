@@ -20,7 +20,7 @@ from mlx.utils import tree_flatten, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r8"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r9"
 
 
 def emit(kind, **payload):
@@ -221,6 +221,9 @@ class Trainer:
         self.final_loss = None
         self.started = time.perf_counter()
         self.last_report = self.started
+        self.last_step_finished = self.started
+        self.data_wait_seconds = 0.0
+        self.skipped_steps = 0
         self.last_report_tokens = 0
 
         tokenizer = begin["tokenizer"]
@@ -230,6 +233,7 @@ class Trainer:
         self.tokenizer = FramingTokenizer(tokenizer)
         mx.random.seed(self.parameters["seed"])
         self.model = DecoderLM(self.architecture)
+        self.parameter_count = sum(value.size for _, value in tree_flatten(self.model.parameters()))
         self.model.train()
         self.initialization = begin.get("initialization")
         if self.initialization is not None:
@@ -250,6 +254,10 @@ class Trainer:
         if self.resume is not None:
             self.restore_checkpoint(self.resume)
         self.loss_and_grad = nn.value_and_grad(self.model, self.loss)
+        reset_peak_memory = getattr(mx, "reset_peak_memory", None)
+        if reset_peak_memory is not None:
+            reset_peak_memory()
+        self.last_step_finished = time.perf_counter()
 
     def logical(self, name):
         return "/".join(part for part in (self.artifact_prefix, name) if part)
@@ -325,24 +333,42 @@ class Trainer:
         if self.replay_steps > 0:
             self.replay_steps -= 1
             self.batch = []
+            self.last_step_finished = time.perf_counter()
             return
         step_started = time.perf_counter()
+        self.data_wait_seconds += max(0.0, step_started - self.last_step_finished)
         tokens = mx.array([item[0] for item in self.batch], dtype=mx.int32)
         mask = mx.array([item[1] for item in self.batch], dtype=mx.float32)
         inputs = tokens[:, :-1]
         targets = tokens[:, 1:]
         next_step = self.step_number + 1
+        report_every = max(1, self.target_steps // 100)
+        should_report = next_step == 1 or next_step == self.target_steps or next_step % report_every == 0
         current_learning_rate = self.learning_rate(next_step)
         self.optimizer.learning_rate = current_learning_rate
         mx.random.seed(self.parameters["seed"] ^ next_step)
         loss, gradients = self.loss_and_grad(self.model, inputs, targets, mask)
+        gradient_norm_value = None
+        gradient_norm = None
+        if should_report:
+            squared_norm = mx.array(0.0)
+            for _, gradient in tree_flatten(gradients):
+                squared_norm = squared_norm + mx.sum(gradient.astype(mx.float32) ** 2)
+            gradient_norm = mx.sqrt(squared_norm)
         self.optimizer.update(self.model, gradients)
-        mx.eval(self.model.parameters(), self.optimizer.state, loss)
+        evaluated = [self.model.parameters(), self.optimizer.state, loss]
+        if gradient_norm is not None:
+            evaluated.append(gradient_norm)
+        mx.eval(*evaluated)
         if GPU_THROTTLE < 1:
             # mx.eval already drained the GPU, so this never pauses mid command-buffer.
             time.sleep((time.perf_counter() - step_started) * (1 / GPU_THROTTLE - 1))
         loss_value = float(loss.item())
+        if gradient_norm is not None:
+            gradient_norm_value = float(gradient_norm.item())
         valid_tokens = int(mask.sum().item())
+        step_finished = time.perf_counter()
+        step_seconds = max(step_finished - step_started, 1e-9)
         self.step_number = next_step
         self.consumed_tokens += valid_tokens
         for item in self.batch:
@@ -354,8 +380,9 @@ class Trainer:
         elapsed = max(now - self.started, 1e-9)
         throughput = self.consumed_tokens / elapsed
         eta = int(max(0.0, (self.target_steps - self.step_number) * elapsed / self.step_number))
-        report_every = max(1, self.target_steps // 100)
-        if self.step_number == 1 or self.step_number == self.target_steps or self.step_number % report_every == 0:
+        if should_report:
+            peak_memory = int(getattr(mx, "get_peak_memory", lambda: 0)())
+            step_flops = 6 * self.parameter_count * valid_tokens
             emit(
                 "event",
                 event={
@@ -366,6 +393,13 @@ class Trainer:
                     "loss": loss_value,
                     "learning_rate": current_learning_rate,
                     "tokens_per_second": throughput,
+                    "duration_seconds": step_seconds,
+                    "data_wait_seconds": self.data_wait_seconds,
+                    "peak_memory_bytes": peak_memory,
+                    "training_flops": 6 * self.parameter_count * self.consumed_tokens,
+                    "achieved_tflops": step_flops / step_seconds / 1e12,
+                    "gradient_norm": gradient_norm_value,
+                    "skipped_steps": self.skipped_steps,
                     "eta_seconds": eta,
                 },
             )
@@ -375,6 +409,7 @@ class Trainer:
         evaluate_every = self.parameters["evaluate_every"]
         if evaluate_every > 0 and self.step_number % evaluate_every == 0:
             self.record_evaluation(loss_value)
+        self.last_step_finished = time.perf_counter()
 
     def save_weights(self, path, kind, step):
         weights = dict(tree_flatten(self.model.parameters()))

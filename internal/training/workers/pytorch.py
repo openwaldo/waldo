@@ -20,8 +20,8 @@ import torch.nn.functional as functional
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r7"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r16"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r8"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r17"
 IS_PRIMARY = True
 
 
@@ -346,6 +346,9 @@ class Trainer:
         self.evaluation_token_targets = 0
         self.final_loss = None
         self.started = time.perf_counter()
+        self.last_step_finished = self.started
+        self.data_wait_seconds = 0.0
+        self.skipped_steps = 0
 
         tokenizer = begin["tokenizer"]
         architecture_tokenizer = self.architecture["tokenizer"]
@@ -359,6 +362,7 @@ class Trainer:
             torch.cuda.manual_seed_all(self.parameters["seed"])
         self.model = DecoderLM(self.architecture)
         self.model.initialize()
+        self.parameter_count = sum(parameter.numel() for parameter in self.model.parameters())
         self.initialization = begin.get("initialization")
         if self.initialization is not None:
             if self.rank == 0 and not self.initialization.get("path"):
@@ -417,6 +421,9 @@ class Trainer:
         )
         if self.resume is not None:
             self.restore_checkpoint()
+        if self.device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(self.device)
+        self.last_step_finished = time.perf_counter()
         if self.distributed:
             emit(
                 "event",
@@ -523,12 +530,17 @@ class Trainer:
         if self.replay_steps > 0:
             self.replay_steps -= 1
             self.batch = []
+            self.last_step_finished = time.perf_counter()
             return
+        step_started = time.perf_counter()
+        self.data_wait_seconds += max(0.0, step_started - self.last_step_finished)
         tokens = torch.tensor([item[0] for item in self.batch], dtype=torch.long, device=self.device)
         mask = torch.tensor([item[1] for item in self.batch], dtype=torch.float32, device=self.device)
         inputs = tokens[:, :-1]
         targets = tokens[:, 1:]
         next_step = self.step_number + 1
+        report_every = max(1, self.target_steps // 100)
+        should_report = next_step == 1 or next_step == self.target_steps or next_step % report_every == 0
         current_learning_rate = self.learning_rate(next_step)
         for group in self.optimizer.param_groups:
             group["lr"] = current_learning_rate
@@ -548,6 +560,9 @@ class Trainer:
             global_valid_tokens = local_valid_tokens
             loss = loss_sum / global_valid_tokens
         loss.backward()
+        gradient_norm = None
+        if should_report:
+            gradient_norm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), math.inf).detach().cpu().item())
         self.optimizer.step()
         self.synchronize()
         if self.distributed:
@@ -557,6 +572,8 @@ class Trainer:
             global_loss_sum = loss_sum.detach()
         loss_value = float((global_loss_sum / global_valid_tokens).cpu().item())
         valid_tokens = int(global_valid_tokens.cpu().item())
+        step_finished = time.perf_counter()
+        step_seconds = max(step_finished - step_started, 1e-9)
         self.step_number = next_step
         self.consumed_tokens += valid_tokens
         for item in self.batch:
@@ -567,8 +584,17 @@ class Trainer:
         elapsed = max(time.perf_counter() - self.started, 1e-9)
         throughput = self.consumed_tokens / elapsed
         eta = int(max(0.0, (self.target_steps - self.step_number) * elapsed / self.step_number))
-        report_every = max(1, self.target_steps // 100)
-        if self.step_number == 1 or self.step_number == self.target_steps or self.step_number % report_every == 0:
+        if should_report:
+            peak_memory = torch.cuda.max_memory_allocated(self.device) if self.device.type == "cuda" else 0
+            data_wait_seconds = self.data_wait_seconds
+            if self.distributed:
+                peak_tensor = torch.tensor(peak_memory, dtype=torch.int64, device=self.device)
+                wait_tensor = torch.tensor(data_wait_seconds, dtype=torch.float64, device=self.device)
+                torch.distributed.all_reduce(peak_tensor, op=torch.distributed.ReduceOp.MAX)
+                torch.distributed.all_reduce(wait_tensor, op=torch.distributed.ReduceOp.MAX)
+                peak_memory = int(peak_tensor.cpu().item())
+                data_wait_seconds = float(wait_tensor.cpu().item())
+            step_flops = 6 * self.parameter_count * valid_tokens
             emit(
                 "event",
                 event={
@@ -579,6 +605,13 @@ class Trainer:
                     "loss": loss_value,
                     "learning_rate": current_learning_rate,
                     "tokens_per_second": throughput,
+                    "duration_seconds": step_seconds,
+                    "data_wait_seconds": data_wait_seconds,
+                    "peak_memory_bytes": peak_memory,
+                    "training_flops": 6 * self.parameter_count * self.consumed_tokens,
+                    "achieved_tflops": step_flops / step_seconds / 1e12,
+                    "gradient_norm": gradient_norm,
+                    "skipped_steps": self.skipped_steps,
                     "eta_seconds": eta,
                 },
             )
@@ -588,6 +621,7 @@ class Trainer:
         evaluate_every = self.parameters["evaluate_every"]
         if evaluate_every > 0 and self.step_number % evaluate_every == 0:
             self.record_evaluation(loss_value)
+        self.last_step_finished = time.perf_counter()
 
     def save_weights(self, path, kind, step):
         if self.distributed:

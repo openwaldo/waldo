@@ -369,16 +369,24 @@ type Progress struct {
 }
 
 type Event struct {
-	Kind            string      `json:"kind"`
-	Message         string      `json:"message,omitempty"`
-	Step            int64       `json:"step,omitempty"`
-	Tokens          int64       `json:"tokens,omitempty"`
-	Loss            *float64    `json:"loss,omitempty"`
-	LearningRate    float64     `json:"learning_rate,omitempty"`
-	TokensPerSecond float64     `json:"tokens_per_second,omitempty"`
-	ETASeconds      int64       `json:"eta_seconds,omitempty"`
-	Checkpoint      *Checkpoint `json:"checkpoint,omitempty"`
-	Evaluation      *Evaluation `json:"evaluation,omitempty"`
+	Kind                 string      `json:"kind"`
+	Message              string      `json:"message,omitempty"`
+	Step                 int64       `json:"step,omitempty"`
+	Tokens               int64       `json:"tokens,omitempty"`
+	Loss                 *float64    `json:"loss,omitempty"`
+	GradientNorm         *float64    `json:"gradient_norm,omitempty"`
+	LearningRate         float64     `json:"learning_rate,omitempty"`
+	TokensPerSecond      float64     `json:"tokens_per_second,omitempty"`
+	DurationSeconds      float64     `json:"duration_seconds,omitempty"`
+	DataWaitSeconds      float64     `json:"data_wait_seconds,omitempty"`
+	PeakMemoryBytes      uint64      `json:"peak_memory_bytes,omitempty"`
+	TrainingFLOPs        float64     `json:"training_flops,omitempty"`
+	AchievedTFLOPS       float64     `json:"achieved_tflops,omitempty"`
+	ModelFLOPUtilization float64     `json:"model_flop_utilization,omitempty"`
+	SkippedSteps         int64       `json:"skipped_steps,omitempty"`
+	ETASeconds           int64       `json:"eta_seconds,omitempty"`
+	Checkpoint           *Checkpoint `json:"checkpoint,omitempty"`
+	Evaluation           *Evaluation `json:"evaluation,omitempty"`
 }
 
 type Artifact struct {

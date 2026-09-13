@@ -137,6 +137,28 @@ printf '%s\n' "$output" | grep -q 'backend       mlx@'"$revision"''
 summary=$("$binary" --json model summary mlx-smoke)
 printf '%s\n' "$summary" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*false'
 printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"mlx"'
+telemetry=$(find "$models/mlx-smoke/runs" -type f -name TELEMETRY.csv -print | sort | head -1)
+[ -n "$telemetry" ] || { echo "MLX run did not persist telemetry" >&2; exit 1; }
+awk -F, '
+  NR == 1 {
+    for (column = 1; column <= NF; column++) columns[$column] = column
+    next
+  }
+  $(columns["event"]) == "progress" {
+    found = 1
+    required[1] = "duration_seconds"
+    required[2] = "data_wait_seconds"
+    required[3] = "peak_memory_bytes"
+    required[4] = "training_flops"
+    required[5] = "achieved_tflops"
+    required[6] = "gradient_norm"
+    for (position = 1; position <= 6; position++) {
+      name = required[position]
+      if (!(name in columns) || $(columns[name]) == "") exit 1
+    }
+  }
+  END { if (!found) exit 1 }
+' "$telemetry" || { echo "MLX progress telemetry is incomplete" >&2; exit 1; }
 weights=$(find "$models/mlx-smoke/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print)
 [ -n "$weights" ] && [ -s "$weights" ] || { echo "real MLX weights were not produced" >&2; exit 1; }
 checkpoint_count=$(find "$models/mlx-smoke/runs" -type d -name 'step-*' -print | wc -l | tr -d ' ')
