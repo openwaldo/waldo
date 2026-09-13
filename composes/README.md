@@ -8,6 +8,14 @@ corpus recipe, training process, and evaluation gates.
 Runtime estimates cover training after data and the environment are ready.
 They are planning ranges until replaced by observed WALDO run evidence.
 
+The planned [`holding/nanochat-open-baseline.yaml`](holding/nanochat-open-baseline.yaml)
+is the measured capability-per-FLOP comparison target. It is deliberately based
+on redistributable indexed inputs rather than nanochat's noncommercial ClimbMix
+corpus. Do not run it until the correctness, data-plane, batch-semantics, and
+evaluation gates in the [training robustness plan](../docs/TRAINING-ROBUSTNESS-PLAN.md)
+pass. Corpus and license differences are tracked in the
+[nanochat coverage audit](../docs/NANOCHAT-CORPUS-COVERAGE.md).
+
 Stages are weight-changing operations and execute strictly in YAML order. Keep
 broad foundation data first, domain or technical adaptation next, conversation
 training after that, and narrow assistant, alignment, or tool-use training

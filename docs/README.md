@@ -37,6 +37,10 @@ Read these in order:
   lineages, native artifacts, and NeMo/Megatron execution.
 - [Reference compose strategy](../composes/README.md): capability ladder,
   promotion gates, and corpus requirements for model experiments.
+- [Training robustness plan](TRAINING-ROBUSTNESS-PLAN.md): ordered work to
+  improve capability per FLOP and compare against nanochat.
+- [Nanochat corpus coverage](NANOCHAT-CORPUS-COVERAGE.md): exact input,
+  licensing, index, and contamination decisions.
 - [EU GPAI disclosure](EU-GPAI-DISCLOSURE.md): regulatory JSON projection.
 
 ## Project direction and decisions

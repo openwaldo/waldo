@@ -1,0 +1,98 @@
+# PLANNED holding compose: a distributable WALDO baseline shaped like nanochat's
+# 24-layer speedrun. It uses WALDO's approved open corpus instead of the
+# CC-BY-NC-4.0 ClimbMix dataset. Do not run until the robustness gates in
+# docs/TRAINING-ROBUSTNESS-PLAN.md pass.
+kind: waldo-model-compose
+schema: 1
+interaction:
+  template: user-assistant-v1
+architecture:
+  family: decoder-transformer
+  context_tokens: 2048
+  vocabulary_size: 50259
+  hidden_size: 1536
+  intermediate_size: 4096
+  layers: 24
+  attention_heads: 12
+  key_value_heads: 12
+  dropout: 0.0
+  tie_embeddings: true
+  parameter_dtype: bfloat16
+  tokenizer:
+    # Temporary compatibility choice. Replace with the admitted-corpus 32K
+    # tokenizer after phase 5 of the robustness plan.
+    name: tiktoken/r50k_base
+    revision: tiktoken-r50k-base
+stages:
+  - name: open-foundation-pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      languages:
+        include: [en]
+        include_unset: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - {path: core/books/gutenberg, weight: 1}
+      - {path: core/common-pile/wikimedia, weight: 3}
+      - {path: science/plos, weight: 3}
+      - {path: core/synthetic/cosmopedia-v2, weight: 5}
+      - {path: core/common-pile/stackexchange, weight: 5}
+    parameters:
+      profile: causal-pretrain-weighted
+      # Approximately eight training tokens per scaling parameter for the
+      # 24-layer target. Confirm from the implemented parameter accounting.
+      tokens: 5840000000
+      # Current schema expresses packed sequences per optimizer step. Phase 2
+      # will replace this with explicit global-token-batch semantics.
+      batch_size: 64
+      sequence_length: 2048
+      # AdamW baseline only; select the final optimizer/LR from scaling sweeps.
+      learning_rate: 0.00011
+      seed: 42
+      weight_decay: 0.15
+      warmup_steps: 100
+      shuffle_buffer_records: 65536
+      shuffle_buffer_bytes: 2147483648
+      checkpoint_every: 1000
+      evaluate_every: 250
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
+
+  - name: smoltalk-sft
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/smol-smoltalk
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      epochs: 1
+      batch_size: 32
+      sequence_length: 2048
+      learning_rate: 0.00002
+      seed: 43
+      weight_decay: 0.05
+      warmup_steps: 50
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 536870912
+      checkpoint_every: 200
+      evaluate_every: 200
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
+
+# GSM8K train is approved but not yet indexed, so it is intentionally absent.
+# MMLU auxiliary_train remains blocked on its constituent-license audit. Create
+# a new compose revision after those index decisions; do not silently mutate a
+# completed model lineage.
