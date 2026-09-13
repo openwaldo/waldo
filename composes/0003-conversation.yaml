@@ -1,4 +1,4 @@
-# Conversation level 3: a larger model built from the proven conversation1
+# Conversation level 3: a larger model built from the proven 0002 conversation
 # curriculum, with technical and scientific knowledge as the majority.
 kind: waldo-model-compose
 schema: 1
@@ -164,7 +164,7 @@ stages:
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
 
-  # Finish with the same bounded behavior anchor that made conversation1
+  # Finish with the same bounded behavior anchor that made 0002 conversation
   # useful. Narrow alignment belongs after broad and technical learning.
   - name: post-train
     type: fine-tuning

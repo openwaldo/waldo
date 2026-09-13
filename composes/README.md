@@ -81,7 +81,7 @@ WALDO requirements:
 - Current dense training.
 - Fixed generation tests in addition to held-out loss.
 
-## Conversation level 1 (`0002-conversation1.yaml`)
+## Conversation level 2 (`0002-conversation.yaml`)
 
 | Field | Plan |
 | --- | --- |
@@ -116,14 +116,14 @@ WALDO requirements:
 | Field | Plan |
 | --- | --- |
 | Status | Larger successor created after an unsuccessful intermediate experiment exposed a model-capacity ceiling |
-| Builds from | Random initialization with the complete, known-good conversation1 recipe embedded first |
+| Builds from | Random initialization with the complete, known-good 0002 conversation recipe embedded first |
 | Model type | Approximately 681M-parameter dense model, 4,096-token context, technical knowledge midtraining, and expanded conversation SFT |
 | Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
 | Approximate runtime | Approximately 7-10 days for the roughly 22B-token curriculum; replace this estimate with measured evidence after the first run |
 
 Success criteria:
 
-- Clearly improves instruction following, knowledge, and multi-turn coherence over conversation1.
+- Clearly improves instruction following, knowledge, and multi-turn coherence over the 0002 conversation model.
 - Correctly answers basic factual questions about operating systems, Linux, programming, and systems administration.
 - Improves familiarity with software development, systems, debugging, review, and technical documentation.
 - Preserves the baseline's directness, correction handling, and no-tool behavior.
@@ -144,7 +144,7 @@ Corpus requirements:
 WALDO requirements:
 
 - A fresh model is required because conversation3 has roughly twice the
-  parameter capacity and context length of conversation1 as well as a corrected
+  parameter capacity and context length of the 0002 conversation model as well as a corrected
   stage order.
 - Fixed side-by-side conversation evaluations.
 - Promote only when it beats the previous rung without material regression.
@@ -421,9 +421,9 @@ WALDO requirements:
 ## Next steps
 
 - Freeze the language, conversation, and tool evaluation sets.
-- Run `0002-conversation1` as the known-good baseline.
+- Run `0002-conversation` as the known-good baseline.
 - Train `0003-conversation` under a new model name and compare it with
-  conversation1. Its larger architecture cannot reuse the old weights.
+  the 0002 conversation model. Its larger architecture cannot reuse the old weights.
 - Keep tool-use training on hold until a conversation checkpoint is promoted,
   then update and revalidate `holding/tool-use.yaml` against that parent.
 - Build the capable dense foundation, assistant, reasoning, and agent rungs.

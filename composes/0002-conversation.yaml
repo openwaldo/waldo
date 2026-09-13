@@ -1,4 +1,4 @@
-# Conversation level 1: broad language, dialogue adaptation, and reviewed interaction tuning.
+# Conversation level 2: broad language, dialogue adaptation, and reviewed interaction tuning.
 kind: waldo-model-compose
 schema: 1
 interaction:

@@ -125,7 +125,7 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation1.yaml", "0003-conversation.yaml"}
+	want := []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation.yaml", "0003-conversation.yaml"}
 	if !reflect.DeepEqual(files, want) {
 		t.Fatalf("reference composes = %v, want %v", files, want)
 	}
@@ -194,7 +194,7 @@ func corpusPaths(selections []model.CorpusSelection) []string {
 }
 
 func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
-	compose, _, err := model.LoadCompose("0002-conversation1.yaml")
+	compose, _, err := model.LoadCompose("0002-conversation.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
