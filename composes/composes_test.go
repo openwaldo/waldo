@@ -125,7 +125,7 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation1.yaml", "0002-conversation2.yaml", "0003-conversation.yaml"}
+	want := []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation1.yaml", "0003-conversation.yaml"}
 	if !reflect.DeepEqual(files, want) {
 		t.Fatalf("reference composes = %v, want %v", files, want)
 	}
@@ -224,56 +224,6 @@ func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
 	}
 	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 11999969280 || len(forecast.EpochDerivedStages) != 2 {
 		t.Fatalf("basic conversation forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
-	}
-}
-
-func TestConversationTwoExtendsConversationOneWithTechnicalKnowledge(t *testing.T) {
-	baseline, _, err := model.LoadCompose("0002-conversation1.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	variant, _, err := model.LoadCompose("0002-conversation2.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if variant.Base != nil || variant.Architecture != baseline.Architecture || variant.Interaction != baseline.Interaction {
-		t.Fatalf("conversation2 model contract = %+v", variant)
-	}
-	if len(variant.Stages) != len(baseline.Stages)+2 || !reflect.DeepEqual(variant.Stages[0], baseline.Stages[0]) || !reflect.DeepEqual(variant.Stages[2], baseline.Stages[1]) || !reflect.DeepEqual(variant.Stages[4], baseline.Stages[2]) {
-		t.Fatalf("conversation2 does not preserve the proven conversation1 stages")
-	}
-	if got := []string{variant.Stages[0].Name, variant.Stages[1].Name, variant.Stages[2].Name, variant.Stages[3].Name, variant.Stages[4].Name}; !reflect.DeepEqual(got, []string{"pretrain", "technical-knowledge-midtrain", "conversational-midtrain", "expanded-conversation-sft", "post-train"}) {
-		t.Fatalf("conversation2 stage order = %v", got)
-	}
-	technical := variant.Stages[1]
-	if technical.Name != "technical-knowledge-midtrain" || technical.Type != "pre-training" || technical.Objective != "causal-language-modeling" {
-		t.Fatalf("conversation2 technical stage = %+v", technical)
-	}
-	wantTechnical := []string{
-		"core/synthetic/cosmopedia-v2", "core/common-pile/stackexchange", "code/copyleft/linux-core",
-		"code/permissive/linux-core", "community/linux-kernel-mailing-list", "code/stack-v2-html",
-		"code/cloud-native-core", "community/git-mailing-list", "community/python-mailing-lists",
-	}
-	if got := corpusPaths(technical.Corpora); !reflect.DeepEqual(got, wantTechnical) {
-		t.Fatalf("conversation2 technical corpora = %v, want %v", got, wantTechnical)
-	}
-	if technical.Parameters.Tokens != 3000000000 || technical.Parameters.LearningRate != 0.00002 || technical.Filter == nil || technical.Filter.Languages == nil || !reflect.DeepEqual(technical.Filter.Languages.Include, []string{"en"}) || !technical.Filter.Languages.IncludeUnset {
-		t.Fatalf("conversation2 technical budget/filter = %+v / %+v", technical.Parameters, technical.Filter)
-	}
-	stage := variant.Stages[3]
-	if stage.Name != "expanded-conversation-sft" || stage.Objective != "assistant-response-modeling" {
-		t.Fatalf("conversation2 added stage = %+v", stage)
-	}
-	wantCorpora := []string{"post-train/sft/tulu3", "post-train/sft/smol-smoltalk", "post-train/sft/ultrachat-200k"}
-	if got := corpusPaths(stage.Corpora); !reflect.DeepEqual(got, wantCorpora) {
-		t.Fatalf("conversation2 corpora = %v, want %v", got, wantCorpora)
-	}
-	forecast, err := model.ForecastCompose(variant)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 15399993344 {
-		t.Fatalf("conversation2 forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
 
