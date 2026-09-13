@@ -59,6 +59,25 @@ in the artifact manifest.
 Add bounded queues, pinned-memory transfer where useful, and separate metrics
 for object-store read, decode/tokenize, host wait, and device wait.
 
+The planned distribution design is:
+
+1. Canonical tokenized shards remain immutable, content-addressed objects in
+   lookaside/object storage.
+2. One cache coordinator per node downloads and verifies each required shard
+   once into a bounded node-local NVMe cache.
+3. All local ranks read the shared read-only node cache, but receive
+   deterministic, non-overlapping shard or byte-range assignments.
+4. Small stages may be mirrored completely once per node. Large stages use a
+   rolling prefetch window and evict only shards outside the resume window.
+5. On restart, the saved sampler position reconstructs the same rank
+   assignments independent of cache contents.
+
+Do not mirror the complete corpus per rank. Ordinary NFS is not the primary
+training data path because metadata contention and synchronized reads can
+stall every accelerator. A high-throughput parallel filesystem may be a
+measured fallback, and NFS may carry small metadata, but either must pass the
+same data-wait gate as node-local caching.
+
 Exit gate: accelerators wait for input less than 2% of training wall time and
 adding ranks does not multiply rank-0 CPU or network work.
 
@@ -143,3 +162,79 @@ The following need reviewed ADRs and versioned schemas before implementation:
 
 Backend-only tuning that affects reproducibility must still be recorded in the
 run artifact.
+
+## Integration and verification ladder
+
+Every implementation change moves through the same test funnel. A failure at
+one level stops progression; it is not compensated for by a larger run.
+
+### Test levels
+
+| Level | Purpose | Required checks |
+| --- | --- | --- |
+| Unit | Prove the isolated calculation or state transition | boundary cases, invalid configurations, deterministic serialization |
+| Component | Prove two cooperating subsystems | sampler/cache, accumulation/scheduler, checkpoint/RNG, evaluator/BOM |
+| Local end-to-end | Prove a complete lifecycle cheaply | ingest or resolve, train, checkpoint, resume, evaluate, export |
+| Distributed golden | Detect rank-dependent errors | 1 versus 2 GPUs initially; identical global batch, sample coverage, optimizer steps, and equivalent loss |
+| Model rung | Verify learning and efficiency | fixed corpus BOM, evaluation BOM, seed set, hardware description, and FLOP budget |
+
+Use at least three fixed seeds for model-quality comparisons. Correctness tests
+may use one fixed seed when they compare exact saved state.
+
+### Model rungs
+
+| Rung | Approximate size | Initial budget | What it proves | Promotion gate |
+| --- | ---: | ---: | --- | --- |
+| G0 canary | 14M | 100M tokens maximum | complete pipeline correctness | falling loss; exact token/sample accounting; uninterrupted and resumed state match; no non-finite steps |
+| G1 systems | 75M | 600M tokens maximum | sustained data and distributed efficiency | data wait below 2%; forecast within 15%; useful multi-GPU scaling; no resume drift |
+| G2 capability | 300M | 2.4B tokens maximum | tokenizer, optimizer, schedule, and evaluation choices | beats G1 scaling prediction and current AdamW/r50k baseline at equal FLOPs across three seeds |
+| G3 parity | approximately 757M | approximately 5.84B tokens | nanochat-class comparison | meets or beats the pinned nanochat reference on BPB and normalized capability per FLOP without WALDO regression failures |
+
+The token ceilings roughly follow the nanochat target of eight training tokens
+per scaling parameter. Early stopping is mandatory when a run cannot meet its
+promotion projection.
+
+For day-to-day integration, run G0 for only 1M-5M tokens after each change and
+G1 for roughly 25M-50M tokens after each major phase. Spend the full rung budget
+only once when qualifying that rung for promotion.
+
+### Change-by-change rollout
+
+1. **Benchmark harness and telemetry.** Capture the current G0 result before
+   changing training. Add step, input-wait, checkpoint, evaluation, memory,
+   FLOP, and MFU measurements. Re-run G0 to prove measurement overhead is
+   bounded and results are unchanged.
+2. **Forecast correction.** Add formula tests for global batch, world size,
+   accumulation, dtype, optimizer state, and activation checkpointing. Confirm
+   with observed G0 memory, then with G1 on one and two GPUs.
+3. **Prepared tokenized artifacts and node cache.** Test hash verification,
+   interrupted downloads, eviction, deterministic rank partitioning, and
+   restart. Compare the old and new G0 sample stream exactly. Advance to G1
+   only after input wait and scaling gates pass.
+4. **Gradient accumulation.** Compare one large physical batch with several
+   accumulated micro-batches using the same global token batch. Test clipping,
+   scheduler steps, partial accumulation rejection/recovery, and checkpoint
+   resume. Verify on G0, then G1 across different world sizes.
+5. **Deterministic distributed resume.** Interrupt G0 and G1 at checkpoints and
+   during shard transitions. Verify model, optimizer, scheduler, scaler,
+   sampler, RNG, and consumed-token state against uninterrupted runs.
+6. **Precision, compilation, and memory controls.** Establish BF16 as the
+   reference. Test FP16 scaling and overflow recovery, activation
+   checkpointing, `torch.compile`, and later FP8 independently. Promote an
+   optimization only when G1 improves throughput without quality or resume
+   regression.
+7. **Evaluation and contamination gates.** Build approved evaluation BOMs and
+   prove split isolation with synthetic overlaps. Run the complete gate on G1;
+   scores may be low, but execution and normalization must be reproducible.
+8. **Tokenizer and recipe sweeps.** At G1, compare the admitted-corpus 32K
+   tokenizer, optimizer, learning-rate schedule, batch, and initialization one
+   variable at a time. Confirm the selected combination at G2 across three
+   seeds.
+9. **Parity run.** Freeze code, environment, compose, corpus/evaluation BOMs,
+   tokenizer, seed set, and hardware. Run G3 only after every earlier gate is
+   green, then publish both quality and efficiency results, including failed
+   or stopped runs.
+
+Each accepted change gets its own signed-off commit with its unit/component
+tests. Model rung evidence is attached to the run artifacts and referenced by
+the subsequent commit or decision record.
