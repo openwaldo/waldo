@@ -215,10 +215,11 @@ func requiredMemoryPerGPU(plan Plan, GPUs int) (uint64, error) {
 	}
 	// BF16 parameters and gradients plus FP32 master weights and two Adam
 	// moments require approximately 16 bytes per parameter. Model state is
-	// assumed fully sharded. The built-in workers do not activation-checkpoint,
-	// and FSDP shards model state rather than the input batch, so every rank must
-	// fit the complete declared physical batch. The loss also retains BF16
-	// logits and an FP32 conversion across the complete vocabulary.
+	// assumed fully sharded. The built-in distributed worker partitions the
+	// declared global batch across ranks, so activation and logits workspace is
+	// estimated from the per-rank batch. Round up here to remain conservative
+	// for forecasts even though execution currently requires exact divisibility.
+	// The loss retains BF16 logits and an FP32 conversion across the local batch.
 	states, err := multiply(plan.Forecast.ApproximateParameters, 16)
 	if err != nil {
 		return 0, err
@@ -226,7 +227,7 @@ func requiredMemoryPerGPU(plan Plan, GPUs int) (uint64, error) {
 	states = divideRoundUp(states, uint64(GPUs))
 	var maxActivations uint64
 	for _, stage := range plan.Stages {
-		batch := uint64(stage.Parameters.BatchSize)
+		batch := divideRoundUp(uint64(stage.Parameters.BatchSize), uint64(GPUs))
 		activations, err := multiplyAll(batch, uint64(stage.Parameters.SequenceLength), plan.Architecture.HiddenSize, plan.Architecture.Layers, 72)
 		if err != nil {
 			return 0, fmt.Errorf("stage %s activation memory: %w", stage.Name, err)

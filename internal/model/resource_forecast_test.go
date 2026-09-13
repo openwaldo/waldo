@@ -46,7 +46,7 @@ func TestForecastPlanFiltersNonFitsAndSortsSlowestFirst(t *testing.T) {
 	}
 }
 
-func TestForecastAccountsForFullBatchVocabularyWorkspace(t *testing.T) {
+func TestForecastAccountsForPerRankBatchVocabularyWorkspace(t *testing.T) {
 	architecture := Architecture{
 		Family: "decoder-transformer", ContextTokens: 2048, VocabularySize: 50259,
 		HiddenSize: 1152, IntermediateSize: 3072, Layers: 20,
@@ -76,8 +76,22 @@ func TestForecastAccountsForFullBatchVocabularyWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if multiGPU >= safe || multiGPU < safe-forecast.ApproximateParameters*16 {
-		t.Fatalf("FSDP should shard model state but retain the complete physical batch: one=%d eight=%d", safe, multiGPU)
+	if multiGPU >= safe/4 {
+		t.Fatalf("distributed forecast did not partition model state and global batch: one=%d eight=%d", safe, multiGPU)
+	}
+
+	plan.Stages[0].Parameters.BatchSize = 9
+	rounded, err := requiredMemoryPerGPU(plan, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Stages[0].Parameters.BatchSize = 16
+	exact, err := requiredMemoryPerGPU(plan, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rounded != exact {
+		t.Fatalf("per-rank batch must round up conservatively: batch9=%d batch16=%d", rounded, exact)
 	}
 }
 
