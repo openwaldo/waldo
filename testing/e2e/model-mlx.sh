@@ -184,6 +184,53 @@ printf '%s\n' "$chat" | grep -Eq '"run_id"[[:space:]]*:[[:space:]]*"[^"]+"'
 printf '%s\n' "$chat" | grep -Eq '"tokens"[[:space:]]*:[[:space:]]*[0-2]'
 printf '%s\n' "$chat" | grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(eos|max_tokens)"'
 
+interrupted_log="$work/interrupted-training.log"
+WALDO_GPU_THROTTLE=0.01 "$binary" model train mlx-resume "$compose" >"$interrupted_log" 2>&1 &
+interrupted_pid=$!
+checkpoint_state=""
+poll=0
+while [ "$poll" -lt 200 ]; do
+  checkpoint_state=$(find "$models/mlx-resume/runs" -path '*/checkpoints/step-00000001/state.json' -print 2>/dev/null | head -1)
+  [ -n "$checkpoint_state" ] && break
+  if ! kill -0 "$interrupted_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.05
+  poll=$((poll + 1))
+done
+[ -n "$checkpoint_state" ] || { cat "$interrupted_log"; echo "MLX interruption test did not reach checkpoint 1" >&2; exit 1; }
+# Give the parent enough time to commit the worker's checkpoint event, while
+# throttling guarantees that the next optimizer step cannot finish first.
+sleep 0.1
+kill -INT "$interrupted_pid"
+set +e
+wait "$interrupted_pid"
+interrupted_code=$?
+set -e
+[ "$interrupted_code" -ne 0 ] || { echo "interrupted MLX training unexpectedly completed" >&2; exit 1; }
+
+resume_output=$("$binary" model train mlx-resume "$compose")
+printf '%s\n' "$resume_output"
+grep -ERq '"resume_step"[[:space:]]*:[[:space:]]*1' "$models/mlx-resume/runs" || {
+  echo "completed MLX run does not record checkpoint resume from step 1" >&2
+  exit 1
+}
+control_output=$("$binary" model train mlx-control "$compose")
+printf '%s\n' "$control_output"
+resumed_weights=$(find "$models/mlx-resume/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print | head -1)
+control_weights=$(find "$models/mlx-control/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print | head -1)
+"$mlx_python" - "$resumed_weights" "$control_weights" <<'PY'
+import sys
+
+import mlx.core as mx
+
+resumed = mx.load(sys.argv[1])
+control = mx.load(sys.argv[2])
+assert resumed.keys() == control.keys()
+for name in resumed:
+    assert mx.array_equal(resumed[name], control[name]).item(), name
+PY
+
 "$binary" model export mlx-smoke "$huggingface_export" --format huggingface --allow-incomplete >/dev/null
 "$binary" model export mlx-smoke "$mlx_export" --format mlx --allow-incomplete >/dev/null
 "$binary" model export mlx-smoke "$gguf_export" --format gguf --allow-incomplete >/dev/null
@@ -279,4 +326,4 @@ else
   echo "testing: calibrated GGUF export skipped (llama-quantize and llama-imatrix not both installed)"
 fi
 
-echo "E2E MLX model passed: trained, resumed, generated, and exported Hugging Face, MLX, GGUF, and Ollama packages"
+echo "E2E MLX model passed: trained, deterministically checkpoint-resumed, generated, and exported Hugging Face, MLX, GGUF, and Ollama packages"
