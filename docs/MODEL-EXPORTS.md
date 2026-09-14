@@ -137,6 +137,16 @@ exact held-out row IDs and deterministic epoch-to-step result used by the run.
 Runtime observations are recorded separately so the plan cannot be rewritten
 after execution.
 
+### `ATTRIBUTION.md`
+
+Every model export includes a deterministic training-data attribution notice.
+It is generated only from the immutable corpus BOMs of completed runs and
+lists their declared licenses, recorded preservation obligations, source URLs,
+versions or source digests, upstream license declarations, and license-evidence
+URLs. Export fails if any recorded training corpus no longer passes WALDO's
+distributable policy. Imported models with no WALDO training runs instead point
+the reader to their origin BOM.
+
 ### Managed `MODEL-BOM.json`
 
 The managed model BOM aggregates all runs. It retains each run-BOM hash,

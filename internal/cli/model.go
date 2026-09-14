@@ -1399,6 +1399,16 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 		return err
 	}
 	euBOM = append(euBOM, '\n')
+	trainingBOMs := make([]corpus.BOM, 0, len(inspection.RunBOMs))
+	for position, runBOM := range inspection.RunBOMs {
+		if position < len(inspection.Runs) && inspection.Runs[position].State == model.RunComplete {
+			trainingBOMs = append(trainingBOMs, runBOM.CorpusBOM)
+		}
+	}
+	attribution, err := corpus.AttributionNotice(trainingBOMs)
+	if err != nil {
+		return fmt.Errorf("build training data attribution: %w", err)
+	}
 	signed := signing.Configured(configuration.Signing)
 	finalize := func(string) error { return nil }
 	if signed {
@@ -1454,31 +1464,31 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 	}
 	switch parsed.Format {
 	case "waldo":
-		options := model.ExportOptions{Files: map[string][]byte{signing.EUBOM: euBOM}}
+		options := model.ExportOptions{Files: map[string][]byte{signing.EUBOM: euBOM, "ATTRIBUTION.md": attribution}}
 		if signed {
 			options.Finalize = finalize
 		}
 		output, err = model.ExportPackage(root, parsed.Name, parsed.Destination, options)
 	case "huggingface":
-		options := modelexport.Options{EUBOM: euBOM}
+		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution}
 		if signed {
 			options.Finalize = finalize
 		}
 		output, err = modelexport.ExportHuggingFace(context.Execution, inspection, parsed.Destination, options)
 	case "mlx":
-		options := modelexport.Options{EUBOM: euBOM}
+		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution}
 		if signed {
 			options.Finalize = finalize
 		}
 		output, err = modelexport.ExportMLX(context.Execution, inspection, parsed.Destination, options)
 	case "gguf":
-		options := modelexport.Options{EUBOM: euBOM, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
+		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
 		if signed {
 			options.Finalize = finalize
 		}
 		output, err = modelexport.ExportGGUF(context.Execution, inspection, parsed.Destination, options)
 	case "ollama":
-		options := modelexport.Options{EUBOM: euBOM, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
+		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
 		if signed {
 			options.Finalize = finalize
 		}
