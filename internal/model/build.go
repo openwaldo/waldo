@@ -195,6 +195,14 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if err != nil {
 		return Inspection{}, err
 	}
+	var distributionReview *corpus.DistributionReview
+	if resolvedParameters.DistributionPolicy == corpus.DistributionPolicyDistributable {
+		review, err := corpus.ReviewDistributable(prepared.BOM)
+		if err != nil {
+			return Inspection{}, fmt.Errorf("stage %s distributable corpus gate: %w", stage.Name, err)
+		}
+		distributionReview = &review
+	}
 	preflightIdentity, err := hashJSON(stagePreflightIdentity{
 		ArchitectureSHA256: inspection.Model.ArchitectureSHA256, CorpusBOMSHA256: bomHash,
 		Stage: stage.Name, StageType: stage.Type, Objective: stage.Objective,
@@ -351,6 +359,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		ArchitectureSHA256: inspection.Model.ArchitectureSHA256,
 		CorpusBOMSHA256:    bomHash, CorpusBOM: prepared.BOM, Parameters: resolvedParameters,
 		EvaluationSet: &partition.Evaluation, Preflight: &preflightArtifact, Initialization: initialization,
+		DistributionReview: distributionReview,
 	}
 	if stage.Conversation != nil {
 		runBOM.Conversation = *stage.Conversation

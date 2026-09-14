@@ -36,8 +36,6 @@ stages:
         repetitive_content: true
         boilerplate_content: true
     corpora:
-      - {path: core/books/gutenberg, weight: 1}
-      - {path: core/common-pile/wikimedia, weight: 3}
       - {path: science/plos, weight: 3}
       - {path: core/synthetic/cosmopedia-v2, weight: 5}
       - {path: core/common-pile/stackexchange, weight: 5}
@@ -53,6 +51,7 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
+      distribution_policy: distributable
       sequence_length: 2048
       # AdamW baseline only; select the final optimizer/LR from scaling sweeps.
       learning_rate: 0.00011
@@ -88,6 +87,7 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
+      distribution_policy: distributable
       sequence_length: 2048
       learning_rate: 0.00002
       seed: 43
@@ -104,3 +104,7 @@ stages:
 # MMLU auxiliary_train remains blocked on its constituent-license audit. Create
 # a new compose revision after those index decisions; do not silently mutate a
 # completed model lineage.
+# Gutenberg and Wikimedia are also omitted: their current index manifests lack
+# sufficient upstream license evidence for the distributable gate. Gutenberg's
+# corpus-wide CC0 label does not reflect Project Gutenberg's per-work and
+# trademark terms.

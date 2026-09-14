@@ -150,6 +150,7 @@ type RunBOM struct {
 	EvaluationSet      *training.EvaluationSet        `json:"evaluation_set,omitempty"`
 	Preflight          *training.Artifact             `json:"preflight,omitempty"`
 	Initialization     *training.Initialization       `json:"initialization,omitempty"`
+	DistributionReview *corpus.DistributionReview     `json:"distribution_review,omitempty"`
 }
 
 // EffectiveInteraction returns the immutable model interaction plus the
@@ -398,6 +399,14 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 		}
 		if err := runBOM.CorpusBOM.Validate(); err != nil {
 			return Inspection{}, fmt.Errorf("run %s corpus OpenWALDO BOM: %w", pin.ID, err)
+		}
+		if runBOM.Parameters.DistributionPolicy == corpus.DistributionPolicyDistributable {
+			review, err := corpus.ReviewDistributable(runBOM.CorpusBOM)
+			if err != nil || runBOM.DistributionReview == nil || !reflect.DeepEqual(*runBOM.DistributionReview, review) {
+				return Inspection{}, fmt.Errorf("run %s distributable corpus review is missing or inconsistent: %v", pin.ID, err)
+			}
+		} else if runBOM.DistributionReview != nil {
+			return Inspection{}, fmt.Errorf("run %s has an unexpected distributable corpus review", pin.ID)
 		}
 		if err := validateEvaluationSet(runBOM); err != nil {
 			return Inspection{}, fmt.Errorf("run %s evaluation set: %w", pin.ID, err)

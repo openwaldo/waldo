@@ -825,6 +825,19 @@ func TestResolveParametersPinsExecutionControls(t *testing.T) {
 	}
 }
 
+func TestResolveParametersPinsDistributionPolicy(t *testing.T) {
+	resolved, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, DistributionPolicy: "distributable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.DistributionPolicy != "distributable" {
+		t.Fatalf("distribution policy = %q", resolved.DistributionPolicy)
+	}
+	if _, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, DistributionPolicy: "trust-me"}); err == nil {
+		t.Fatal("accepted unsupported distribution policy")
+	}
+}
+
 func TestValidateBatchTopologyUsesPhysicalMicroBatch(t *testing.T) {
 	parameters := ResolvedParameters{BatchSize: 64, GradientAccumulation: 4}
 	if err := ValidateBatchTopology(parameters, 8); err != nil {

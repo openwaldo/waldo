@@ -47,8 +47,6 @@ declared terms:
 
 | WALDO path | Declared terms | Role |
 | --- | --- | --- |
-| `core/books/gutenberg` | CC0-1.0 | edited books |
-| `core/common-pile/wikimedia` | CC-BY-SA-4.0 | broad reference text |
 | `science/plos` | CC-BY-4.0 | scientific exposition |
 | `core/synthetic/cosmopedia-v2` | ODC-BY-1.0 | educational synthetic text |
 | `core/common-pile/stackexchange` | CC-BY-SA-4.0 | technical questions and answers |
@@ -56,6 +54,16 @@ declared terms:
 These corpora overlap ClimbMix's goals, not its exact rows, filtering, topic
 weights, or quality classifiers. The baseline must be described as
 WALDO-open, never as a ClimbMix reproduction.
+
+The earlier draft also selected `core/books/gutenberg` and
+`core/common-pile/wikimedia`. The strict gate now rejects both current index
+entries. Gutenberg is labeled corpus-wide `CC0-1.0`, but Project Gutenberg's
+actual terms distinguish U.S. public-domain works, permission-only works, and
+trademark/license material; its manifest carries no per-work rights proof.
+Wikimedia carries a `CC-BY-SA-4.0` label but no pinned source version or license
+evidence, and its upstream dataset warns that license metadata can be
+incorrect. Neither belongs in a distributable run until the index evidence and
+attribution path are repaired.
 
 ## Index completion work
 

@@ -254,6 +254,7 @@ type Parameters struct {
 	ComputePrecision        string            `json:"compute_precision,omitempty" yaml:"compute_precision,omitempty"`
 	ActivationCheckpointing bool              `json:"activation_checkpointing,omitempty" yaml:"activation_checkpointing,omitempty"`
 	Compile                 bool              `json:"compile,omitempty" yaml:"compile,omitempty"`
+	DistributionPolicy      string            `json:"distribution_policy,omitempty" yaml:"distribution_policy,omitempty"`
 	SequenceLength          int64             `json:"sequence_length" yaml:"sequence_length"`
 	LearningRate            float64           `json:"learning_rate" yaml:"learning_rate"`
 	Seed                    uint64            `json:"seed" yaml:"seed"`
@@ -280,6 +281,7 @@ type ResolvedParameters struct {
 	ComputePrecision        string            `json:"compute_precision,omitempty"`
 	ActivationCheckpointing bool              `json:"activation_checkpointing,omitempty"`
 	Compile                 bool              `json:"compile,omitempty"`
+	DistributionPolicy      string            `json:"distribution_policy,omitempty"`
 	SequenceLength          int64             `json:"sequence_length"`
 	LearningRate            float64           `json:"learning_rate"`
 	Seed                    uint64            `json:"seed"`

@@ -128,6 +128,9 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 	if computePrecision != "auto" && computePrecision != "float32" && computePrecision != "float16" && computePrecision != "bfloat16" {
 		return ResolvedParameters{}, fmt.Errorf("compute_precision must be auto, float32, float16, or bfloat16")
 	}
+	if parameters.DistributionPolicy != "" && parameters.DistributionPolicy != "distributable" {
+		return ResolvedParameters{}, fmt.Errorf("distribution_policy must be distributable when set")
+	}
 	epochs := parameters.Epochs
 	if epochs == 0 {
 		epochs = 1
@@ -238,7 +241,8 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 		Profile: profile, ProfileSchema: profileSchema,
 		Epochs: epochs, RequestedTokens: requestedTokens, Steps: steps, BatchSize: parameters.BatchSize, GradientAccumulation: gradientAccumulation,
 		ComputePrecision: computePrecision, ActivationCheckpointing: parameters.ActivationCheckpointing, Compile: parameters.Compile,
-		SequenceLength: parameters.SequenceLength, LearningRate: parameters.LearningRate,
+		DistributionPolicy: parameters.DistributionPolicy,
+		SequenceLength:     parameters.SequenceLength, LearningRate: parameters.LearningRate,
 		Seed: parameters.Seed, PlannedTokenCapacity: capacity,
 		Optimizer:       Optimizer{Name: "adamw", WeightDecay: weightDecay, Beta1: 0.9, Beta2: 0.95, Epsilon: 1e-8},
 		Schedule:        Schedule{Name: "cosine", WarmupSteps: warmup, MinimumRateRatio: 0.1},
