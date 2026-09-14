@@ -68,3 +68,4 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0069: Make unset-language inclusion explicit](0069-explicit-unset-language-filtering.md)
 - [0070: Discover Fuzzball multi-node launches](0070-fuzzball-multinode-discovery.md)
 - [0071: Keep global optimizer batches stable with gradient accumulation](0071-global-batch-gradient-accumulation.md)
+- [0072: Prepare and partition training streams once per node](0072-node-local-prepared-training-streams.md)

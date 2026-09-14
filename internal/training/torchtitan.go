@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r18"
+	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r19"
 	recommendedTorchVersion      = "2.15.0.dev20260905+cu130"
 	recommendedTorchTitanVersion = "0.3.0"
 	recommendedTorchIndex        = "https://download.pytorch.org/whl/nightly/cu130"
@@ -74,6 +74,7 @@ func (backend TorchTitan) Run(ctx context.Context, request Request) (Observation
 		nodes = 1
 	}
 	worldSize := nodes * backend.LocalProcs
+	request.DataNodeRank = backend.NodeRank
 	if err := ValidateBatchTopology(request.Parameters, worldSize); err != nil {
 		return Observation{}, fmt.Errorf("TorchTitan: %w", err)
 	}
@@ -113,6 +114,9 @@ func (backend TorchTitan) Run(ctx context.Context, request Request) (Observation
 	}
 	command := exec.CommandContext(ctx, backend.Python, backend.launchArguments(workerPath, request)...)
 	command.Env = environment
+	if request.Parallelism.DataPlane == DataPlaneNodeLocal {
+		command.Env = append(command.Env, "WALDO_TORCH_DATA_PLANE="+DataPlaneNodeLocal)
+	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	configureGracefulCancellation(command)
 	if backend.Secondary {

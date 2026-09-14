@@ -394,7 +394,7 @@ func TestTorchTitanResolverAggregatesClusterNodes(t *testing.T) {
 	}
 }
 
-func TestTorchTitanSecondaryNodeReceivesRecordsFromGlobalRankZero(t *testing.T) {
+func TestTorchTitanSecondaryLauncherStreamReceivesRecordsFromGlobalRankZero(t *testing.T) {
 	worker := filepath.Join(t.TempDir(), "fake-python")
 	script := `#!/bin/sh
 case "$*" in
@@ -424,6 +424,45 @@ exit 0
 	})
 	if err != nil {
 		t.Fatalf("secondary run: %v", err)
+	}
+	if len(observation.Artifacts) != 0 || observation.Steps != 0 {
+		t.Fatalf("secondary observation = %+v", observation)
+	}
+}
+
+func TestTorchTitanSecondaryStreamsVerifiedNodeLocalRecords(t *testing.T) {
+	worker := filepath.Join(t.TempDir(), "fake-python")
+	script := `#!/bin/sh
+[ "$WALDO_TORCH_DATA_PLANE" = "node-local-cache" ] || exit 5
+IFS= read -r begin || exit 6
+IFS= read -r record || exit 7
+IFS= read -r boundary || exit 8
+IFS= read -r end || exit 9
+case "$begin" in *'"kind":"begin"'*) ;; *) exit 9;; esac
+case "$record" in *'"kind":"sequence"'*'"tokens"'*) ;; *) exit 10;; esac
+case "$boundary" in *'"kind":"micro_batch_end"'*) ;; *) exit 11;; esac
+case "$end" in *'"kind":"end"'*) ;; *) exit 12;; esac
+exit 0
+`
+	if err := os.WriteFile(worker, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := TorchTitan{
+		Python: worker, LocalProcs: 1, Nodes: 2, NodeRank: 1,
+		Rendezvous: "primary:29500", Interface: "eth0", Secondary: true,
+	}
+	observation, err := backend.Run(context.Background(), Request{
+		ArtifactDirectory: t.TempDir(), ArtifactPrefix: "artifacts",
+		Parameters: parameters, Architecture: json.RawMessage(`{"family":"decoder-transformer"}`),
+		Parallelism: Parallelism{WorldSize: 2, GPUsPerNode: 1, DataPlane: DataPlaneNodeLocal},
+		Records:     staticRecordSource{{ID: "one", Text: "node-local", Corpus: "test"}},
+	})
+	if err != nil {
+		t.Fatalf("secondary node-local run: %v", err)
 	}
 	if len(observation.Artifacts) != 0 || observation.Steps != 0 {
 		t.Fatalf("secondary observation = %+v", observation)

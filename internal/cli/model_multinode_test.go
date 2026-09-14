@@ -99,14 +99,17 @@ func TestConfigNCCLKeysRoundTrip(t *testing.T) {
 }
 
 func TestValidateDistributedBatchSize(t *testing.T) {
-	if err := validateDistributedBatchSize("stage pretrain", 16, 4); err != nil {
+	if err := validateDistributedBatchSize("stage pretrain", 16, 2, 4); err != nil {
 		t.Fatal(err)
 	}
 	for _, batch := range []int64{2, 10} {
-		err := validateDistributedBatchSize("stage pretrain", batch, 4)
-		if err == nil || !strings.Contains(err.Error(), "stage pretrain global batch size") {
+		err := validateDistributedBatchSize("stage pretrain", batch, 1, 4)
+		if err == nil || !strings.Contains(err.Error(), "stage pretrain global micro-batch size") {
 			t.Fatalf("batch %d error = %v", batch, err)
 		}
+	}
+	if err := validateDistributedBatchSize("stage pretrain", 16, 8, 4); err == nil {
+		t.Fatal("accepted a physical micro-batch smaller than the world size")
 	}
 }
 

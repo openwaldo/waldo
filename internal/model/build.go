@@ -295,6 +295,13 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if err := validateSelection(selection, []string{stage.Objective}); err != nil {
 		return Inspection{}, err
 	}
+	if selection.Execution.WorldSize <= 1 {
+		selection.Execution.Parallelism.DataPlane = training.DataPlaneLocal
+	} else if builder.MultiNode.Publish != nil {
+		selection.Execution.Parallelism.DataPlane = training.DataPlaneRankZero
+	} else {
+		selection.Execution.Parallelism.DataPlane = training.DataPlaneNodeLocal
+	}
 	if err := training.ValidateBatchTopology(resolvedParameters, selection.Execution.WorldSize); err != nil {
 		return Inspection{}, fmt.Errorf("resolve training batch topology: %w", err)
 	}

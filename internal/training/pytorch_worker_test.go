@@ -89,3 +89,17 @@ func TestTorchTitanWorkerCompletesPartialFinalGlobalBatch(t *testing.T) {
 		t.Fatal("TorchTitan worker still discards a final batch when one rank has no real sequence")
 	}
 }
+
+func TestTorchTitanWorkerKeepsNodeLocalDataOffTrainingNetwork(t *testing.T) {
+	source := string(pyTorchWorker)
+	for _, expected := range []string{
+		`WALDO_TORCH_DATA_PLANE`,
+		`torch.distributed.new_group(ranks=ranks)`,
+		`source_rank = node_rank * local_world`,
+		`group=stream_group`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("TorchTitan worker omits node-local stream behavior %q", expected)
+		}
+	}
+}

@@ -664,7 +664,7 @@ func runModelTrainWithCluster(context Context, args []string, cluster training.C
 	if batch < 1 || batch > 1_000_000 {
 		return fmt.Errorf("--batch-size must be an integer in 1..1000000")
 	}
-	if err := validateDistributedBatchSize("training", batch, cluster.WorldSize); err != nil {
+	if err := validateDistributedBatchSize("training", batch, 1, cluster.WorldSize); err != nil {
 		return err
 	}
 	learningRate := float64Option(context, "learning-rate")
@@ -1113,6 +1113,7 @@ func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, 
 		Conversation:       plan.Conversation,
 		ArchitectureSHA256: plan.ArchitectureSHA256, Architecture: plan.Architecture,
 		Parameters: plan.Parameters, Records: records, EvaluationRecords: partition.EvaluationRecords(),
+		Parallelism:   plan.Parallelism,
 		EvaluationSet: model.EvaluationSetValue(plan.EvaluationSet), Initialization: initialization,
 		Tokenizer:         tokenizerSpec,
 		ArtifactDirectory: scratch, ArtifactPrefix: "artifacts",
@@ -1167,7 +1168,7 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 		return err
 	}
 	for _, stage := range compose.Stages {
-		if err := validateDistributedBatchSize("stage "+stage.Name, stage.Parameters.BatchSize, cluster.WorldSize); err != nil {
+		if err := validateDistributedBatchSize("stage "+stage.Name, stage.Parameters.BatchSize, stage.Parameters.GradientAccumulation, cluster.WorldSize); err != nil {
 			return err
 		}
 	}
@@ -1253,12 +1254,19 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 	return writeModelMutationResult(context, stdout, result, "trained")
 }
 
-func validateDistributedBatchSize(label string, batchSize int64, worldSize int) error {
+func validateDistributedBatchSize(label string, batchSize, accumulation int64, worldSize int) error {
 	if worldSize <= 1 {
 		return nil
 	}
-	if batchSize < int64(worldSize) || batchSize%int64(worldSize) != 0 {
-		return fmt.Errorf("%s global batch size %d must be at least and divisible by distributed world size %d", label, batchSize, worldSize)
+	if accumulation == 0 {
+		accumulation = 1
+	}
+	if accumulation < 1 || batchSize%accumulation != 0 {
+		return fmt.Errorf("%s gradient accumulation %d must divide global batch size %d", label, accumulation, batchSize)
+	}
+	microBatch := batchSize / accumulation
+	if microBatch < int64(worldSize) || microBatch%int64(worldSize) != 0 {
+		return fmt.Errorf("%s global micro-batch size %d must be at least and divisible by distributed world size %d", label, microBatch, worldSize)
 	}
 	return nil
 }

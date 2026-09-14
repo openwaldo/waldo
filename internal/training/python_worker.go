@@ -247,7 +247,7 @@ func workerBeginFromRequest(request Request) WorkerBegin {
 		RunID: request.RunID, Stage: request.Stage, Objective: request.Objective,
 		ArchitectureSHA256: request.ArchitectureSHA256, Architecture: request.Architecture,
 		Parameters: request.Parameters, Parallelism: request.Parallelism,
-		EvaluationSet: request.EvaluationSet, Tokenizer: tokenizer,
+		EvaluationSet: request.EvaluationSet, Tokenizer: tokenizer, DataNodeRank: request.DataNodeRank,
 	}
 	if request.Initialization != nil {
 		begin.Initialization = &WorkerInitialization{
@@ -289,6 +289,15 @@ func runWorkerStreamJoin(ctx context.Context, label string, command *exec.Cmd, r
 		return Observation{}, fmt.Errorf("create %s artifact directory: %w", label, err)
 	}
 	var output cappedBuffer
+	var stdin io.WriteCloser
+	var err error
+	if request.Records != nil {
+		request.Tokenizer = defaultedTokenizer(request.Tokenizer)
+		stdin, err = command.StdinPipe()
+		if err != nil {
+			return Observation{}, err
+		}
+	}
 	command.Stdout = &output
 	command.Stderr = &output
 	command.WaitDelay = workerExitDrain
@@ -298,8 +307,31 @@ func runWorkerStreamJoin(ctx context.Context, label string, command *exec.Cmd, r
 	if err := command.Start(); err != nil {
 		return Observation{}, fmt.Errorf("start %s secondary node: %w", label, err)
 	}
+	writeResult := make(chan error, 1)
+	if stdin != nil {
+		go func() {
+			records, evaluations, tokenizeErr := tokenizedWorkerSources(request)
+			if tokenizeErr != nil {
+				_ = stdin.Close()
+				writeResult <- tokenizeErr
+				return
+			}
+			writeErr := WriteWorkerInput(ctx, stdin, workerBeginFromRequest(request), records, evaluations)
+			closeErr := stdin.Close()
+			if writeErr == nil && !errors.Is(closeErr, os.ErrClosed) {
+				writeErr = closeErr
+			}
+			writeResult <- writeErr
+		}()
+	}
 	defer func() { go func() { _ = command.Wait() }() }()
 	waitErr := awaitProcessExit(command)
+	if stdin != nil {
+		if writeErr := <-writeResult; writeErr != nil && !errors.Is(writeErr, io.ErrClosedPipe) {
+			terminateWorkerGroup(command)
+			return Observation{}, fmt.Errorf("stream node-local records to %s secondary node: %w%s", label, writeErr, workerStderr(output.String()))
+		}
+	}
 	if waitErr != nil {
 		terminateWorkerGroup(command)
 		if ctxErr := ctx.Err(); ctxErr != nil {

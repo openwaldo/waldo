@@ -21,7 +21,7 @@ import torch.nn.functional as functional
 
 PROTOCOL_SCHEMA = 1
 WORKER_REVISION = "builtin-pytorch-worker-schema-1-r9"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r18"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r19"
 IS_PRIMARY = True
 
 
@@ -530,6 +530,32 @@ class Trainer:
             if len(self.batch) >= self.batch_size:
                 self.train_batch()
 
+    def add_prepared_sequence(self, sequence):
+        if not self.distributed:
+            raise ValueError("prepared rank sequence requires distributed training")
+        ordinal = int(sequence["ordinal"])
+        local_world = int(os.environ.get("LOCAL_WORLD_SIZE", "1"))
+        node_rank = int(os.environ.get("GROUP_RANK", "0"))
+        owner = ordinal % self.world_size
+        if owner // local_world != node_rank:
+            raise ValueError(f"prepared sequence {ordinal} was delivered to the wrong node")
+        if owner == self.rank:
+            tokens = [int(token) for token in sequence["tokens"]]
+            target_mask = [float(value) for value in sequence["loss_mask"]]
+            window = self.sequence_length + 1
+            if len(tokens) > window or len(target_mask) != len(tokens) - 1:
+                raise ValueError(f"prepared sequence {ordinal} has invalid dimensions")
+            padded = tokens + [self.tokenizer.pad_id] * (window - len(tokens))
+            mask = target_mask + [0.0] * (self.sequence_length - len(target_mask))
+            self.batch.append((padded, mask, sequence.get("consumption", {})))
+
+    def finish_prepared_micro_batch(self):
+        if not self.distributed or len(self.batch) != self.batch_size:
+            raise ValueError(
+                f"rank {self.rank} assembled {len(self.batch)} prepared sequences; expected {self.batch_size}"
+            )
+        self.train_batch()
+
     def train_batch(self, final=False):
         if not self.batch or self.step_number >= self.target_steps:
             self.batch = []
@@ -1030,9 +1056,10 @@ class Trainer:
 def stream_lines(distributed):
     """Yield the canonical input stream's lines on every rank.
 
-    Global rank zero alone receives the stream on its torchrun parent's stdin.
-    It broadcasts each frame to every rank. Secondary hosts therefore need no
-    corpus checkout, object cache, tokenizer, or duplicate record stream.
+    The default multi-node path gives each node one identical stream from its
+    verified node-local cache. The node's local rank zero broadcasts frames
+    only to sibling ranks, keeping record traffic off the training network.
+    Launcher-stream compatibility falls back to global-rank-zero broadcast.
     """
     if not distributed:
         while True:
@@ -1050,9 +1077,21 @@ def stream_lines(distributed):
         raise ValueError(f"local world sizes differ across nodes: {sorted(set(sizes))}")
     local_rank = int(os.environ["LOCAL_RANK"])
     device = torch.device(f"cuda:{local_rank}")
+    node_local = os.environ.get("WALDO_TORCH_DATA_PLANE") == "node-local-cache"
+    source_rank = 0
+    stream_group = None
+    if node_local:
+        node_count = world // local_world
+        node_rank = int(os.environ.get("GROUP_RANK", str(rank // local_world)))
+        groups = []
+        for node in range(node_count):
+            ranks = list(range(node * local_world, (node + 1) * local_world))
+            groups.append(torch.distributed.new_group(ranks=ranks))
+        stream_group = groups[node_rank]
+        source_rank = node_rank * local_world
     while True:
-        values = [sys.stdin.readline() if rank == 0 else None]
-        torch.distributed.broadcast_object_list(values, src=0, device=device)
+        values = [sys.stdin.readline() if rank == source_rank else None]
+        torch.distributed.broadcast_object_list(values, src=source_rank, group=stream_group, device=device)
         if not values[0]:
             return
         yield values[0]
@@ -1093,6 +1132,14 @@ def run():
             if trainer is None or ended:
                 raise ValueError("worker received record outside stream")
             trainer.add_record(frame["record"])
+        elif kind == "sequence":
+            if trainer is None or ended:
+                raise ValueError("worker received prepared sequence outside stream")
+            trainer.add_prepared_sequence(frame["sequence"])
+        elif kind == "micro_batch_end":
+            if trainer is None or ended:
+                raise ValueError("worker received micro-batch boundary outside stream")
+            trainer.finish_prepared_micro_batch()
         elif kind == "evaluation_record":
             if trainer is None or ended:
                 raise ValueError("worker received evaluation record outside stream")

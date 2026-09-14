@@ -30,6 +30,7 @@ type WorkerBegin struct {
 	EvaluationSet      EvaluationSet         `json:"evaluation_set"`
 	Initialization     *WorkerInitialization `json:"initialization,omitempty"`
 	Resume             *WorkerResume         `json:"resume,omitempty"`
+	DataNodeRank       int                   `json:"data_node_rank,omitempty"`
 }
 
 type tokenizedRecordSource struct {
@@ -68,10 +69,21 @@ type WorkerResume struct {
 }
 
 type WorkerInputFrame struct {
-	Kind   string       `json:"kind"`
-	Schema int          `json:"schema"`
-	Begin  *WorkerBegin `json:"begin,omitempty"`
-	Record *Record      `json:"record,omitempty"`
+	Kind     string            `json:"kind"`
+	Schema   int               `json:"schema"`
+	Begin    *WorkerBegin      `json:"begin,omitempty"`
+	Record   *Record           `json:"record,omitempty"`
+	Sequence *PreparedSequence `json:"sequence,omitempty"`
+}
+
+// PreparedSequence is the deterministic packed unit consumed by one rank.
+// It is produced once by each node coordinator after tokenization, before
+// Python or accelerator work begins.
+type PreparedSequence struct {
+	Ordinal     int64            `json:"ordinal"`
+	Tokens      []int            `json:"tokens"`
+	LossMask    []bool           `json:"loss_mask"`
+	Consumption map[string]int64 `json:"consumption,omitempty"`
 }
 
 type WorkerOutputFrame struct {
@@ -103,6 +115,12 @@ func writeWorkerInputUntil(ctx context.Context, output io.Writer, begin WorkerBe
 			return err
 		}
 	}
+	if begin.Parallelism.DataPlane == DataPlaneNodeLocal {
+		if err := writePreparedSequences(ctx, encoder, begin, records, stopRecords); err != nil {
+			return err
+		}
+		return encoder.Encode(WorkerInputFrame{Kind: "end", Schema: WorkerProtocolSchema})
+	}
 	if err := records.Stream(ctx, func(record Record) error {
 		if stopRecords != nil {
 			select {
@@ -116,6 +134,102 @@ func writeWorkerInputUntil(ctx context.Context, output io.Writer, begin WorkerBe
 		return err
 	}
 	return encoder.Encode(WorkerInputFrame{Kind: "end", Schema: WorkerProtocolSchema})
+}
+
+func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin WorkerBegin, records RecordSource, stopRecords <-chan struct{}) error {
+	worldSize := begin.Parallelism.WorldSize
+	GPUsPerNode := begin.Parallelism.GPUsPerNode
+	if worldSize < 2 || GPUsPerNode < 1 || worldSize%GPUsPerNode != 0 || begin.DataNodeRank < 0 || begin.DataNodeRank >= worldSize/GPUsPerNode {
+		return fmt.Errorf("invalid node-local prepared-data topology")
+	}
+	sequenceLength := int(begin.Parameters.SequenceLength)
+	globalMicroBatch := begin.Parameters.BatchSize / begin.Parameters.GradientAccumulation
+	targetSequences, overflow := multiplyInt64(begin.Parameters.Steps, begin.Parameters.BatchSize)
+	if overflow {
+		return fmt.Errorf("prepared sequence target overflows int64")
+	}
+	var tokens []int
+	var masks []bool
+	var corpora []string
+	ordinal := int64(0)
+	emitSequence := func(piece []int, targetMask []bool, targetCorpora []string) error {
+		if !anyMask(targetMask) {
+			return nil
+		}
+		ownerRank := int(ordinal % int64(worldSize))
+		ownerNode := ownerRank / GPUsPerNode
+		if ownerNode == begin.DataNodeRank {
+			consumption := map[string]int64{}
+			for index, supervised := range targetMask {
+				if supervised {
+					consumption[targetCorpora[index]]++
+				}
+			}
+			sequence := PreparedSequence{Ordinal: ordinal, Tokens: append([]int(nil), piece...), LossMask: append([]bool(nil), targetMask...), Consumption: consumption}
+			if err := encoder.Encode(WorkerInputFrame{Kind: "sequence", Schema: WorkerProtocolSchema, Sequence: &sequence}); err != nil {
+				return err
+			}
+		}
+		ordinal++
+		if ordinal%globalMicroBatch == 0 {
+			if err := encoder.Encode(WorkerInputFrame{Kind: "micro_batch_end", Schema: WorkerProtocolSchema}); err != nil {
+				return err
+			}
+		}
+		if ordinal >= targetSequences {
+			return errWorkerReachedTarget
+		}
+		return nil
+	}
+	err := records.Stream(ctx, func(record Record) error {
+		if stopRecords != nil {
+			select {
+			case <-stopRecords:
+				return errWorkerReachedTarget
+			default:
+			}
+		}
+		if len(record.LossMask) != len(record.Tokens)+1 {
+			return fmt.Errorf("prepared record %s loss mask does not include its EOS target", record.ID)
+		}
+		tokens = append(tokens, record.Tokens...)
+		tokens = append(tokens, begin.Tokenizer.EOSID)
+		masks = append(masks, record.LossMask...)
+		for range record.LossMask {
+			corpora = append(corpora, record.Corpus)
+		}
+		window := sequenceLength + 1
+		for len(tokens) >= window {
+			if err := emitSequence(tokens[:window], masks[1:window], corpora[1:window]); err != nil {
+				return err
+			}
+			tokens = tokens[sequenceLength:]
+			masks = masks[sequenceLength:]
+			corpora = corpora[sequenceLength:]
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errWorkerReachedTarget) {
+		return err
+	}
+	if errors.Is(err, errWorkerReachedTarget) || ordinal >= targetSequences {
+		return nil
+	}
+	if len(tokens) > 1 {
+		if err := emitSequence(tokens, masks[1:], corpora[1:]); err != nil && !errors.Is(err, errWorkerReachedTarget) {
+			return err
+		}
+	}
+	return nil
+}
+
+func anyMask(mask []bool) bool {
+	for _, value := range mask {
+		if value {
+			return true
+		}
+	}
+	return false
 }
 
 func ReadWorkerOutput(input io.Reader, consume func(WorkerOutputFrame) error) error {

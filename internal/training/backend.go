@@ -63,6 +63,9 @@ const (
 	ParallelismData          = "data-parallel"
 	ParallelismHybridSharded = "hybrid-sharded-data-parallel"
 	ParallelismFullySharded  = "fully-sharded-data-parallel"
+	DataPlaneLocal           = "local"
+	DataPlaneNodeLocal       = "node-local-cache"
+	DataPlaneRankZero        = "rank-zero-broadcast"
 )
 
 // Parallelism is the resolved physical placement of one training stage. It
@@ -77,6 +80,7 @@ type Parallelism struct {
 	GPUsSharingEachModelCopy int    `json:"gpus_sharing_each_model_copy"`
 	LocalInterconnect        string `json:"local_interconnect,omitempty"`
 	InterNodeInterconnect    string `json:"inter_node_interconnect,omitempty"`
+	DataPlane                string `json:"data_plane,omitempty"`
 	EstimatedModelStateBytes uint64 `json:"estimated_model_state_bytes"`
 	MemoryPerGPUBytes        uint64 `json:"memory_per_gpu_bytes"`
 }
@@ -108,6 +112,9 @@ func (plan Parallelism) Validate(execution Execution) error {
 	}
 	if plan.CompleteModelCopies < 1 || plan.GPUsSharingEachModelCopy < 1 || plan.CompleteModelCopies*plan.GPUsSharingEachModelCopy != plan.WorldSize {
 		return fmt.Errorf("resolved parallelism model placement does not account for every GPU")
+	}
+	if plan.DataPlane != "" && plan.DataPlane != DataPlaneLocal && plan.DataPlane != DataPlaneNodeLocal && plan.DataPlane != DataPlaneRankZero {
+		return fmt.Errorf("unsupported training data plane %q", plan.DataPlane)
 	}
 	return nil
 }
@@ -147,6 +154,12 @@ func DescribeParallelism(plan Parallelism, globalBatch int64) []string {
 	}
 	if len(paths) > 0 {
 		messages = append(messages, "model updates synchronize over "+strings.Join(paths, " and "))
+	}
+	switch plan.DataPlane {
+	case DataPlaneNodeLocal:
+		messages = append(messages, "data plane: each node verifies and prepares its own cached corpus stream; only rank-local sequence traffic stays within the node")
+	case DataPlaneRankZero:
+		messages = append(messages, "data plane: launcher compatibility mode broadcasts prepared records from global rank zero across nodes")
 	}
 	return messages
 }
@@ -342,6 +355,7 @@ type Request struct {
 	EvaluationRecords  RecordSource
 	EvaluationSet      EvaluationSet
 	PreTokenize        bool
+	DataNodeRank       int
 	Initialization     *Initialization
 	Resume             *ResumePoint
 	ArtifactDirectory  string

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -818,6 +819,62 @@ func TestValidateBatchTopologyUsesPhysicalMicroBatch(t *testing.T) {
 	}
 	if err := ValidateBatchTopology(parameters, 4); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPreparedSequencesAreDeterministicallyPartitionedByNode(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 4, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := Record{ID: "one", Tokens: []int{10, 11, 12, 13, 14, 15, 16, 17}, LossMask: make([]bool, 9), Corpus: "corpus"}
+	for index := range record.LossMask {
+		record.LossMask[index] = true
+	}
+	seen := map[int64]PreparedSequence{}
+	for node := 0; node < 2; node++ {
+		var encoded bytes.Buffer
+		begin := WorkerBegin{
+			Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: node,
+			Parallelism: Parallelism{WorldSize: 4, GPUsPerNode: 2, DataPlane: DataPlaneNodeLocal},
+		}
+		if err := WriteWorkerInput(context.Background(), &encoded, begin, staticRecordSource{record}, nil); err != nil {
+			t.Fatal(err)
+		}
+		decoder := json.NewDecoder(&encoded)
+		boundaries := 0
+		for {
+			var frame WorkerInputFrame
+			if err := decoder.Decode(&frame); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				t.Fatal(err)
+			}
+			if frame.Kind == "sequence" {
+				if _, duplicate := seen[frame.Sequence.Ordinal]; duplicate {
+					t.Fatalf("sequence %d assigned to more than one node", frame.Sequence.Ordinal)
+				}
+				seen[frame.Sequence.Ordinal] = *frame.Sequence
+			}
+			if frame.Kind == "micro_batch_end" {
+				boundaries++
+			}
+		}
+		if boundaries != 1 {
+			t.Fatalf("node %d received %d optimizer boundaries, want 1", node, boundaries)
+		}
+	}
+	if len(seen) != 4 {
+		t.Fatalf("prepared partitions cover %d sequences, want 4", len(seen))
+	}
+	if !reflect.DeepEqual(seen[0].Tokens, []int{10, 11, 12}) || !reflect.DeepEqual(seen[3].Tokens, []int{16, 17, 2}) {
+		t.Fatalf("prepared packing changed canonical sequence order: %+v", seen)
+	}
+	for ordinal, sequence := range seen {
+		if sequence.Consumption["corpus"] != 2 {
+			t.Fatalf("sequence %d consumption = %+v", ordinal, sequence.Consumption)
+		}
 	}
 }
 

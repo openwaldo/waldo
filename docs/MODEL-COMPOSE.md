@@ -134,6 +134,14 @@ divide `batch_size` exactly. Each physical global micro-batch is
 size must divide that value evenly. Schedulers, checkpoints, `steps`, and token
 budgets count optimizer steps, never micro-batches.
 
+For shared-plan multi-node training, WALDO mirrors and verifies corpus objects
+once per node, prepares deterministic sequence partitions in the node
+coordinator, and distributes them only to local ranks. Do not configure a
+separate corpus mirror per GPU. NFS is suitable for the small rendezvous plan,
+but it is not the default training-data path. Launcher-stream compatibility
+runs retain global-rank-zero broadcast and record that fallback in the run
+BOM.
+
 ## Top-level fields
 
 | Field | Required | Value | Meaning |
