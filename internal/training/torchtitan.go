@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r21"
+	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r22"
 	recommendedTorchVersion      = "2.15.0.dev20260905+cu130"
 	recommendedTorchTitanVersion = "0.3.0"
 	recommendedTorchIndex        = "https://download.pytorch.org/whl/nightly/cu130"
@@ -451,12 +451,17 @@ from pathlib import Path
 import torch
 import torchtitan
 import torch.testing._internal.distributed.fake_pg
+from triton.runtime import driver as triton_driver
 from torch.distributed._composable.fsdp import fully_shard
 from torch.distributed.checkpoint.state_dict import get_model_state_dict, StateDictOptions
 from torchtitan.distributed import ParallelDims
 
 if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
     raise RuntimeError("TorchTitan requires at least one visible CUDA or ROCm GPU")
+# Torch compile reaches this lazy native-helper build only on the first model
+# batch. Force it during preflight so missing compilers, Python headers, or
+# driver link libraries fail before corpus materialization and GPU launch.
+triton_driver.active.get_current_target()
 manufacturer = "AMD" if torch.version.hip else "NVIDIA"
 devices = []
 for index in range(torch.cuda.device_count()):
@@ -673,7 +678,7 @@ func torchTitanInstallGuidanceForDistribution(distribution string) string {
 # Then ensure python3 resolves to that interpreter.`
 	lower := strings.ToLower(distribution)
 	if strings.Contains(lower, "rocky") || strings.Contains(lower, "rhel") || strings.Contains(lower, "red hat") || strings.Contains(lower, "alma") || strings.Contains(lower, "centos") || strings.Contains(lower, "fedora") {
-		prerequisite = `sudo dnf install -y python3.11 python3.11-pip
+		prerequisite = `sudo dnf install -y gcc python3.11 python3.11-devel python3.11-pip
 mkdir -p "$HOME/.local/bin"
 ln -sfn /usr/bin/python3.11 "$HOME/.local/bin/python3"
 export PATH="$HOME/.local/bin:$PATH"

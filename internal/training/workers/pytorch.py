@@ -22,7 +22,7 @@ from torch.utils.checkpoint import checkpoint
 
 PROTOCOL_SCHEMA = 1
 WORKER_REVISION = "builtin-pytorch-worker-schema-1-r11"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r21"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r22"
 IS_PRIMARY = True
 
 

@@ -149,7 +149,7 @@ func TestTorchTitanResolverFailsClosed(t *testing.T) {
 
 func TestTorchTitanInstallGuidanceExplainsPythonResolution(t *testing.T) {
 	guidance := torchTitanInstallGuidanceForDistribution("Rocky Linux 9")
-	for _, expected := range []string{"Copy and run this installation block", "python3.11-pip", "hash -r", recommendedTorchVersion, recommendedTorchIndex, recommendedTorchTitanVersion, "torch.cuda.is_available()", "torch.distributed.is_nccl_available()"} {
+	for _, expected := range []string{"Copy and run this installation block", "gcc", "python3.11-devel", "python3.11-pip", "hash -r", recommendedTorchVersion, recommendedTorchIndex, recommendedTorchTitanVersion, "torch.cuda.is_available()", "torch.distributed.is_nccl_available()"} {
 		if !strings.Contains(guidance, expected) {
 			t.Fatalf("installation guidance omits %q: %s", expected, guidance)
 		}
@@ -196,7 +196,7 @@ func TestValidateTorchTitanHostConfiguration(t *testing.T) {
 }
 
 func TestTorchTitanProbeCollectsNetworkAndRDMASanityFacts(t *testing.T) {
-	for _, expected := range []string{"resource.RLIMIT_MEMLOCK", `Path("/sys/class/net")`, `Path("/sys/class/infiniband")`, `"has_address"`, `"memlock_soft_bytes"`, `"network_interfaces"`, `"rdma_devices"`, `"nvidia-smi", "topo", "-m"`, `"local_interconnect"`} {
+	for _, expected := range []string{"resource.RLIMIT_MEMLOCK", `Path("/sys/class/net")`, `Path("/sys/class/infiniband")`, `"has_address"`, `"memlock_soft_bytes"`, `"network_interfaces"`, `"rdma_devices"`, `"nvidia-smi", "topo", "-m"`, `"local_interconnect"`, "triton_driver.active.get_current_target()"} {
 		if !strings.Contains(torchTitanProbeProgram, expected) {
 			t.Fatalf("TorchTitan probe omits %q", expected)
 		}
