@@ -200,6 +200,10 @@ class Trainer:
         self.begin = begin
         self.architecture = begin["architecture"]
         self.parameters = begin["parameters"]
+        if self.parameters.get("activation_checkpointing", False):
+            raise ValueError("MLX backend does not implement activation_checkpointing")
+        if self.parameters.get("compile", False):
+            raise ValueError("MLX backend does not implement the PyTorch compile control")
         self.artifact_directory = artifact_directory
         self.artifact_prefix = artifact_prefix.replace(os.sep, "/").strip("/")
         self.sequence_length = self.parameters["sequence_length"]
@@ -246,7 +250,10 @@ class Trainer:
         self.initialization = begin.get("initialization")
         if self.initialization is not None:
             self.model.load_weights(self.initialization["path"])
+        requested_precision = self.parameters.get("compute_precision", "auto")
         dtype_name = self.architecture["parameter_dtype"]
+        if requested_precision not in ("auto", dtype_name):
+            raise ValueError("MLX compute_precision must be auto or match parameter_dtype")
         dtype = {"float32": mx.float32, "float16": mx.float16, "bfloat16": mx.bfloat16}[dtype_name]
         if dtype != mx.float32:
             self.model.apply(lambda value: value.astype(dtype))

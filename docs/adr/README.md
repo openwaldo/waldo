@@ -69,3 +69,4 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0070: Discover Fuzzball multi-node launches](0070-fuzzball-multinode-discovery.md)
 - [0071: Keep global optimizer batches stable with gradient accumulation](0071-global-batch-gradient-accumulation.md)
 - [0072: Prepare and partition training streams once per node](0072-node-local-prepared-training-streams.md)
+- [0073: Pin training precision, recomputation, and compilation](0073-pinned-training-execution-controls.md)

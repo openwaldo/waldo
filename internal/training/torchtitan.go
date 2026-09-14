@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r19"
+	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r20"
 	recommendedTorchVersion      = "2.15.0.dev20260905+cu130"
 	recommendedTorchTitanVersion = "0.3.0"
 	recommendedTorchIndex        = "https://download.pytorch.org/whl/nightly/cu130"
@@ -47,6 +47,7 @@ func (backend TorchTitan) Descriptor() Descriptor {
 		Framework: BackendTorchTitan,
 		Capabilities: Capabilities{
 			Objectives: []string{"causal-language-modeling", "assistant-response-modeling"}, CheckpointResume: true, Distributed: true, Safetensors: true,
+			ActivationCheckpointing: true, Compile: true,
 		},
 	}
 }

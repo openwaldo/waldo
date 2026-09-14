@@ -50,6 +50,9 @@ stages:
       # rank on the target eight-GPU topology.
       batch_size: 64
       gradient_accumulation_steps: 8
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
       sequence_length: 2048
       # AdamW baseline only; select the final optimizer/LR from scaling sweeps.
       learning_rate: 0.00011
@@ -82,6 +85,9 @@ stages:
       epochs: 1
       batch_size: 32
       gradient_accumulation_steps: 4
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
       sequence_length: 2048
       learning_rate: 0.00002
       seed: 43

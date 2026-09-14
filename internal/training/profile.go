@@ -121,6 +121,13 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 	if gradientAccumulation < 1 || gradientAccumulation > parameters.BatchSize || parameters.BatchSize%gradientAccumulation != 0 {
 		return ResolvedParameters{}, fmt.Errorf("gradient_accumulation_steps must be positive, no greater than batch_size, and divide batch_size exactly")
 	}
+	computePrecision := parameters.ComputePrecision
+	if computePrecision == "" {
+		computePrecision = "auto"
+	}
+	if computePrecision != "auto" && computePrecision != "float32" && computePrecision != "float16" && computePrecision != "bfloat16" {
+		return ResolvedParameters{}, fmt.Errorf("compute_precision must be auto, float32, float16, or bfloat16")
+	}
 	epochs := parameters.Epochs
 	if epochs == 0 {
 		epochs = 1
@@ -230,6 +237,7 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 	return ResolvedParameters{
 		Profile: profile, ProfileSchema: profileSchema,
 		Epochs: epochs, RequestedTokens: requestedTokens, Steps: steps, BatchSize: parameters.BatchSize, GradientAccumulation: gradientAccumulation,
+		ComputePrecision: computePrecision, ActivationCheckpointing: parameters.ActivationCheckpointing, Compile: parameters.Compile,
 		SequenceLength: parameters.SequenceLength, LearningRate: parameters.LearningRate,
 		Seed: parameters.Seed, PlannedTokenCapacity: capacity,
 		Optimizer:       Optimizer{Name: "adamw", WeightDecay: weightDecay, Beta1: 0.9, Beta2: 0.95, Epsilon: 1e-8},

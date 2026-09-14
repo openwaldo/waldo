@@ -468,6 +468,10 @@ must use one representation or the other, never both.
 | `epochs` | one training budget | `1..1000000` | Complete deterministic passes over every selected canonical record. When `steps` is omitted, WALDO derives the exact optimizer-step count after filtering and held-out selection. |
 | `steps` | legacy/fixed-step budget | positive integer | Explicit optimizer steps and learning-rate schedule length. Retained for existing composes and exact fixed-step experiments; it may be combined with `epochs` as a repetition limit. |
 | `batch_size` | yes | positive integer | Global number of packed sequences in each optimizer step. Multi-GPU training partitions these sequences across ranks, so the value must be at least and evenly divisible by the aggregate GPU count. |
+| `gradient_accumulation_steps` | no | default `1`; exact divisor of `batch_size` | Splits the logical global batch into physical micro-batches. Each micro-batch must remain divisible by world size. |
+| `compute_precision` | no | `auto`, `float32`, `float16`, or `bfloat16` | Compute autocast precision. `auto` follows `parameter_dtype`. CUDA FP16 uses persisted dynamic loss scaling. |
+| `activation_checkpointing` | no | default `false` | Recomputes transformer layers during backward to reduce activation memory. PyTorch/TorchTitan only. |
+| `compile` | no | default `false` | Compiles the live PyTorch/TorchTitan forward graph. The unwrapped model remains the checkpoint and export source. |
 | `sequence_length` | yes | positive integer, at most `context_tokens` | Number of predicted token targets per packed sequence. |
 | `learning_rate` | yes | finite positive number | Peak AdamW learning rate. |
 | `seed` | no | default `0` | Controls deterministic shuffling, evaluation selection, initialization, and training randomness. Reference composes set it explicitly. |

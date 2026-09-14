@@ -295,6 +295,13 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if err := validateSelection(selection, []string{stage.Objective}); err != nil {
 		return Inspection{}, err
 	}
+	capabilities := selection.Backend.Descriptor().Capabilities
+	if resolvedParameters.ActivationCheckpointing && !capabilities.ActivationCheckpointing {
+		return Inspection{}, fmt.Errorf("backend %s does not support activation_checkpointing", selection.Execution.Backend.Name)
+	}
+	if resolvedParameters.Compile && !capabilities.Compile {
+		return Inspection{}, fmt.Errorf("backend %s does not support compile", selection.Execution.Backend.Name)
+	}
 	if selection.Execution.WorldSize <= 1 {
 		selection.Execution.Parallelism.DataPlane = training.DataPlaneLocal
 	} else if builder.MultiNode.Publish != nil {

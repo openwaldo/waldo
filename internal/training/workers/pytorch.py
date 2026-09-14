@@ -17,11 +17,12 @@ import traceback
 import torch
 import torch.nn as nn
 import torch.nn.functional as functional
+from torch.utils.checkpoint import checkpoint
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r9"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r19"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r10"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r20"
 IS_PRIMARY = True
 
 
@@ -225,6 +226,7 @@ class DecoderLM(nn.Module):
         vocabulary = architecture["vocabulary_size"]
         hidden = architecture["hidden_size"]
         self.tie_embeddings = architecture["tie_embeddings"]
+        self.activation_checkpointing = False
         self.embedding = nn.Embedding(vocabulary, hidden)
         self.layers = nn.ModuleList([
             DecoderBlock(
@@ -250,7 +252,10 @@ class DecoderLM(nn.Module):
     def forward(self, tokens):
         value = self.embedding(tokens)
         for layer in self.layers:
-            value = layer(value)
+            if self.activation_checkpointing and self.training:
+                value = checkpoint(layer, value, use_reentrant=False)
+            else:
+                value = layer(value)
         value = self.norm(value)
         if self.tie_embeddings:
             return functional.linear(value, self.embedding.weight)
@@ -388,13 +393,17 @@ class Trainer:
             missing, unexpected = self.model.load_state_dict(load_safetensors(self.resume_paths["model.safetensors"]), strict=False)
             if missing or unexpected:
                 raise ValueError(f"resume weights do not match architecture: missing={missing}, unexpected={unexpected}")
-        dtype_name = self.architecture["parameter_dtype"]
-        self.parameter_dtype = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}[dtype_name]
-        if self.device.type == "cpu" and self.parameter_dtype == torch.float16:
+        self.parameter_dtype = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}[self.architecture["parameter_dtype"]]
+        compute_name = self.parameters.get("compute_precision", "auto")
+        if compute_name == "auto":
+            compute_name = self.architecture["parameter_dtype"]
+        self.compute_dtype = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}[compute_name]
+        if self.device.type == "cpu" and self.compute_dtype == torch.float16:
             raise ValueError("float16 training is not supported by the PyTorch CPU adapter; use bfloat16 or float32")
         # Keep master weights and AdamW state in FP32. Reduced precision is a
         # compute and portable-artifact format, not optimizer state.
         self.model.to(device=self.device, dtype=torch.float32)
+        self.model.activation_checkpointing = bool(self.parameters.get("activation_checkpointing", False))
         if self.distributed:
             if self.initialization is not None:
                 for parameter in self.model.parameters():
@@ -418,6 +427,7 @@ class Trainer:
                 for layer in self.model.layers:
                     fully_shard(layer, mesh=fsdp_mesh)
                 fully_shard(self.model, mesh=fsdp_mesh)
+        self.compiled_model = torch.compile(self.model, dynamic=False) if self.parameters.get("compile", False) else self.model
         optimizer_parameters = self.parameters["optimizer"]
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
@@ -426,6 +436,13 @@ class Trainer:
             eps=optimizer_parameters["epsilon"],
             weight_decay=optimizer_parameters["weight_decay"],
         )
+        scaler_enabled = self.device.type == "cuda" and self.compute_dtype == torch.float16
+        if scaler_enabled and self.distributed and self.parallelism_strategy != "data-parallel":
+            from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
+
+            self.scaler = ShardedGradScaler(enabled=True)
+        else:
+            self.scaler = torch.amp.GradScaler("cuda", enabled=scaler_enabled)
         if self.resume is not None:
             self.restore_checkpoint()
         if self.device.type == "cuda":
@@ -444,9 +461,10 @@ class Trainer:
             )
 
     def forward_logits(self, model, tokens, mixed_precision=True):
-        enabled = mixed_precision and self.parameter_dtype != torch.float32
-        with torch.autocast(device_type=self.device.type, dtype=self.parameter_dtype, enabled=enabled):
-            return model(tokens)
+        enabled = mixed_precision and self.compute_dtype != torch.float32
+        with torch.autocast(device_type=self.device.type, dtype=self.compute_dtype, enabled=enabled):
+            target = self.compiled_model if model is self.model else model
+            return target(tokens)
 
     def logical(self, name):
         return "/".join(part for part in (self.artifact_prefix, name) if part)
@@ -597,7 +615,10 @@ class Trainer:
         else:
             global_valid_tokens = local_valid_tokens
             loss = loss_sum
-        loss.backward()
+        if self.scaler.is_enabled():
+            self.scaler.scale(loss).backward()
+        else:
+            loss.backward()
         if self.distributed:
             global_loss_sum = loss_sum.detach().clone()
             torch.distributed.all_reduce(global_loss_sum, op=torch.distributed.ReduceOp.SUM)
@@ -618,6 +639,8 @@ class Trainer:
             self.last_step_finished = time.perf_counter()
             return
 
+        if self.scaler.is_enabled():
+            self.scaler.unscale_(self.optimizer)
         for parameter in self.model.parameters():
             if parameter.grad is not None:
                 parameter.grad.div_(self.accumulated_tokens)
@@ -625,7 +648,14 @@ class Trainer:
         if should_report:
             gradient_norm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), math.inf).detach().cpu().item())
         update_started = time.perf_counter()
-        self.optimizer.step()
+        if self.scaler.is_enabled():
+            scale_before = self.scaler.get_scale()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            if self.scaler.get_scale() < scale_before:
+                self.skipped_steps += 1
+        else:
+            self.optimizer.step()
         self.synchronize()
         self.accumulated_compute_seconds += max(time.perf_counter() - update_started, 1e-9)
         loss_value = self.accumulated_loss_sum / self.accumulated_tokens
@@ -768,6 +798,8 @@ class Trainer:
             torch.save(
                 {
                     "optimizer": optimizer_state,
+                    "scaler": self.scaler.state_dict(),
+                    "skipped_steps": self.skipped_steps,
                     "random_states": random_states,
                     "consumption_states": consumption_states,
                 },
@@ -848,6 +880,8 @@ class Trainer:
             )
         else:
             self.optimizer.load_state_dict(runtime["optimizer"])
+        self.scaler.load_state_dict(runtime.get("scaler", {}))
+        self.skipped_steps = int(runtime.get("skipped_steps", 0))
         random_state = runtime["random_states"][self.rank]
         torch.set_rng_state(random_state["cpu"])
         if self.device.type == "cuda" and random_state["cuda"] is not None:

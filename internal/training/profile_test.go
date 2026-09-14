@@ -805,6 +805,26 @@ func TestResolveParametersPinsGradientAccumulation(t *testing.T) {
 	}
 }
 
+func TestResolveParametersPinsExecutionControls(t *testing.T) {
+	resolved, err := ResolveParameters(Parameters{
+		Steps: 2, BatchSize: 2, SequenceLength: 16, LearningRate: 0.001,
+		ComputePrecision: "bfloat16", ActivationCheckpointing: true, Compile: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.ComputePrecision != "bfloat16" || !resolved.ActivationCheckpointing || !resolved.Compile {
+		t.Fatalf("execution controls = %+v", resolved)
+	}
+	defaults, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001})
+	if err != nil || defaults.ComputePrecision != "auto" {
+		t.Fatalf("default execution controls = %+v, err=%v", defaults, err)
+	}
+	if _, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, ComputePrecision: "fp8"}); err == nil {
+		t.Fatal("accepted unsupported compute precision")
+	}
+}
+
 func TestValidateBatchTopologyUsesPhysicalMicroBatch(t *testing.T) {
 	parameters := ResolvedParameters{BatchSize: 64, GradientAccumulation: 4}
 	if err := ValidateBatchTopology(parameters, 8); err != nil {

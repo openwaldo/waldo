@@ -103,3 +103,21 @@ func TestTorchTitanWorkerKeepsNodeLocalDataOffTrainingNetwork(t *testing.T) {
 		}
 	}
 }
+
+func TestPyTorchWorkerPinsMemoryAndPrecisionControls(t *testing.T) {
+	source := string(pyTorchWorker)
+	for _, expected := range []string{
+		`checkpoint(layer, value, use_reentrant=False)`,
+		`torch.compile(self.model, dynamic=False)`,
+		`self.compute_dtype == torch.float16`,
+		`self.scaler.scale(loss).backward()`,
+		`self.scaler.unscale_(self.optimizer)`,
+		`self.scaler.step(self.optimizer)`,
+		`"scaler": self.scaler.state_dict()`,
+		`self.scaler.load_state_dict(runtime.get("scaler", {}))`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("PyTorch worker omits execution control %q", expected)
+		}
+	}
+}

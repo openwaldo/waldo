@@ -230,7 +230,14 @@ func requiredMemoryPerGPU(plan Plan, GPUs int) (uint64, error) {
 		accumulation := max(int64(1), stage.Parameters.GradientAccumulation)
 		globalMicroBatch := divideRoundUp(uint64(stage.Parameters.BatchSize), uint64(accumulation))
 		batch := divideRoundUp(globalMicroBatch, uint64(GPUs))
-		activations, err := multiplyAll(batch, uint64(stage.Parameters.SequenceLength), plan.Architecture.HiddenSize, plan.Architecture.Layers, 72)
+		activationFactor := uint64(72)
+		if stage.Parameters.ActivationCheckpointing {
+			// Layer checkpointing retains inputs instead of every intermediate.
+			// Keep this deliberately conservative until calibrated GPU evidence
+			// supports a tighter backend-specific estimate.
+			activationFactor = 24
+		}
+		activations, err := multiplyAll(batch, uint64(stage.Parameters.SequenceLength), plan.Architecture.HiddenSize, plan.Architecture.Layers, activationFactor)
 		if err != nil {
 			return 0, fmt.Errorf("stage %s activation memory: %w", stage.Name, err)
 		}
