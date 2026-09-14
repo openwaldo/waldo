@@ -169,6 +169,11 @@ The following need reviewed ADRs and versioned schemas before implementation:
   thresholds;
 - tokenizer-training inputs and tokenizer artifact identity.
 
+Implemented: the node-local data plane now persists schema-1 prepared-sequence
+manifests with bounded, SHA-256-pinned chunks. Identical retries replay them;
+changed inputs or execution facts select a new identity and corrupted chunks
+fail closed.
+
 Backend-only tuning that affects reproducibility must still be recorded in the
 run artifact.
 

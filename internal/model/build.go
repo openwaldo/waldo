@@ -37,14 +37,15 @@ type Progress struct {
 }
 
 type Builder struct {
-	Root         string
-	Now          func() time.Time
-	NewID        func() (string, error)
-	Resolver     training.Resolver
-	OriginPuller *Puller
-	Progress     func(Progress)
-	ComposeName  string
-	MultiNode    MultiNodeHandoff
+	Root                   string
+	Now                    func() time.Time
+	NewID                  func() (string, error)
+	Resolver               training.Resolver
+	OriginPuller           *Puller
+	Progress               func(Progress)
+	ComposeName            string
+	PreparedCacheDirectory string
+	MultiNode              MultiNodeHandoff
 	// StagePreparer materializes a planned stage immediately before it runs.
 	// StageReleaser releases those local objects after the stage commits.
 	StagePreparer func(context.Context, PreparedStage) (PreparedStage, error)
@@ -632,6 +633,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 		Parameters: runBOM.Parameters, Records: records, EvaluationRecords: evaluationRecords, EvaluationSet: EvaluationSetValue(runBOM.EvaluationSet), Initialization: initializationForAttempt(runBOM.Initialization, resume), Resume: resume,
 		Parallelism:       runBOM.Execution.Parallelism,
 		ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix), ArtifactPrefix: artifactPrefix, Report: report,
+		PreparedCacheDirectory: builder.PreparedCacheDirectory,
 	})
 	progressMutex.Lock()
 	if progressErr != nil {

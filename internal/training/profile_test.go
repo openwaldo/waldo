@@ -938,6 +938,46 @@ func TestPreparedSequencesAreDeterministicallyPartitionedByNode(t *testing.T) {
 	}
 }
 
+type refusingRecordSource struct{}
+
+func (refusingRecordSource) Stream(context.Context, func(Record) error) error {
+	return errors.New("record source should not be reopened")
+}
+
+func TestPreparedSequenceCacheReplaysVerifiedChunks(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 2, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := Record{ID: "one", Tokens: []int{10, 11, 12, 13}, LossMask: []bool{true, true, true, true, true}, Corpus: "corpus"}
+	begin := WorkerBegin{
+		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
+		Parallelism:            Parallelism{WorldSize: 2, GPUsPerNode: 1, DataPlane: DataPlaneNodeLocal},
+		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("a", 64),
+	}
+	var first bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &first, begin, staticRecordSource{record}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var second bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &second, begin, refusingRecordSource{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if first.String() != second.String() {
+		t.Fatalf("cached worker stream differs\nfirst: %s\nsecond: %s", first.String(), second.String())
+	}
+	chunks, err := filepath.Glob(filepath.Join(begin.PreparedCacheDirectory, begin.PreparedIdentity, "node-0", "chunk-*.ndjson"))
+	if err != nil || len(chunks) != 1 {
+		t.Fatalf("chunks = %v, err=%v", chunks, err)
+	}
+	if err := os.WriteFile(chunks[0], []byte("tampered\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteWorkerInput(context.Background(), io.Discard, begin, refusingRecordSource{}, nil); err == nil || !strings.Contains(err.Error(), "digest differs") {
+		t.Fatalf("tampered prepared cache error = %v", err)
+	}
+}
+
 func collectRecords(t *testing.T, inputs []Input, parameters ResolvedParameters) []string {
 	t.Helper()
 	source, err := NewCanonicalRecordSource(inputs, parameters)

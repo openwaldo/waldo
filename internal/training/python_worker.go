@@ -7,6 +7,9 @@ package training
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +18,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/openwaldo/waldo/internal/corpus"
 )
 
 var workerExitDrain = 5 * time.Second
@@ -251,7 +256,20 @@ func workerBeginFromRequest(request Request) WorkerBegin {
 		ArchitectureSHA256: request.ArchitectureSHA256, Architecture: request.Architecture,
 		Parameters: request.Parameters, Parallelism: request.Parallelism,
 		EvaluationSet: request.EvaluationSet, Tokenizer: tokenizer, DataNodeRank: request.DataNodeRank,
+		PreparedCacheDirectory: request.PreparedCacheDirectory,
 	}
+	identity, _ := json.Marshal(struct {
+		Architecture string                `json:"architecture_sha256"`
+		Objective    string                `json:"objective"`
+		Conversation ConversationTransform `json:"conversation"`
+		Tokenizer    TokenizerSpec         `json:"tokenizer"`
+		Corpus       corpus.BOM            `json:"corpus_bom"`
+		Parameters   ResolvedParameters    `json:"parameters"`
+		Parallelism  Parallelism           `json:"parallelism"`
+		Evaluation   EvaluationSet         `json:"evaluation_set"`
+	}{request.ArchitectureSHA256, request.Objective, request.Conversation, tokenizer, request.BOM, request.Parameters, request.Parallelism, request.EvaluationSet})
+	sum := sha256.Sum256(identity)
+	begin.PreparedIdentity = hex.EncodeToString(sum[:])
 	if request.Initialization != nil {
 		begin.Initialization = &WorkerInitialization{
 			SourceType:  request.Initialization.SourceType,

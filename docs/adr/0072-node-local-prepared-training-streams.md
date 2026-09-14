@@ -34,9 +34,8 @@ not allowed to change during resume.
   default shared-plan path.
 - Corpus objects are mirrored once per node, never once per rank. Ordinary NFS
   is unnecessary for training data; it may still carry the small shared plan.
-- Every node currently repeats deterministic tokenization and packing. A later
-  versioned, chunked prepared-stage artifact can remove that remaining CPU work
-  without changing rank assignments or the worker protocol. It must not be
-  implemented as an unbounded JSON mirror of the full token budget.
+- On the first attempt, every node deterministically tokenizes and packs its
+  local share while training consumes it. ADR 0078 adds bounded verified chunks
+  so an identical retry can replay that work without reopening the shards.
 - Launcher-stream runs remain correct but retain the old data-plane bottleneck
   and must identify it in their run BOM and efficiency report.

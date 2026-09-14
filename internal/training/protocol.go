@@ -19,18 +19,20 @@ import (
 const WorkerProtocolSchema = 1
 
 type WorkerBegin struct {
-	RunID              string                `json:"run_id"`
-	Stage              string                `json:"stage"`
-	Objective          string                `json:"objective"`
-	ArchitectureSHA256 string                `json:"architecture_sha256"`
-	Architecture       json.RawMessage       `json:"architecture"`
-	Parameters         ResolvedParameters    `json:"parameters"`
-	Parallelism        Parallelism           `json:"parallelism,omitzero"`
-	Tokenizer          TokenizerSpec         `json:"tokenizer"`
-	EvaluationSet      EvaluationSet         `json:"evaluation_set"`
-	Initialization     *WorkerInitialization `json:"initialization,omitempty"`
-	Resume             *WorkerResume         `json:"resume,omitempty"`
-	DataNodeRank       int                   `json:"data_node_rank,omitempty"`
+	RunID                  string                `json:"run_id"`
+	Stage                  string                `json:"stage"`
+	Objective              string                `json:"objective"`
+	ArchitectureSHA256     string                `json:"architecture_sha256"`
+	Architecture           json.RawMessage       `json:"architecture"`
+	Parameters             ResolvedParameters    `json:"parameters"`
+	Parallelism            Parallelism           `json:"parallelism,omitzero"`
+	Tokenizer              TokenizerSpec         `json:"tokenizer"`
+	EvaluationSet          EvaluationSet         `json:"evaluation_set"`
+	Initialization         *WorkerInitialization `json:"initialization,omitempty"`
+	Resume                 *WorkerResume         `json:"resume,omitempty"`
+	DataNodeRank           int                   `json:"data_node_rank,omitempty"`
+	PreparedCacheDirectory string                `json:"-"`
+	PreparedIdentity       string                `json:"-"`
 }
 
 type tokenizedRecordSource struct {
@@ -142,6 +144,15 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 	if worldSize < 2 || GPUsPerNode < 1 || worldSize%GPUsPerNode != 0 || begin.DataNodeRank < 0 || begin.DataNodeRank >= worldSize/GPUsPerNode {
 		return fmt.Errorf("invalid node-local prepared-data topology")
 	}
+	if begin.PreparedCacheDirectory != "" && begin.PreparedIdentity != "" {
+		replayed, err := replayPreparedSequences(begin.PreparedCacheDirectory, begin.PreparedIdentity, begin.DataNodeRank, worldSize, GPUsPerNode, begin.Parameters.BatchSize/begin.Parameters.GradientAccumulation, encoder)
+		if err != nil {
+			return err
+		}
+		if replayed {
+			return nil
+		}
+	}
 	sequenceLength := int(begin.Parameters.SequenceLength)
 	globalMicroBatch := begin.Parameters.BatchSize / begin.Parameters.GradientAccumulation
 	targetSequences, overflow := multiplyInt64(begin.Parameters.Steps, begin.Parameters.BatchSize)
@@ -152,6 +163,11 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 	var masks []bool
 	var corpora []string
 	ordinal := int64(0)
+	cacheWriter, err := newPreparedCacheWriter(begin.PreparedCacheDirectory, begin.PreparedIdentity, begin.DataNodeRank, worldSize, GPUsPerNode, globalMicroBatch)
+	if err != nil {
+		return err
+	}
+	defer cacheWriter.Abort()
 	emitSequence := func(piece []int, targetMask []bool, targetCorpora []string) error {
 		if !anyMask(targetMask) {
 			return nil
@@ -166,6 +182,9 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 				}
 			}
 			sequence := PreparedSequence{Ordinal: ordinal, Tokens: append([]int(nil), piece...), LossMask: append([]bool(nil), targetMask...), Consumption: consumption}
+			if err := cacheWriter.Append(sequence); err != nil {
+				return err
+			}
 			if err := encoder.Encode(WorkerInputFrame{Kind: "sequence", Schema: WorkerProtocolSchema, Sequence: &sequence}); err != nil {
 				return err
 			}
@@ -181,7 +200,7 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 		}
 		return nil
 	}
-	err := records.Stream(ctx, func(record Record) error {
+	err = records.Stream(ctx, func(record Record) error {
 		if stopRecords != nil {
 			select {
 			case <-stopRecords:
@@ -212,7 +231,10 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 	if err != nil && !errors.Is(err, errWorkerReachedTarget) {
 		return err
 	}
-	if errors.Is(err, errWorkerReachedTarget) || ordinal >= targetSequences {
+	if ordinal >= targetSequences {
+		return cacheWriter.Commit()
+	}
+	if errors.Is(err, errWorkerReachedTarget) {
 		return nil
 	}
 	if len(tokens) > 1 {
@@ -220,7 +242,10 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 			return err
 		}
 	}
-	return nil
+	if ordinal < targetSequences {
+		return fmt.Errorf("prepared stream produced %d of %d required sequences", ordinal, targetSequences)
+	}
+	return cacheWriter.Commit()
 }
 
 func anyMask(mask []bool) bool {

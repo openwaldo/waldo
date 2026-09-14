@@ -355,27 +355,28 @@ type Initialization struct {
 }
 
 type Request struct {
-	RunID              string
-	Stage              string
-	Objective          string
-	Conversation       ConversationTransform
-	ArchitectureSHA256 string
-	Architecture       json.RawMessage
-	Tokenizer          TokenizerSpec
-	BOM                corpus.BOM
-	Inputs             []Input
-	Parameters         ResolvedParameters
-	Parallelism        Parallelism
-	Records            RecordSource
-	EvaluationRecords  RecordSource
-	EvaluationSet      EvaluationSet
-	PreTokenize        bool
-	DataNodeRank       int
-	Initialization     *Initialization
-	Resume             *ResumePoint
-	ArtifactDirectory  string
-	ArtifactPrefix     string
-	Report             func(Event)
+	RunID                  string
+	Stage                  string
+	Objective              string
+	Conversation           ConversationTransform
+	ArchitectureSHA256     string
+	Architecture           json.RawMessage
+	Tokenizer              TokenizerSpec
+	BOM                    corpus.BOM
+	Inputs                 []Input
+	Parameters             ResolvedParameters
+	Parallelism            Parallelism
+	Records                RecordSource
+	EvaluationRecords      RecordSource
+	EvaluationSet          EvaluationSet
+	PreTokenize            bool
+	DataNodeRank           int
+	Initialization         *Initialization
+	Resume                 *ResumePoint
+	ArtifactDirectory      string
+	ArtifactPrefix         string
+	PreparedCacheDirectory string
+	Report                 func(Event)
 }
 
 // ResumePoint is the newest verified, fully committed checkpoint from an

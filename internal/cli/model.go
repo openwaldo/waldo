@@ -701,6 +701,7 @@ func runModelTrainWithCluster(context Context, args []string, cluster training.C
 	if err != nil {
 		return err
 	}
+	builder.PreparedCacheDirectory = filepath.Join(cache.Scratch(), "prepared")
 	stage, err := prepareDefaultTrainingStage(context, inspection, inputs, epochs, batch, learningRate, seed, boolOption(context, "audit"), cache, stderr)
 	if err != nil {
 		return err
@@ -1112,11 +1113,12 @@ func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, 
 		RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
 		Conversation:       plan.Conversation,
 		ArchitectureSHA256: plan.ArchitectureSHA256, Architecture: plan.Architecture,
-		Parameters: plan.Parameters, Records: records, EvaluationRecords: partition.EvaluationRecords(),
+		Parameters: plan.Parameters, BOM: plan.CorpusBOM, Inputs: inputs, Records: records, EvaluationRecords: partition.EvaluationRecords(),
 		Parallelism:   plan.Parallelism,
 		EvaluationSet: model.EvaluationSetValue(plan.EvaluationSet), Initialization: initialization,
 		Tokenizer:         tokenizerSpec,
 		ArtifactDirectory: scratch, ArtifactPrefix: "artifacts",
+		PreparedCacheDirectory: filepath.Join(cache.Scratch(), "prepared"),
 	}, nil
 }
 
@@ -1221,6 +1223,7 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 	if err != nil {
 		return err
 	}
+	builder.PreparedCacheDirectory = filepath.Join(cache.Scratch(), "prepared")
 	prepared := make([]model.PreparedStage, 0, len(compose.Stages))
 	for _, stage := range compose.Stages {
 		resolved, err := planModelStage(context, stage, corpusTargets[stage.Name], cache, stderr)
