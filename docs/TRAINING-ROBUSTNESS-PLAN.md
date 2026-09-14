@@ -6,10 +6,11 @@ sake. The comparison baseline is nanochat commit
 stronger immutable BOM, provenance, replay, and artifact contracts while
 adopting the training practices that make nanochat efficient and measurable.
 
-The companion holding compose is
-[`composes/holding/nanochat-open-baseline.yaml`](../composes/holding/nanochat-open-baseline.yaml).
-It is a target experiment, not a claim that the current trainer can execute the
-recipe efficiently.
+The comparison target is the numbered
+[`composes/0003-conversation.yaml`](../composes/0003-conversation.yaml), trained
+as model `conversation2`. The existing `0000` and `0001` composes provide its
+canary and systems gates, and `0002-conversation.yaml` remains the known-good
+comparison model.
 
 ## Definition of done
 
@@ -142,7 +143,8 @@ domain and round-trip, special-token, and distributed-training tests pass.
 
 Run canary, then approximately 100M-, 300M-, and 700M-parameter experiments.
 Each rung gets a fixed FLOP budget and must pass throughput, loss, capability,
-resume, and contamination gates. Only then run the holding 24-layer baseline.
+resume, and contamination gates. Only then run the 24-layer `conversation2`
+candidate.
 
 Do not start the current `0003-conversation.yaml` multi-day run before phases
 0 through 4 pass. Its 22B-token curriculum is too expensive to use as the

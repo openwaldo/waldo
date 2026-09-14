@@ -8,10 +8,11 @@ corpus recipe, training process, and evaluation gates.
 Runtime estimates cover training after data and the environment are ready.
 They are planning ranges until replaced by observed WALDO run evidence.
 
-The planned [`holding/nanochat-open-baseline.yaml`](holding/nanochat-open-baseline.yaml)
-is the measured capability-per-FLOP comparison target. It is deliberately based
-on redistributable indexed inputs rather than nanochat's noncommercial ClimbMix
-corpus. Do not run it until the correctness, data-plane, batch-semantics, and
+The numbered ladder also owns the measured capability-per-FLOP comparison.
+`0000-canary.yaml` and `0001-babble.yaml` are the systems gates,
+`0002-conversation.yaml` is the existing comparison model, and
+`0003-conversation.yaml` is trained as the `conversation2` candidate. Do not
+run that candidate until the correctness, data-plane, batch-semantics, and
 evaluation gates in the [training robustness plan](../docs/TRAINING-ROBUSTNESS-PLAN.md)
 pass. Corpus and license differences are tracked in the
 [nanochat coverage audit](../docs/NANOCHAT-CORPUS-COVERAGE.md).
@@ -123,7 +124,7 @@ WALDO requirements:
 
 | Field | Plan |
 | --- | --- |
-| Status | Larger successor created after an unsuccessful intermediate experiment exposed a model-capacity ceiling |
+| Status | `conversation2` candidate; blocked on systems, evaluation, and corpus gates |
 | Builds from | Random initialization with the complete, known-good 0002 conversation recipe embedded first |
 | Model type | Approximately 681M-parameter dense model, 4,096-token context, technical knowledge midtraining, and expanded conversation SFT |
 | Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
@@ -156,6 +157,8 @@ WALDO requirements:
   stage order.
 - Fixed side-by-side conversation evaluations.
 - Promote only when it beats the previous rung without material regression.
+- Train this compose under the model name `conversation2`; the numeric compose
+  prefix describes its ladder position, not its model artifact name.
 
 ## Tool-use model (`holding/tool-use.yaml`)
 
@@ -430,8 +433,8 @@ WALDO requirements:
 
 - Freeze the language, conversation, and tool evaluation sets.
 - Run `0002-conversation` as the known-good baseline.
-- Train `0003-conversation` under a new model name and compare it with
-  the 0002 conversation model. Its larger architecture cannot reuse the old weights.
+- Train `0003-conversation` as `conversation2` and compare it with the 0002
+  conversation model. Its larger architecture cannot reuse the old weights.
 - Keep tool-use training on hold until a conversation checkpoint is promoted,
   then update and revalidate `holding/tool-use.yaml` against that parent.
 - Build the capable dense foundation, assistant, reasoning, and agent rungs.

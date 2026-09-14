@@ -253,6 +253,15 @@ func TestConversationThreeIsLargerAndKnowledgeDominant(t *testing.T) {
 	if got := corpusPaths(compose.Stages[1].Corpora); !reflect.DeepEqual(got, wantTechnical) || compose.Stages[1].Parameters.Tokens != 3000000000 {
 		t.Fatalf("conversation3 technical stage = %v / %+v", got, compose.Stages[1].Parameters)
 	}
+	for _, stage := range compose.Stages {
+		parameters := stage.Parameters
+		if parameters.Parallelism != training.ParallelismAuto || parameters.ComputePrecision != "bfloat16" || !parameters.ActivationCheckpointing || !parameters.Compile || parameters.DistributionPolicy != "distributable" {
+			t.Fatalf("conversation2 candidate stage %s robustness controls = %+v", stage.Name, parameters)
+		}
+		if parameters.GradientAccumulation < 2 {
+			t.Fatalf("conversation2 candidate stage %s gradient accumulation = %d", stage.Name, parameters.GradientAccumulation)
+		}
+	}
 	forecast, err := model.ForecastCompose(compose)
 	if err != nil {
 		t.Fatal(err)
