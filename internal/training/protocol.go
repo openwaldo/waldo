@@ -118,6 +118,11 @@ func writeWorkerInputUntil(ctx context.Context, output io.Writer, begin WorkerBe
 			return err
 		}
 	}
+	// A fully trained checkpoint may need only final artifact verification and
+	// bookkeeping. Do not replay the complete corpus merely to finalize it.
+	if begin.Resume != nil && begin.Resume.Step == begin.Parameters.Steps {
+		return encoder.Encode(WorkerInputFrame{Kind: "end", Schema: WorkerProtocolSchema})
+	}
 	if begin.Parallelism.DataPlane == DataPlaneNodeLocal {
 		if err := writePreparedSequences(ctx, encoder, begin, records, stopRecords); err != nil {
 			return err

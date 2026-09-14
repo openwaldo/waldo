@@ -944,6 +944,21 @@ func (refusingRecordSource) Stream(context.Context, func(Record) error) error {
 	return errors.New("record source should not be reopened")
 }
 
+func TestFinalCheckpointVerificationDoesNotReplayTrainingRecords(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := WorkerBegin{Parameters: parameters, Resume: &WorkerResume{Step: parameters.Steps}}
+	var output bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &output, begin, refusingRecordSource{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), `"kind":"record"`) || !strings.Contains(output.String(), `"kind":"end"`) {
+		t.Fatalf("finalization stream = %s", output.String())
+	}
+}
+
 func TestPreparedSequenceCacheReplaysVerifiedChunks(t *testing.T) {
 	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 2, SequenceLength: 2, LearningRate: 0.001})
 	if err != nil {

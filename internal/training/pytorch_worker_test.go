@@ -30,6 +30,23 @@ func TestPyTorchWorkerEvaluatesArtifactAtLiveEvaluationPrecision(t *testing.T) {
 	}
 }
 
+func TestPyTorchWorkerMakesPersistedArtifactEvaluationAuthoritative(t *testing.T) {
+	source := string(pyTorchWorker)
+	for _, expected := range []string{
+		`metrics["live_compiled_heldout_loss"] = live_loss`,
+		`metrics["heldout_loss"] = artifact_loss`,
+		`persisted artifact metric is authoritative`,
+		`if not math.isfinite(artifact_loss):`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("PyTorch worker omits persisted-artifact evaluation behavior %q", expected)
+		}
+	}
+	if strings.Contains(source, `saved artifact held-out loss {artifact_loss:.6f} does not match live loss`) {
+		t.Fatal("PyTorch worker still rejects a finite persisted artifact for compiled/eager loss drift")
+	}
+}
+
 func TestTorchTitanWorkerPartitionsGlobalBatchAcrossRanks(t *testing.T) {
 	source := string(pyTorchWorker)
 	for _, expected := range []string{

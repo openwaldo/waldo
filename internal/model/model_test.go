@@ -616,6 +616,10 @@ func TestOnlyFinalCheckpointBookkeepingFailureIsResumable(t *testing.T) {
 	if !resumableRunState(run, parameters) {
 		t.Fatal("final-checkpoint sparse corpus accounting failure is not resumable")
 	}
+	run.Error = "TorchTitan worker: saved artifact held-out loss 4.030349 does not match live loss 3.856039 within tolerance 0.038560"
+	if !resumableRunState(run, parameters) {
+		t.Fatal("final-checkpoint artifact evaluation mismatch is not resumable")
+	}
 	run.Progress.Checkpoints[0].Step--
 	if resumableRunState(run, parameters) {
 		t.Fatal("partial-checkpoint corpus accounting failure became resumable")

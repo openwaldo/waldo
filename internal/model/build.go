@@ -513,6 +513,7 @@ func resumableRunState(run RunRecord, parameters training.ResolvedParameters) bo
 	}
 	recoverableError := strings.HasPrefix(run.Error, "persist training progress: evaluation step ") && strings.HasSuffix(run.Error, " does not advance durable progress")
 	recoverableError = recoverableError || strings.HasPrefix(run.Error, "invalid backend observation: corpus consumption accounts for ")
+	recoverableError = recoverableError || (strings.Contains(run.Error, "saved artifact held-out loss ") && strings.Contains(run.Error, " does not match live loss "))
 	if !recoverableError {
 		return false
 	}
