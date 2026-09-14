@@ -33,10 +33,18 @@ stages:
       - post-train/sft/oasst1
     parameters:
       profile: causal-pretrain-balanced
+      parallelism: auto
       tokens: 4096000
       batch_size: 32
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: false
+      compile: false
+      distribution_policy: distributable
       sequence_length: 512
       learning_rate: 0.0003
+      optimizer: adamw
+      schedule: cosine
       seed: 42
       warmup_steps: 25
       checkpoint_every: 50

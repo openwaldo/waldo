@@ -222,7 +222,7 @@ func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 11999969280 || len(forecast.EpochDerivedStages) != 2 {
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 2399961088 || len(forecast.EpochDerivedStages) != 0 {
 		t.Fatalf("basic conversation forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
@@ -297,7 +297,7 @@ func TestBabbleUsesCleanPretrainingAndLightConversationTuning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 76416000 || forecast.PlannedTokens != 1572864000 || len(forecast.EpochDerivedStages) != 2 {
+	if forecast.ApproximateParameters != 76416000 || forecast.PlannedTokens != 599965696 || len(forecast.EpochDerivedStages) != 0 {
 		t.Fatalf("babble forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 	if compose.Stages[0].Parameters.LearningRate <= compose.Stages[1].Parameters.LearningRate || compose.Stages[1].Parameters.LearningRate <= compose.Stages[2].Parameters.LearningRate {
@@ -305,6 +305,21 @@ func TestBabbleUsesCleanPretrainingAndLightConversationTuning(t *testing.T) {
 	}
 	if compose.Stages[2].Corpora[0].Path != "post-train/sft/interaction-contract-v1" || compose.Stages[2].Corpora[1].Path != "post-train/sft/helpsteer2" {
 		t.Fatalf("babble post-training corpora = %+v", compose.Stages[2].Corpora)
+	}
+}
+
+func TestReferenceLadderPinsExecutionAndDistributionPolicy(t *testing.T) {
+	for _, path := range []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation.yaml", "0003-conversation.yaml"} {
+		compose, _, err := model.LoadCompose(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, stage := range compose.Stages {
+			parameters := stage.Parameters
+			if parameters.Parallelism != training.ParallelismAuto || parameters.GradientAccumulation < 1 || parameters.ComputePrecision != "bfloat16" || parameters.DistributionPolicy != "distributable" || parameters.Optimizer == "" || parameters.Schedule == "" {
+				t.Fatalf("%s stage %s robustness controls = %+v", path, stage.Name, parameters)
+			}
+		}
 	}
 }
 

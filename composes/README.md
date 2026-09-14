@@ -69,7 +69,7 @@ WALDO requirements:
 | Builds from | Random initialization using the canary-proven pipeline |
 | Model type | Small dense monolithic foundation; approximately 76M parameters |
 | Recommended hardware | 1x NVIDIA H100 80 GB |
-| Approximate runtime | 1-2 hours for 1.57B tokens |
+| Approximate runtime | Measure from promoted G0 evidence for the 600M-token ceiling |
 
 Success criteria:
 
@@ -98,7 +98,7 @@ WALDO requirements:
 | Builds from | New larger initialization using the babbling model's proven recipe and tests |
 | Model type | Dense monolithic foundation plus conversation SFT; approximately 337M parameters |
 | Recommended hardware | 1x 8-GPU NVIDIA H100 SXM system |
-| Approximate runtime | 4-8 hours for approximately 12B pretraining tokens plus SFT |
+| Approximate runtime | Measure from promoted G1 evidence for the 2.4B-token ceiling |
 
 Success criteria:
 

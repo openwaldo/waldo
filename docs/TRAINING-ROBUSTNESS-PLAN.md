@@ -202,7 +202,7 @@ may use one fixed seed when they compare exact saved state.
 | G0 canary | 14M | 100M tokens maximum | complete pipeline correctness | falling loss; exact token/sample accounting; uninterrupted and resumed state match; no non-finite steps |
 | G1 systems | 75M | 600M tokens maximum | sustained data and distributed efficiency | data wait below 2%; forecast within 15%; useful multi-GPU scaling; no resume drift |
 | G2 capability | 300M | 2.4B tokens maximum | tokenizer, optimizer, schedule, and evaluation choices | beats G1 scaling prediction and current AdamW/r50k baseline at equal FLOPs across three seeds |
-| G3 parity | approximately 757M | approximately 5.84B tokens | nanochat-class comparison | meets or beats the pinned nanochat reference on BPB and normalized capability per FLOP without WALDO regression failures |
+| G3 parity | approximately 758M | approximately 6.1B tokens | nanochat-class comparison | meets or beats the pinned nanochat reference on BPB and normalized capability per FLOP without WALDO regression failures |
 
 The token ceilings roughly follow the nanochat target of eight training tokens
 per scaling parameter. Early stopping is mandatory when a run cannot meet its

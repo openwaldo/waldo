@@ -36,17 +36,25 @@ stages:
         weight: 2
     parameters:
       profile: causal-pretrain-weighted
-      tokens: 1572864000
+      parallelism: auto
+      tokens: 559972352
       batch_size: 32
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
+      distribution_policy: distributable
       sequence_length: 1024
       learning_rate: 0.00025
+      optimizer: adamw
+      schedule: cosine
       seed: 42
       weight_decay: 0.12
-      warmup_steps: 480
+      warmup_steps: 342
       shuffle_buffer_records: 32768
       shuffle_buffer_bytes: 1073741824
-      checkpoint_every: 4800
-      evaluate_every: 4800
+      checkpoint_every: 1709
+      evaluate_every: 1709
       evaluation_max_records: 512
       evaluation_max_bytes: 16777216
 
@@ -70,17 +78,25 @@ stages:
         weight: 2
     parameters:
       profile: causal-pretrain-weighted
-      epochs: 3
+      parallelism: auto
+      tokens: 29999104
       batch_size: 16
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
+      distribution_policy: distributable
       sequence_length: 1024
       learning_rate: 0.000035
+      optimizer: adamw
+      schedule: cosine
       seed: 43
       weight_decay: 0.06
-      warmup_steps: 51
+      warmup_steps: 37
       shuffle_buffer_records: 16384
       shuffle_buffer_bytes: 268435456
-      checkpoint_every: 256
-      evaluate_every: 256
+      checkpoint_every: 366
+      evaluate_every: 366
       evaluation_max_records: 512
       evaluation_max_bytes: 16777216
 
@@ -102,16 +118,24 @@ stages:
         weight: 2
     parameters:
       profile: causal-pretrain-weighted
-      epochs: 3
+      parallelism: auto
+      tokens: 9994240
       batch_size: 16
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
+      distribution_policy: distributable
       sequence_length: 1024
       learning_rate: 0.000012
+      optimizer: adamw
+      schedule: cosine
       seed: 44
       weight_decay: 0.04
-      warmup_steps: 38
+      warmup_steps: 12
       shuffle_buffer_records: 8192
       shuffle_buffer_bytes: 134217728
-      checkpoint_every: 96
-      evaluate_every: 96
+      checkpoint_every: 122
+      evaluate_every: 122
       evaluation_max_records: 512
       evaluation_max_bytes: 16777216
