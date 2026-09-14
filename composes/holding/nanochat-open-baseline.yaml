@@ -36,6 +36,11 @@ stages:
         repetitive_content: true
         boilerplate_content: true
     corpora:
+      # Retained in the intended mixture while their index license evidence is
+      # under review. distribution_policy below prevents training until every
+      # selected corpus passes the distributable gate.
+      - {path: core/books/gutenberg, weight: 1}
+      - {path: core/common-pile/wikimedia, weight: 3}
       - {path: science/plos, weight: 3}
       - {path: core/synthetic/cosmopedia-v2, weight: 5}
       - {path: core/common-pile/stackexchange, weight: 5}
@@ -104,7 +109,6 @@ stages:
 # MMLU auxiliary_train remains blocked on its constituent-license audit. Create
 # a new compose revision after those index decisions; do not silently mutate a
 # completed model lineage.
-# Gutenberg and Wikimedia are also omitted: their current index manifests lack
-# sufficient upstream license evidence for the distributable gate. Gutenberg's
-# corpus-wide CC0 label does not reflect Project Gutenberg's per-work and
-# trademark terms.
+# Gutenberg and Wikimedia remain selected while their license evidence is
+# reviewed. The strict distribution policy deliberately blocks this compose
+# until their current index manifests pass.
