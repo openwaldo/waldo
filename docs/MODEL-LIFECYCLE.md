@@ -544,6 +544,18 @@ a hash of the contributing evidence.
 
 ## Backend boundary
 
+Before changing a compose tokenizer, train and inspect a bounded candidate:
+
+```text
+waldo model train-tokenizer core/books core/common-pile science/plos \
+  --output tokenizer.json --vocabulary-size 32000 --sample-bytes 67108864
+```
+
+The command requires every selected corpus to pass the distributable gate,
+pins the complete corpus BOM and deterministic sample identity, and reports
+bytes per token beside `r50k_base`. The resulting artifact remains a candidate
+until domain compression and G1/G2 capability tests approve it.
+
 Model composes never select MLX, PyTorch, TensorFlow, or TorchTitan. Before a
 run is written, the environment-aware resolver chooses an adapter and records
 its immutable identity, framework, runtime, host, accelerator, node count, and

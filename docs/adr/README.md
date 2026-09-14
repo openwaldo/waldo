@@ -73,3 +73,4 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0074: Fail closed for distributable corpus claims](0074-fail-closed-distributable-corpus-gate.md)
 - [0075: Keep evaluation and contamination gates immutable](0075-immutable-evaluation-and-contamination-gates.md)
 - [0076: Make competitive training recipes explicit](0076-make-training-recipes-explicit.md)
+- [0077: Train tokenizers from pinned corpus samples](0077-train-tokenizers-from-pinned-corpus-samples.md)
