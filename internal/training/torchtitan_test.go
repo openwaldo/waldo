@@ -196,7 +196,7 @@ func TestValidateTorchTitanHostConfiguration(t *testing.T) {
 }
 
 func TestTorchTitanProbeCollectsNetworkAndRDMASanityFacts(t *testing.T) {
-	for _, expected := range []string{"resource.RLIMIT_MEMLOCK", `Path("/sys/class/net")`, `Path("/sys/class/infiniband")`, `"has_address"`, `"memlock_soft_bytes"`, `"network_interfaces"`, `"rdma_devices"`, `"nvidia-smi", "topo", "-m"`, `"local_interconnect"`, "triton_driver.active.get_current_target()"} {
+	for _, expected := range []string{"resource.RLIMIT_MEMLOCK", `Path("/sys/class/net")`, `Path("/sys/class/infiniband")`, `"has_address"`, `"memlock_soft_bytes"`, `"network_interfaces"`, `"rdma_devices"`, `"nvidia-smi", "topo", "-m"`, `"local_interconnect"`, `shutil.which("gcc")`, ` / "Python.h"`, "triton_driver.active.get_current_target()"} {
 		if !strings.Contains(torchTitanProbeProgram, expected) {
 			t.Fatalf("TorchTitan probe omits %q", expected)
 		}

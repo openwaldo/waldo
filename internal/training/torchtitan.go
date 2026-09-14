@@ -442,11 +442,14 @@ const torchTitanProbeProgram = `
 import importlib.metadata
 import fcntl
 import json
+import os
 import platform
 import resource
+import shutil
 import subprocess
 import socket
 import struct
+import sysconfig
 from pathlib import Path
 import torch
 import torchtitan
@@ -461,6 +464,12 @@ if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
 # Torch compile reaches this lazy native-helper build only on the first model
 # batch. Force it during preflight so missing compilers, Python headers, or
 # driver link libraries fail before corpus materialization and GPU launch.
+compiler = os.environ.get("CC") or shutil.which("gcc") or shutil.which("cc")
+if not compiler:
+    raise RuntimeError("Triton native build requires a C compiler; install gcc or set CC")
+python_header = Path(sysconfig.get_path("include")) / "Python.h"
+if not python_header.is_file():
+    raise RuntimeError(f"Triton native build requires {python_header}; install the matching Python development headers")
 triton_driver.active.get_current_target()
 manufacturer = "AMD" if torch.version.hip else "NVIDIA"
 devices = []
