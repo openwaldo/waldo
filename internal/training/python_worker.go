@@ -173,6 +173,9 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 		_ = command.Wait()
 		return Observation{}, tokenizerErr
 	}
+	if request.Parallelism.DataPlane == DataPlaneNodeLocal {
+		records = prefetchRecords(records)
+	}
 	exited := make(chan error, 1)
 	go func() {
 		exitErr := awaitProcessExit(command)
@@ -315,6 +318,9 @@ func runWorkerStreamJoin(ctx context.Context, label string, command *exec.Cmd, r
 				_ = stdin.Close()
 				writeResult <- tokenizeErr
 				return
+			}
+			if request.Parallelism.DataPlane == DataPlaneNodeLocal {
+				records = prefetchRecords(records)
 			}
 			writeErr := WriteWorkerInput(ctx, stdin, workerBeginFromRequest(request), records, evaluations)
 			closeErr := stdin.Close()

@@ -591,8 +591,14 @@ class Trainer:
             self.accumulated_tokens = 0
             self.accumulated_consumption = {}
             self.accumulated_compute_seconds = 0.0
-        tokens = torch.tensor([item[0] for item in self.batch], dtype=torch.long, device=self.device)
-        mask = torch.tensor([item[1] for item in self.batch], dtype=torch.float32, device=self.device)
+        tokens = torch.tensor([item[0] for item in self.batch], dtype=torch.long)
+        mask = torch.tensor([item[1] for item in self.batch], dtype=torch.float32)
+        if self.device.type == "cuda":
+            tokens = tokens.pin_memory().to(self.device, non_blocking=True)
+            mask = mask.pin_memory().to(self.device, non_blocking=True)
+        else:
+            tokens = tokens.to(self.device)
+            mask = mask.to(self.device)
         inputs = tokens[:, :-1]
         targets = tokens[:, 1:]
         next_step = self.step_number + 1

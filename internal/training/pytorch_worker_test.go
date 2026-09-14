@@ -113,6 +113,8 @@ func TestPyTorchWorkerPinsMemoryAndPrecisionControls(t *testing.T) {
 		`self.scaler.scale(loss).backward()`,
 		`self.scaler.unscale_(self.optimizer)`,
 		`self.scaler.step(self.optimizer)`,
+		`tokens.pin_memory().to(self.device, non_blocking=True)`,
+		`mask.pin_memory().to(self.device, non_blocking=True)`,
 		`"scaler": self.scaler.state_dict()`,
 		`self.scaler.load_state_dict(runtime.get("scaler", {}))`,
 	} {
