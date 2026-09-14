@@ -227,7 +227,9 @@ func requiredMemoryPerGPU(plan Plan, GPUs int) (uint64, error) {
 	states = divideRoundUp(states, uint64(GPUs))
 	var maxActivations uint64
 	for _, stage := range plan.Stages {
-		batch := divideRoundUp(uint64(stage.Parameters.BatchSize), uint64(GPUs))
+		accumulation := max(int64(1), stage.Parameters.GradientAccumulation)
+		globalMicroBatch := divideRoundUp(uint64(stage.Parameters.BatchSize), uint64(accumulation))
+		batch := divideRoundUp(globalMicroBatch, uint64(GPUs))
 		activations, err := multiplyAll(batch, uint64(stage.Parameters.SequenceLength), plan.Architecture.HiddenSize, plan.Architecture.Layers, 72)
 		if err != nil {
 			return 0, fmt.Errorf("stage %s activation memory: %w", stage.Name, err)

@@ -20,8 +20,8 @@ import torch.nn.functional as functional
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r8"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r17"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r9"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r18"
 IS_PRIMARY = True
 
 
@@ -321,17 +321,19 @@ class Trainer:
             self.device = torch.device(device_name)
         self.sequence_length = self.parameters["sequence_length"]
         self.global_batch_size = self.parameters["batch_size"]
+        self.gradient_accumulation_steps = self.parameters["gradient_accumulation_steps"]
+        self.global_micro_batch_size = self.global_batch_size // self.gradient_accumulation_steps
         if self.distributed:
-            if self.global_batch_size < self.world_size or self.global_batch_size % self.world_size != 0:
+            if self.global_micro_batch_size < self.world_size or self.global_micro_batch_size % self.world_size != 0:
                 raise ValueError(
-                    f"global batch size {self.global_batch_size} must be divisible by distributed world size {self.world_size}"
+                    f"global micro-batch size {self.global_micro_batch_size} must be divisible by distributed world size {self.world_size}"
                 )
-            self.batch_size = self.global_batch_size // self.world_size
+            self.batch_size = self.global_micro_batch_size // self.world_size
         else:
-            self.batch_size = self.global_batch_size
+            self.batch_size = self.global_micro_batch_size
         self.target_steps = self.parameters["steps"]
         self.step_number = 0
-        self.replay_steps = 0
+        self.replay_micro_batches = 0
         self.consumed_tokens = 0
         self.token_buffer = []
         self.loss_buffer = []
@@ -349,6 +351,11 @@ class Trainer:
         self.last_step_finished = self.started
         self.data_wait_seconds = 0.0
         self.skipped_steps = 0
+        self.accumulation_number = 0
+        self.accumulated_loss_sum = 0.0
+        self.accumulated_tokens = 0
+        self.accumulated_consumption = {}
+        self.accumulated_compute_seconds = 0.0
 
         tokenizer = begin["tokenizer"]
         architecture_tokenizer = self.architecture["tokenizer"]
@@ -430,8 +437,8 @@ class Trainer:
                 event={
                     "kind": "log",
                     "message": (
-                        f"global batch {self.global_batch_size} partitioned into "
-                        f"{self.batch_size} distinct sequences on each of {self.world_size} ranks"
+                        f"global batch {self.global_batch_size} split into {self.gradient_accumulation_steps} micro-batches; "
+                        f"each rank processes {self.batch_size} distinct sequences per micro-batch"
                     ),
                 },
             )
@@ -512,7 +519,7 @@ class Trainer:
             # at a complete global-batch boundary so distributed collectives
             # remain in identical order while each rank computes a distinct
             # local slice.
-            if self.sequence_number % self.global_batch_size == 0:
+            if self.sequence_number % self.global_micro_batch_size == 0:
                 if len(self.batch) != self.batch_size:
                     raise ValueError(
                         f"rank {self.rank} assembled {len(self.batch)} sequences; expected {self.batch_size}"
@@ -523,17 +530,23 @@ class Trainer:
             if len(self.batch) >= self.batch_size:
                 self.train_batch()
 
-    def train_batch(self):
+    def train_batch(self, final=False):
         if not self.batch or self.step_number >= self.target_steps:
             self.batch = []
             return
-        if self.replay_steps > 0:
-            self.replay_steps -= 1
+        if self.replay_micro_batches > 0:
+            self.replay_micro_batches -= 1
             self.batch = []
             self.last_step_finished = time.perf_counter()
             return
         step_started = time.perf_counter()
         self.data_wait_seconds += max(0.0, step_started - self.last_step_finished)
+        if self.accumulation_number == 0:
+            self.optimizer.zero_grad(set_to_none=True)
+            self.accumulated_loss_sum = 0.0
+            self.accumulated_tokens = 0
+            self.accumulated_consumption = {}
+            self.accumulated_compute_seconds = 0.0
         tokens = torch.tensor([item[0] for item in self.batch], dtype=torch.long, device=self.device)
         mask = torch.tensor([item[1] for item in self.batch], dtype=torch.float32, device=self.device)
         inputs = tokens[:, :-1]
@@ -544,7 +557,6 @@ class Trainer:
         current_learning_rate = self.learning_rate(next_step)
         for group in self.optimizer.param_groups:
             group["lr"] = current_learning_rate
-        self.optimizer.zero_grad(set_to_none=True)
         logits = self.forward_logits(self.model, inputs)
         losses = functional.cross_entropy(logits.float().reshape(-1, logits.shape[-1]), targets.reshape(-1), reduction="none")
         loss_sum = (losses.reshape_as(mask) * mask).sum()
@@ -552,35 +564,53 @@ class Trainer:
         if self.distributed:
             global_valid_tokens = local_valid_tokens.detach().clone()
             torch.distributed.all_reduce(global_valid_tokens, op=torch.distributed.ReduceOp.SUM)
-            # Distributed wrappers average gradients across ranks. Scale each
-            # local loss so that the averaged gradient equals the global
-            # token-weighted mean.
-            loss = loss_sum * self.world_size / global_valid_tokens
+            # Distributed wrappers average gradients across ranks. Scaling the
+            # unnormalized local sum by world size yields the global token-loss
+            # sum; accumulated gradients are normalized once at optimizer step.
+            loss = loss_sum * self.world_size
         else:
             global_valid_tokens = local_valid_tokens
-            loss = loss_sum / global_valid_tokens
+            loss = loss_sum
         loss.backward()
-        gradient_norm = None
-        if should_report:
-            gradient_norm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), math.inf).detach().cpu().item())
-        self.optimizer.step()
-        self.synchronize()
         if self.distributed:
             global_loss_sum = loss_sum.detach().clone()
             torch.distributed.all_reduce(global_loss_sum, op=torch.distributed.ReduceOp.SUM)
         else:
             global_loss_sum = loss_sum.detach()
-        loss_value = float((global_loss_sum / global_valid_tokens).cpu().item())
         valid_tokens = int(global_valid_tokens.cpu().item())
-        step_finished = time.perf_counter()
-        step_seconds = max(step_finished - step_started, 1e-9)
-        self.step_number = next_step
-        self.consumed_tokens += valid_tokens
+        if valid_tokens <= 0 and self.accumulated_tokens == 0:
+            raise ValueError("gradient accumulation micro-batch has no supervised token targets")
+        self.accumulated_loss_sum += float(global_loss_sum.cpu().item())
+        self.accumulated_tokens += valid_tokens
         for item in self.batch:
             for corpus, count in item[2].items():
-                self.consumed_by_corpus[corpus] = self.consumed_by_corpus.get(corpus, 0) + count
-        self.final_loss = loss_value
+                self.accumulated_consumption[corpus] = self.accumulated_consumption.get(corpus, 0) + count
         self.batch = []
+        self.accumulation_number += 1
+        self.accumulated_compute_seconds += max(time.perf_counter() - step_started, 1e-9)
+        if self.accumulation_number < self.gradient_accumulation_steps and not final:
+            self.last_step_finished = time.perf_counter()
+            return
+
+        for parameter in self.model.parameters():
+            if parameter.grad is not None:
+                parameter.grad.div_(self.accumulated_tokens)
+        gradient_norm = None
+        if should_report:
+            gradient_norm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), math.inf).detach().cpu().item())
+        update_started = time.perf_counter()
+        self.optimizer.step()
+        self.synchronize()
+        self.accumulated_compute_seconds += max(time.perf_counter() - update_started, 1e-9)
+        loss_value = self.accumulated_loss_sum / self.accumulated_tokens
+        valid_tokens = self.accumulated_tokens
+        step_seconds = max(self.accumulated_compute_seconds, 1e-9)
+        self.step_number = next_step
+        self.consumed_tokens += valid_tokens
+        for corpus, count in self.accumulated_consumption.items():
+            self.consumed_by_corpus[corpus] = self.consumed_by_corpus.get(corpus, 0) + count
+        self.final_loss = loss_value
+        self.accumulation_number = 0
         elapsed = max(time.perf_counter() - self.started, 1e-9)
         throughput = self.consumed_tokens / elapsed
         eta = int(max(0.0, (self.target_steps - self.step_number) * elapsed / self.step_number))
@@ -802,7 +832,7 @@ class Trainer:
             self.consumed_by_corpus = runtime["consumption_states"][self.rank]
         else:
             self.consumed_by_corpus = state.get("consumption", {})
-        self.replay_steps = self.resume["step"]
+        self.replay_micro_batches = self.resume["step"] * self.gradient_accumulation_steps
         self.checkpoints = [self.resume["checkpoint"]]
 
     def evaluate_model(self, model, mixed_precision):
@@ -868,7 +898,7 @@ class Trainer:
                     self.batch.extend((padding, zero_mask, {}) for _ in range(missing))
                     if IS_PRIMARY:
                         real_sequences = sum(pending)
-                        padded_slots = self.global_batch_size - real_sequences
+                        padded_slots = self.global_micro_batch_size - real_sequences
                         emit(
                             "event",
                             event={
@@ -879,11 +909,16 @@ class Trainer:
                                 ),
                             },
                         )
-                    self.train_batch()
+                    self.train_batch(final=True)
                 else:
                     self.batch = []
             elif self.batch:
-                self.train_batch()
+                self.train_batch(final=True)
+        if self.step_number < self.target_steps and self.accumulation_number > 0:
+            padding = [self.tokenizer.pad_id] * (self.sequence_length + 1)
+            zero_mask = [0.0] * self.sequence_length
+            self.batch = [(padding, zero_mask, {}) for _ in range(self.batch_size)]
+            self.train_batch(final=True)
         if self.step_number != self.target_steps:
             raise ValueError(
                 f"canonical stream produced only {self.step_number} training steps; profile requires {self.target_steps}"

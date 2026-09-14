@@ -46,9 +46,10 @@ stages:
       # Approximately eight training tokens per scaling parameter for the
       # 24-layer target. Confirm from the implemented parameter accounting.
       tokens: 5840000000
-      # Current schema expresses packed sequences per optimizer step. Phase 2
-      # will replace this with explicit global-token-batch semantics.
+      # Logical global batch per optimizer step, split into one sequence per
+      # rank on the target eight-GPU topology.
       batch_size: 64
+      gradient_accumulation_steps: 8
       sequence_length: 2048
       # AdamW baseline only; select the final optimizer/LR from scaling sweeps.
       learning_rate: 0.00011
@@ -80,6 +81,7 @@ stages:
       profile: causal-pretrain-weighted
       epochs: 1
       batch_size: 32
+      gradient_accumulation_steps: 4
       sequence_length: 2048
       learning_rate: 0.00002
       seed: 43

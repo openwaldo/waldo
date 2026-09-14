@@ -295,8 +295,11 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if err := validateSelection(selection, []string{stage.Objective}); err != nil {
 		return Inspection{}, err
 	}
+	if err := training.ValidateBatchTopology(resolvedParameters, selection.Execution.WorldSize); err != nil {
+		return Inspection{}, fmt.Errorf("resolve training batch topology: %w", err)
+	}
 	builder.report(Progress{Phase: "backend", Stage: stage.Name, Message: fmt.Sprintf("selected %s@%s", selection.Execution.Backend.Name, selection.Execution.Backend.Revision)})
-	for _, message := range training.DescribeParallelism(selection.Execution.Parallelism, resolvedParameters.BatchSize) {
+	for _, message := range training.DescribeParallelism(selection.Execution.Parallelism, resolvedParameters.BatchSize/resolvedParameters.GradientAccumulation) {
 		builder.report(Progress{Phase: "parallelism", Stage: stage.Name, Message: message})
 	}
 	var initialization *training.Initialization

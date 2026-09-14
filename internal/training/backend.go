@@ -235,6 +235,7 @@ type Parameters struct {
 	Tokens               int64             `json:"tokens,omitempty" yaml:"tokens,omitempty"`
 	Steps                int64             `json:"steps,omitempty" yaml:"steps,omitempty"`
 	BatchSize            int64             `json:"batch_size" yaml:"batch_size"`
+	GradientAccumulation int64             `json:"gradient_accumulation_steps,omitempty" yaml:"gradient_accumulation_steps,omitempty"`
 	SequenceLength       int64             `json:"sequence_length" yaml:"sequence_length"`
 	LearningRate         float64           `json:"learning_rate" yaml:"learning_rate"`
 	Seed                 uint64            `json:"seed" yaml:"seed"`
@@ -257,6 +258,7 @@ type ResolvedParameters struct {
 	RequestedTokens      int64             `json:"requested_tokens,omitempty"`
 	Steps                int64             `json:"steps"`
 	BatchSize            int64             `json:"batch_size"`
+	GradientAccumulation int64             `json:"gradient_accumulation_steps,omitempty"`
 	SequenceLength       int64             `json:"sequence_length"`
 	LearningRate         float64           `json:"learning_rate"`
 	Seed                 uint64            `json:"seed"`

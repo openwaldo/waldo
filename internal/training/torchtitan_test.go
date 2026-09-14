@@ -336,7 +336,7 @@ func TestTorchTitanRejectsGlobalBatchThatCannotBePartitioned(t *testing.T) {
 	}
 	backend := TorchTitan{Python: "unused", LocalProcs: 2, Nodes: 2, Rendezvous: "primary:29500"}
 	_, err = backend.Run(context.Background(), Request{Parameters: parameters})
-	if err == nil || !strings.Contains(err.Error(), "global batch size 6 must be at least and divisible by world size 4") {
+	if err == nil || !strings.Contains(err.Error(), "global micro-batch 6 (batch_size 6 / gradient_accumulation_steps 1) must be divisible by world size 4") {
 		t.Fatalf("batch partition error = %v", err)
 	}
 }

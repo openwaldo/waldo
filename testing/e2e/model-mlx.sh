@@ -60,7 +60,7 @@ export WALDO_CONFIG="$work/config.json"
 
 echo "testing: real MLX model lifecycle with $mlx_python"
 (cd "$repo_root" && GOCACHE="$work/go-cache" go build -o "$binary" ./cmd/waldo)
-printf 'OpenWALDO trains real weights through MLX.\nThis tiny record exists only to validate the complete backend.\n' > "$input"
+printf 'OpenWALDO trains real weights through MLX.\nThis tiny record exists only to validate the complete backend.\nGradient accumulation must preserve the logical optimizer batch while using smaller forward passes.\n' > "$input"
 
 "$binary" index init "$index_root" >/dev/null
 "$binary" config set lookaside "file://$lookaside" >/dev/null
@@ -123,7 +123,8 @@ stages:
       - core/e2e/mlx
     parameters:
       steps: 2
-      batch_size: 1
+      batch_size: 2
+      gradient_accumulation_steps: 2
       sequence_length: 16
       learning_rate: 0.001
       seed: 7

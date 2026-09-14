@@ -784,6 +784,43 @@ func TestWorkerInputStopsTrainingRecordsAfterTargetSignal(t *testing.T) {
 	}
 }
 
+func TestResolveParametersPinsGradientAccumulation(t *testing.T) {
+	resolved, err := ResolveParameters(Parameters{Steps: 2, BatchSize: 8, GradientAccumulation: 4, SequenceLength: 16, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.GradientAccumulation != 4 || resolved.PlannedTokenCapacity != 256 {
+		t.Fatalf("resolved accumulation = %+v", resolved)
+	}
+	defaults, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001})
+	if err != nil || defaults.GradientAccumulation != 1 {
+		t.Fatalf("default accumulation = %+v, err=%v", defaults, err)
+	}
+	for _, accumulation := range []int64{-1, 3, 9} {
+		_, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 8, GradientAccumulation: accumulation, SequenceLength: 8, LearningRate: 0.001})
+		if err == nil {
+			t.Fatalf("accepted accumulation %d for batch 8", accumulation)
+		}
+	}
+}
+
+func TestValidateBatchTopologyUsesPhysicalMicroBatch(t *testing.T) {
+	parameters := ResolvedParameters{BatchSize: 64, GradientAccumulation: 4}
+	if err := ValidateBatchTopology(parameters, 8); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateBatchTopology(parameters, 32); err == nil {
+		t.Fatal("accepted a world size larger than the global micro-batch")
+	}
+	parameters.GradientAccumulation = 8
+	if err := ValidateBatchTopology(parameters, 8); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateBatchTopology(parameters, 4); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func collectRecords(t *testing.T, inputs []Input, parameters ResolvedParameters) []string {
 	t.Helper()
 	source, err := NewCanonicalRecordSource(inputs, parameters)

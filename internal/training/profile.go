@@ -114,6 +114,13 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 	if steps <= 0 || parameters.BatchSize <= 0 || parameters.SequenceLength <= 0 || parameters.LearningRate <= 0 || math.IsNaN(parameters.LearningRate) || math.IsInf(parameters.LearningRate, 0) {
 		return ResolvedParameters{}, fmt.Errorf("steps, batch_size, sequence_length, and learning_rate must be finite and positive")
 	}
+	gradientAccumulation := parameters.GradientAccumulation
+	if gradientAccumulation == 0 {
+		gradientAccumulation = 1
+	}
+	if gradientAccumulation < 1 || gradientAccumulation > parameters.BatchSize || parameters.BatchSize%gradientAccumulation != 0 {
+		return ResolvedParameters{}, fmt.Errorf("gradient_accumulation_steps must be positive, no greater than batch_size, and divide batch_size exactly")
+	}
 	epochs := parameters.Epochs
 	if epochs == 0 {
 		epochs = 1
@@ -222,7 +229,7 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 	}
 	return ResolvedParameters{
 		Profile: profile, ProfileSchema: profileSchema,
-		Epochs: epochs, RequestedTokens: requestedTokens, Steps: steps, BatchSize: parameters.BatchSize,
+		Epochs: epochs, RequestedTokens: requestedTokens, Steps: steps, BatchSize: parameters.BatchSize, GradientAccumulation: gradientAccumulation,
 		SequenceLength: parameters.SequenceLength, LearningRate: parameters.LearningRate,
 		Seed: parameters.Seed, PlannedTokenCapacity: capacity,
 		Optimizer:       Optimizer{Name: "adamw", WeightDecay: weightDecay, Beta1: 0.9, Beta2: 0.95, Epsilon: 1e-8},
@@ -231,6 +238,22 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 		Evaluation:      &EvaluationPolicy{Selection: selection, Fraction: evaluationFraction, MaxRecords: evaluationMaxRecords, MaxBytes: evaluationMaxBytes},
 		CheckpointEvery: checkpointEvery, EvaluateEvery: evaluateEvery,
 	}, nil
+}
+
+// ValidateBatchTopology ensures every rank receives the same number of unique
+// sequences in each physical micro-batch.
+func ValidateBatchTopology(parameters ResolvedParameters, worldSize int) error {
+	if worldSize < 1 {
+		return fmt.Errorf("training world size must be positive")
+	}
+	if parameters.GradientAccumulation < 1 || parameters.BatchSize%parameters.GradientAccumulation != 0 {
+		return fmt.Errorf("resolved gradient accumulation does not divide the global batch")
+	}
+	globalMicroBatch := parameters.BatchSize / parameters.GradientAccumulation
+	if globalMicroBatch < int64(worldSize) || globalMicroBatch%int64(worldSize) != 0 {
+		return fmt.Errorf("global micro-batch %d (batch_size %d / gradient_accumulation_steps %d) must be divisible by world size %d", globalMicroBatch, parameters.BatchSize, parameters.GradientAccumulation, worldSize)
+	}
+	return nil
 }
 
 // CanonicalProfile maps deprecated numbered profile names to their

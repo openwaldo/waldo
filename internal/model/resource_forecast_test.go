@@ -95,6 +95,29 @@ func TestForecastAccountsForPerRankBatchVocabularyWorkspace(t *testing.T) {
 	}
 }
 
+func TestForecastUsesPhysicalMicroBatchForActivations(t *testing.T) {
+	compose := validCompose()
+	forecast, err := compose.Architecture.Forecast()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parameters := compose.Stages[0].Parameters
+	parameters.BatchSize = 8
+	plan := Plan{Architecture: compose.Architecture, Forecast: forecast, Stages: []PlannedStage{{Name: "pretrain", Parameters: parameters}}}
+	withoutAccumulation, err := requiredMemoryPerGPU(plan, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Stages[0].Parameters.GradientAccumulation = 4
+	withAccumulation, err := requiredMemoryPerGPU(plan, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withAccumulation >= withoutAccumulation {
+		t.Fatalf("gradient accumulation did not reduce activation memory: without=%d with=%d", withoutAccumulation, withAccumulation)
+	}
+}
+
 func TestForecastReportsEpochDerivedStagesWithoutInventingTokens(t *testing.T) {
 	compose := validCompose()
 	compose.Stages[0].Parameters.Steps = 0

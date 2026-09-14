@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r17"
+	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r18"
 	recommendedTorchVersion      = "2.15.0.dev20260905+cu130"
 	recommendedTorchTitanVersion = "0.3.0"
 	recommendedTorchIndex        = "https://download.pytorch.org/whl/nightly/cu130"
@@ -74,8 +74,8 @@ func (backend TorchTitan) Run(ctx context.Context, request Request) (Observation
 		nodes = 1
 	}
 	worldSize := nodes * backend.LocalProcs
-	if worldSize > 1 && (request.Parameters.BatchSize < int64(worldSize) || request.Parameters.BatchSize%int64(worldSize) != 0) {
-		return Observation{}, fmt.Errorf("TorchTitan global batch size %d must be at least and divisible by world size %d", request.Parameters.BatchSize, worldSize)
+	if err := ValidateBatchTopology(request.Parameters, worldSize); err != nil {
+		return Observation{}, fmt.Errorf("TorchTitan: %w", err)
 	}
 	if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
 		return Observation{}, fmt.Errorf("create TorchTitan artifact directory: %w", err)

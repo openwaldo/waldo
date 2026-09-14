@@ -33,14 +33,15 @@ func TestPyTorchWorkerEvaluatesArtifactAtLiveEvaluationPrecision(t *testing.T) {
 func TestTorchTitanWorkerPartitionsGlobalBatchAcrossRanks(t *testing.T) {
 	source := string(pyTorchWorker)
 	for _, expected := range []string{
-		`self.batch_size = self.global_batch_size // self.world_size`,
+		`self.global_micro_batch_size = self.global_batch_size // self.gradient_accumulation_steps`,
+		`self.batch_size = self.global_micro_batch_size // self.world_size`,
 		`owner = self.sequence_number % self.world_size`,
 		`if owner == self.rank:`,
-		`if self.sequence_number % self.global_batch_size == 0:`,
+		`if self.sequence_number % self.global_micro_batch_size == 0:`,
 		`torch.distributed.all_reduce(global_valid_tokens`,
 		`torch.distributed.all_reduce(global_loss_sum`,
 		`torch.distributed.all_gather_object(states, local)`,
-		`distinct sequences on each of`,
+		`distinct sequences per micro-batch`,
 	} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("TorchTitan worker omits distributed batch behavior %q", expected)
@@ -51,8 +52,23 @@ func TestTorchTitanWorkerPartitionsGlobalBatchAcrossRanks(t *testing.T) {
 func TestTorchTitanWorkerKeepsSingleNodeBatchSemantics(t *testing.T) {
 	source := string(pyTorchWorker)
 	if !strings.Contains(source, `else:
-            self.batch_size = self.global_batch_size`) {
-		t.Fatal("PyTorch worker no longer preserves the declared batch on a single process")
+            self.batch_size = self.global_micro_batch_size`) {
+		t.Fatal("PyTorch worker no longer uses the global micro-batch on a single process")
+	}
+}
+
+func TestPyTorchWorkerAccumulatesTokenNormalizedGradients(t *testing.T) {
+	source := string(pyTorchWorker)
+	for _, expected := range []string{
+		`self.optimizer.zero_grad(set_to_none=True)`,
+		`if self.accumulation_number < self.gradient_accumulation_steps and not final:`,
+		`parameter.grad.div_(self.accumulated_tokens)`,
+		`self.optimizer.step()`,
+		`self.replay_micro_batches = self.resume["step"] * self.gradient_accumulation_steps`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("PyTorch worker omits gradient accumulation behavior %q", expected)
+		}
 	}
 }
 

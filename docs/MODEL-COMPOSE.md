@@ -109,6 +109,7 @@ stages:
       profile: causal-pretrain-weighted
       tokens: 1966080000
       batch_size: 32
+      gradient_accumulation_steps: 4
       sequence_length: 1024
       learning_rate: 0.0002
       seed: 42
@@ -125,6 +126,13 @@ stages:
 
 Unknown fields and additional YAML documents are rejected. JSON uses the same
 field names and structure.
+
+`batch_size` is the global number of packed sequences contributing to one
+optimizer step. Optional `gradient_accumulation_steps` defaults to 1 and must
+divide `batch_size` exactly. Each physical global micro-batch is
+`batch_size / gradient_accumulation_steps`; the selected distributed world
+size must divide that value evenly. Schedulers, checkpoints, `steps`, and token
+budgets count optimizer steps, never micro-batches.
 
 ## Top-level fields
 

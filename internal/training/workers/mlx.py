@@ -16,11 +16,11 @@ import traceback
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
-from mlx.utils import tree_flatten, tree_unflatten
+from mlx.utils import tree_flatten, tree_map, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r9"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r10"
 
 
 def emit(kind, **payload):
@@ -203,10 +203,12 @@ class Trainer:
         self.artifact_directory = artifact_directory
         self.artifact_prefix = artifact_prefix.replace(os.sep, "/").strip("/")
         self.sequence_length = self.parameters["sequence_length"]
-        self.batch_size = self.parameters["batch_size"]
+        self.global_batch_size = self.parameters["batch_size"]
+        self.gradient_accumulation_steps = self.parameters["gradient_accumulation_steps"]
+        self.batch_size = self.global_batch_size // self.gradient_accumulation_steps
         self.target_steps = self.parameters["steps"]
         self.step_number = 0
-        self.replay_steps = 0
+        self.replay_micro_batches = 0
         self.consumed_tokens = 0
         self.token_buffer = []
         self.loss_buffer = []
@@ -225,6 +227,12 @@ class Trainer:
         self.data_wait_seconds = 0.0
         self.skipped_steps = 0
         self.last_report_tokens = 0
+        self.accumulation_number = 0
+        self.accumulated_gradients = None
+        self.accumulated_loss_sum = 0.0
+        self.accumulated_tokens = 0
+        self.accumulated_consumption = {}
+        self.accumulated_compute_seconds = 0.0
 
         tokenizer = begin["tokenizer"]
         architecture_tokenizer = self.architecture["tokenizer"]
@@ -276,7 +284,7 @@ class Trainer:
     def loss(self, model, inputs, targets, mask):
         logits = model(inputs)
         losses = nn.losses.cross_entropy(logits, targets, reduction="none")
-        return (losses * mask).sum() / mask.sum()
+        return (losses * mask).sum()
 
     def add_record(self, record):
         if self.step_number >= self.target_steps:
@@ -326,17 +334,23 @@ class Trainer:
         if len(self.batch) >= self.batch_size:
             self.train_batch()
 
-    def train_batch(self):
+    def train_batch(self, final=False):
         if not self.batch or self.step_number >= self.target_steps:
             self.batch = []
             return
-        if self.replay_steps > 0:
-            self.replay_steps -= 1
+        if self.replay_micro_batches > 0:
+            self.replay_micro_batches -= 1
             self.batch = []
             self.last_step_finished = time.perf_counter()
             return
         step_started = time.perf_counter()
         self.data_wait_seconds += max(0.0, step_started - self.last_step_finished)
+        if self.accumulation_number == 0:
+            self.accumulated_gradients = None
+            self.accumulated_loss_sum = 0.0
+            self.accumulated_tokens = 0
+            self.accumulated_consumption = {}
+            self.accumulated_compute_seconds = 0.0
         tokens = mx.array([item[0] for item in self.batch], dtype=mx.int32)
         mask = mx.array([item[1] for item in self.batch], dtype=mx.float32)
         inputs = tokens[:, :-1]
@@ -346,36 +360,58 @@ class Trainer:
         should_report = next_step == 1 or next_step == self.target_steps or next_step % report_every == 0
         current_learning_rate = self.learning_rate(next_step)
         self.optimizer.learning_rate = current_learning_rate
-        mx.random.seed(self.parameters["seed"] ^ next_step)
+        micro_seed = next_step if self.gradient_accumulation_steps == 1 else next_step * 1_000_003 + self.accumulation_number
+        mx.random.seed(self.parameters["seed"] ^ micro_seed)
         loss, gradients = self.loss_and_grad(self.model, inputs, targets, mask)
+        mx.eval(loss, gradients)
+        if GPU_THROTTLE < 1:
+            time.sleep((time.perf_counter() - step_started) * (1 / GPU_THROTTLE - 1))
+        valid_tokens = int(mask.sum().item())
+        if valid_tokens <= 0 and self.accumulated_tokens == 0:
+            raise ValueError("gradient accumulation micro-batch has no supervised token targets")
+        if self.accumulated_gradients is None:
+            self.accumulated_gradients = gradients
+        else:
+            self.accumulated_gradients = tree_map(lambda left, right: left + right, self.accumulated_gradients, gradients)
+        self.accumulated_loss_sum += float(loss.item())
+        self.accumulated_tokens += valid_tokens
+        for item in self.batch:
+            for corpus, count in item[2].items():
+                self.accumulated_consumption[corpus] = self.accumulated_consumption.get(corpus, 0) + count
+        self.batch = []
+        self.accumulation_number += 1
+        self.accumulated_compute_seconds += max(time.perf_counter() - step_started, 1e-9)
+        if self.accumulation_number < self.gradient_accumulation_steps and not final:
+            self.last_step_finished = time.perf_counter()
+            return
+
+        averaged_gradients = tree_map(lambda gradient: gradient / self.accumulated_tokens, self.accumulated_gradients)
         gradient_norm_value = None
         gradient_norm = None
         if should_report:
             squared_norm = mx.array(0.0)
-            for _, gradient in tree_flatten(gradients):
+            for _, gradient in tree_flatten(averaged_gradients):
                 squared_norm = squared_norm + mx.sum(gradient.astype(mx.float32) ** 2)
             gradient_norm = mx.sqrt(squared_norm)
-        self.optimizer.update(self.model, gradients)
-        evaluated = [self.model.parameters(), self.optimizer.state, loss]
+        update_started = time.perf_counter()
+        self.optimizer.update(self.model, averaged_gradients)
+        evaluated = [self.model.parameters(), self.optimizer.state]
         if gradient_norm is not None:
             evaluated.append(gradient_norm)
         mx.eval(*evaluated)
-        if GPU_THROTTLE < 1:
-            # mx.eval already drained the GPU, so this never pauses mid command-buffer.
-            time.sleep((time.perf_counter() - step_started) * (1 / GPU_THROTTLE - 1))
-        loss_value = float(loss.item())
+        self.accumulated_compute_seconds += max(time.perf_counter() - update_started, 1e-9)
         if gradient_norm is not None:
             gradient_norm_value = float(gradient_norm.item())
-        valid_tokens = int(mask.sum().item())
-        step_finished = time.perf_counter()
-        step_seconds = max(step_finished - step_started, 1e-9)
+        loss_value = self.accumulated_loss_sum / self.accumulated_tokens
+        valid_tokens = self.accumulated_tokens
+        step_seconds = max(self.accumulated_compute_seconds, 1e-9)
         self.step_number = next_step
         self.consumed_tokens += valid_tokens
-        for item in self.batch:
-            for corpus, count in item[2].items():
-                self.consumed_by_corpus[corpus] = self.consumed_by_corpus.get(corpus, 0) + count
+        for corpus, count in self.accumulated_consumption.items():
+            self.consumed_by_corpus[corpus] = self.consumed_by_corpus.get(corpus, 0) + count
         self.final_loss = loss_value
-        self.batch = []
+        self.accumulation_number = 0
+        self.accumulated_gradients = None
         now = time.perf_counter()
         elapsed = max(now - self.started, 1e-9)
         throughput = self.consumed_tokens / elapsed
@@ -513,7 +549,7 @@ class Trainer:
         self.step_number = resume["step"]
         self.consumed_tokens = resume["tokens"]
         self.consumed_by_corpus = state.get("consumption", {})
-        self.replay_steps = resume["step"]
+        self.replay_micro_batches = resume["step"] * self.gradient_accumulation_steps
         self.checkpoints = [resume["checkpoint"]]
 
     def record_evaluation(self, _training_loss):
@@ -565,7 +601,12 @@ class Trainer:
             target_mask = self.loss_buffer[1 : self.sequence_length + 1]
             self.add_sequence(self.token_buffer[: self.sequence_length + 1], target_mask, self.corpus_buffer[1 : self.sequence_length + 1])
         if self.step_number < self.target_steps and self.batch:
-            self.train_batch()
+            self.train_batch(final=True)
+        elif self.step_number < self.target_steps and self.accumulation_number > 0:
+            padding = [self.tokenizer.pad_id] * (self.sequence_length + 1)
+            zero_mask = [0.0] * self.sequence_length
+            self.batch = [(padding, zero_mask, {})]
+            self.train_batch(final=True)
         if self.step_number != self.target_steps:
             raise ValueError(
                 f"canonical stream produced only {self.step_number} training steps; profile requires {self.target_steps}"
