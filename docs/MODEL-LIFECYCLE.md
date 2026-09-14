@@ -556,6 +556,35 @@ pins the complete corpus BOM and deterministic sample identity, and reports
 bytes per token beside `r50k_base`. The resulting artifact remains a candidate
 until domain compression and G1/G2 capability tests approve it.
 
+Create a pinned evaluation BOM from a reviewed definition and index selection:
+
+```yaml
+kind: waldo-evaluation-definition
+schema: 1
+name: core-v1
+task: multiple-choice
+split: test
+corpora: [evaluation/core-v1]
+metrics:
+  - {name: accuracy, direction: max, threshold: 0.50}
+contamination:
+  max_exact_records: 0
+  max_fuzzy_records: 0
+  fuzzy_ratio: 0.80
+  shingle_words: 13
+```
+
+```text
+waldo model evaluation-bom core-v1.yaml core-v1.bom.json
+waldo model gate conversation2 core-v1.bom.json core-v1.results.json core-v1.gate.json
+```
+
+The evaluator-owned results file uses kind `openwaldo-evaluation-results`,
+schema 1, the evaluation BOM SHA-256, and a `results` array of metric/value
+pairs. The gate re-materializes every completed real training BOM, scans each
+corpus once for exact and fuzzy overlap, and fails promotion on contamination
+or threshold errors. Simulated runs can never pass this release gate.
+
 Model composes never select MLX, PyTorch, TensorFlow, or TorchTitan. Before a
 run is written, the environment-aware resolver chooses an adapter and records
 its immutable identity, framework, runtime, host, accelerator, node count, and

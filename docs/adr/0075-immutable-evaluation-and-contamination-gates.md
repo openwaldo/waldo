@@ -24,7 +24,12 @@ bounded by the evaluation set. The resulting report pins both BOM identities,
 every detected pair, the pass decision, and its own digest.
 
 Promotion fails closed when contamination exceeds its declared limit, a metric
-is missing or non-finite, or any minimum/maximum threshold is missed.
+is missing, non-finite, duplicated, or unknown, or any minimum/maximum
+threshold is missed. `waldo model evaluation-bom` admits only distributable
+index inputs. `waldo model gate` regenerates contamination evidence against
+every completed real run, rejects simulated training evidence, requires the
+external metric result document to pin the evaluation BOM digest, and writes a
+content-addressed gate report even when promotion fails.
 
 ## Consequences
 
@@ -32,5 +37,5 @@ is missing or non-finite, or any minimum/maximum threshold is missed.
 - Benchmark sources need the same revision, license, and object verification as
   training sources.
 - Exact and fuzzy policy changes create a different evaluation definition.
-- Model lifecycle and CLI integration can consume this package without making
-  the training adapter aware of index layout or benchmark semantics.
+- Benchmark execution stays outside the training adapter. Evaluators emit the
+  small, explicit metric-result document consumed by the lifecycle gate.

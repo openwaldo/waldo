@@ -8,17 +8,20 @@
 package evaluation
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"sort"
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/training"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -30,6 +33,37 @@ type Metric struct {
 	Name      string  `json:"name" yaml:"name"`
 	Direction string  `json:"direction" yaml:"direction"`
 	Threshold float64 `json:"threshold" yaml:"threshold"`
+}
+
+type Definition struct {
+	Kind          string       `json:"kind" yaml:"kind"`
+	Schema        int          `json:"schema" yaml:"schema"`
+	Name          string       `json:"name" yaml:"name"`
+	Task          string       `json:"task" yaml:"task"`
+	Split         string       `json:"split" yaml:"split"`
+	Corpora       []string     `json:"corpora" yaml:"corpora"`
+	Metrics       []Metric     `json:"metrics" yaml:"metrics"`
+	Contamination OverlapLimit `json:"contamination" yaml:"contamination"`
+}
+
+func LoadDefinition(path string) (Definition, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Definition{}, err
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	var definition Definition
+	if err := decoder.Decode(&definition); err != nil {
+		return Definition{}, err
+	}
+	if definition.Kind != "waldo-evaluation-definition" || definition.Schema != 1 || definition.Name == "" || definition.Task == "" || definition.Split == "" || len(definition.Corpora) == 0 || len(definition.Metrics) == 0 {
+		return Definition{}, fmt.Errorf("invalid evaluation definition")
+	}
+	if definition.Contamination.ShingleWords < 1 || definition.Contamination.FuzzyRatio <= 0 || definition.Contamination.FuzzyRatio > 1 {
+		return Definition{}, fmt.Errorf("invalid evaluation contamination policy")
+	}
+	return definition, nil
 }
 
 type BOM struct {
@@ -69,6 +103,23 @@ type ContaminationReport struct {
 	SHA256              string          `json:"sha256"`
 }
 
+func (report ContaminationReport) Validate() error {
+	if report.Kind != "openwaldo-contamination-report" || report.Schema != 1 || report.TrainingBOMSHA256 == "" || report.EvaluationBOMSHA256 == "" {
+		return fmt.Errorf("invalid contamination report identity")
+	}
+	want, err := digest(struct {
+		Training   string          `json:"training"`
+		Evaluation string          `json:"evaluation"`
+		Exact      []RecordOverlap `json:"exact"`
+		Fuzzy      []RecordOverlap `json:"fuzzy"`
+		Passed     bool            `json:"passed"`
+	}{report.TrainingBOMSHA256, report.EvaluationBOMSHA256, report.Exact, report.Fuzzy, report.Passed})
+	if err != nil || report.SHA256 != want {
+		return fmt.Errorf("contamination report digest differs")
+	}
+	return nil
+}
+
 type Result struct {
 	Metric string  `json:"metric"`
 	Value  float64 `json:"value"`
@@ -77,6 +128,24 @@ type Result struct {
 type Promotion struct {
 	Passed   bool     `json:"passed"`
 	Failures []string `json:"failures,omitempty"`
+}
+
+type ResultsDocument struct {
+	Kind                string   `json:"kind"`
+	Schema              int      `json:"schema"`
+	EvaluationBOMSHA256 string   `json:"evaluation_bom_sha256"`
+	Results             []Result `json:"results"`
+}
+
+type GateReport struct {
+	Kind                string                `json:"kind"`
+	Schema              int                   `json:"schema"`
+	ModelID             string                `json:"model_id"`
+	EvaluationBOMSHA256 string                `json:"evaluation_bom_sha256"`
+	Contamination       []ContaminationReport `json:"contamination"`
+	Results             []Result              `json:"results"`
+	Promotion           Promotion             `json:"promotion"`
+	SHA256              string                `json:"sha256"`
 }
 
 func NewBOM(name, task, split string, source corpus.BOM, metrics []Metric, limit OverlapLimit) (BOM, error) {
@@ -143,6 +212,13 @@ func (bom BOM) Validate() error {
 	return nil
 }
 
+func (bom BOM) SHA256() (string, error) {
+	if err := bom.Validate(); err != nil {
+		return "", err
+	}
+	return digest(bom)
+}
+
 func CheckContamination(ctx context.Context, trainingBOMSHA256, evaluationBOMSHA256 string, trainingRecords, evaluationRecords training.RecordSource, limit OverlapLimit) (ContaminationReport, error) {
 	if trainingRecords == nil || evaluationRecords == nil {
 		return ContaminationReport{}, fmt.Errorf("training and evaluation record streams are required")
@@ -205,8 +281,18 @@ func DecidePromotion(bom BOM, report ContaminationReport, results []Result) Prom
 	if !report.Passed {
 		promotion.Failures = append(promotion.Failures, "contamination policy failed")
 	}
+	wanted := map[string]bool{}
+	for _, metric := range bom.Metrics {
+		wanted[metric.Name] = true
+	}
 	values := map[string]float64{}
 	for _, result := range results {
+		if !wanted[result.Metric] {
+			promotion.Failures = append(promotion.Failures, "unknown metric "+result.Metric)
+		}
+		if _, exists := values[result.Metric]; exists {
+			promotion.Failures = append(promotion.Failures, "duplicate metric "+result.Metric)
+		}
 		values[result.Metric] = result.Value
 	}
 	for _, metric := range bom.Metrics {
@@ -222,6 +308,41 @@ func DecidePromotion(bom BOM, report ContaminationReport, results []Result) Prom
 	sort.Strings(promotion.Failures)
 	promotion.Passed = len(promotion.Failures) == 0
 	return promotion
+}
+
+func BuildGateReport(modelID string, bom BOM, reports []ContaminationReport, results ResultsDocument) (GateReport, error) {
+	if strings.TrimSpace(modelID) == "" || len(reports) == 0 {
+		return GateReport{}, fmt.Errorf("model identity and contamination reports are required")
+	}
+	bomSHA256, err := bom.SHA256()
+	if err != nil {
+		return GateReport{}, err
+	}
+	if results.Kind != "openwaldo-evaluation-results" || results.Schema != 1 || results.EvaluationBOMSHA256 != bomSHA256 {
+		return GateReport{}, fmt.Errorf("evaluation results do not pin the supplied evaluation BOM")
+	}
+	combined := ContaminationReport{Passed: true}
+	for _, report := range reports {
+		if report.Validate() != nil || report.EvaluationBOMSHA256 != bomSHA256 {
+			return GateReport{}, fmt.Errorf("invalid contamination report")
+		}
+		if !report.Passed {
+			combined.Passed = false
+		}
+	}
+	gate := GateReport{
+		Kind: "openwaldo-evaluation-gate", Schema: 1, ModelID: modelID,
+		EvaluationBOMSHA256: bomSHA256, Contamination: append([]ContaminationReport(nil), reports...),
+		Results: append([]Result(nil), results.Results...), Promotion: DecidePromotion(bom, combined, results.Results),
+	}
+	gate.SHA256, err = digest(struct {
+		ModelID       string                `json:"model_id"`
+		EvaluationBOM string                `json:"evaluation_bom_sha256"`
+		Contamination []ContaminationReport `json:"contamination"`
+		Results       []Result              `json:"results"`
+		Promotion     Promotion             `json:"promotion"`
+	}{gate.ModelID, gate.EvaluationBOMSHA256, gate.Contamination, gate.Results, gate.Promotion})
+	return gate, err
 }
 
 type fingerprint struct {

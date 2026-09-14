@@ -7,6 +7,8 @@ package evaluation
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,6 +29,23 @@ func (values records) Stream(ctx context.Context, consume func(training.Record) 
 		}
 	}
 	return nil
+}
+
+func TestLoadDefinitionRejectsUnknownAndIncompleteFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "evaluation.yaml")
+	valid := "kind: waldo-evaluation-definition\nschema: 1\nname: core\ntask: multiple-choice\nsplit: test\ncorpora: [evaluation/core]\nmetrics:\n  - {name: accuracy, direction: max, threshold: 0.5}\ncontamination: {max_exact_records: 0, max_fuzzy_records: 0, fuzzy_ratio: 0.8, shingle_words: 13}\n"
+	if err := os.WriteFile(path, []byte(valid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if definition, err := LoadDefinition(path); err != nil || definition.Name != "core" {
+		t.Fatalf("definition = %+v, err=%v", definition, err)
+	}
+	if err := os.WriteFile(path, []byte(valid+"surprise: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadDefinition(path); err == nil {
+		t.Fatal("unknown evaluation field accepted")
+	}
 }
 
 func TestContaminationAndPromotionAreFailClosed(t *testing.T) {
@@ -58,6 +77,27 @@ func TestPromotionRequiresEveryThreshold(t *testing.T) {
 	}
 	if got := DecidePromotion(bom, report, nil); got.Passed || got.Failures[0] != "missing metric accuracy" {
 		t.Fatalf("missing metric promotion = %+v", got)
+	}
+}
+
+func TestGatePinsResultsAndEveryContaminationReport(t *testing.T) {
+	bom := evaluationBOM(t, OverlapLimit{ExactRecords: 0, FuzzyRecords: 0, FuzzyRatio: 0.8, ShingleWords: 3})
+	bomSHA256, err := bom.SHA256()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := CheckContamination(context.Background(), strings.Repeat("a", 64), bomSHA256, records{{ID: "train", Text: "training record only"}}, records{{ID: "eval", Text: "evaluation record only"}}, bom.Contamination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := ResultsDocument{Kind: "openwaldo-evaluation-results", Schema: 1, EvaluationBOMSHA256: bomSHA256, Results: []Result{{Metric: "accuracy", Value: 0.9}}}
+	gate, err := BuildGateReport("model-id", bom, []ContaminationReport{report}, results)
+	if err != nil || !gate.Promotion.Passed || len(gate.SHA256) != 64 {
+		t.Fatalf("gate = %+v, err=%v", gate, err)
+	}
+	results.EvaluationBOMSHA256 = strings.Repeat("c", 64)
+	if _, err := BuildGateReport("model-id", bom, []ContaminationReport{report}, results); err == nil {
+		t.Fatal("mismatched evaluation results accepted")
 	}
 }
 

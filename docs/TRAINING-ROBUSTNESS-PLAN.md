@@ -128,6 +128,13 @@ unversioned downloadable evaluation bundle.
 Exit gate: evaluation is reproducible from BOMs and automatically blocks model
 promotion when any declared threshold or contamination limit fails.
 
+Implemented: the immutable evaluation definition/BOM, distributable-input
+admission, exact and fuzzy contamination scan, externally bound metric result,
+and model promotion gate are available through `model evaluation-bom` and
+`model gate`. Dataset-specific benchmark runners remain intentionally separate
+from the training backend and must be added only with each approved evaluation
+corpus adapter.
+
 ### 5. Train the tokenizer on the admitted corpus
 
 Train and version a roughly 32K-token tokenizer on a deterministic sample of
