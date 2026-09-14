@@ -2040,8 +2040,25 @@ func planModelStage(context Context, stage model.Stage, targets []waldoindex.Tar
 	if err := bom.Validate(); err != nil {
 		return model.PreparedStage{}, fmt.Errorf("stage %s filtered corpus BOM: %w", stage.Name, err)
 	}
+	if err := reviewPlannedStageDistribution(stage, bom); err != nil {
+		return model.PreparedStage{}, err
+	}
 	emitUnassessedFilterWarning(progress, stage.Name, bom)
 	return model.PlanStage(stage, bom)
+}
+
+func reviewPlannedStageDistribution(stage model.Stage, bom corpus.BOM) error {
+	parameters, err := stage.ResolvePlanningParameters()
+	if err != nil {
+		return fmt.Errorf("stage %s training profile: %w", stage.Name, err)
+	}
+	if parameters.DistributionPolicy != corpus.DistributionPolicyDistributable {
+		return nil
+	}
+	if _, err := corpus.ReviewDistributable(bom); err != nil {
+		return fmt.Errorf("stage %s distributable corpus gate: %w", stage.Name, err)
+	}
+	return nil
 }
 
 func emitUnassessedFilterWarning(output io.Writer, stageName string, bom corpus.BOM) {

@@ -200,6 +200,18 @@ func multiNodePlanForTest(t *testing.T, bom corpus.BOM, architecture string) mod
 	}
 }
 
+func TestPlannedStageRejectsMissingDistributionEvidenceBeforeMaterialization(t *testing.T) {
+	bom := seedMultiNodeCorpus(t)
+	stage := model.Stage{
+		Name: "pretrain", Type: "pre-training", Objective: "causal-language-modeling",
+		Parameters: training.Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, DistributionPolicy: corpus.DistributionPolicyDistributable},
+	}
+	err := reviewPlannedStageDistribution(stage, bom)
+	if err == nil || !strings.Contains(err.Error(), "distributable corpus gate") || !strings.Contains(err.Error(), "upstream license evidence") {
+		t.Fatalf("distribution review error = %v", err)
+	}
+}
+
 func TestSecondaryTrainingRequestFromPlan(t *testing.T) {
 	bom := seedMultiNodeCorpus(t)
 	cache, err := lookaside.DefaultCache()
