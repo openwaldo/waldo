@@ -71,6 +71,11 @@ WALDO requirements:
 | Recommended hardware | 1x NVIDIA H100 80 GB |
 | Approximate runtime | Measure from promoted G0 evidence for the 600M-token ceiling |
 
+This systems-gate compose is for private research while Gutenberg and
+Wikimedia licensing evidence is under review. It intentionally omits the
+`distributable` policy, retains full corpus provenance, and must not be used as
+evidence that its resulting model can be distributed.
+
 Success criteria:
 
 - Stable short-form language.

@@ -316,8 +316,15 @@ func TestReferenceLadderPinsExecutionAndDistributionPolicy(t *testing.T) {
 		}
 		for _, stage := range compose.Stages {
 			parameters := stage.Parameters
-			if parameters.Parallelism != training.ParallelismAuto || parameters.GradientAccumulation < 1 || parameters.ComputePrecision != "bfloat16" || parameters.DistributionPolicy != "distributable" || parameters.Optimizer == "" || parameters.Schedule == "" {
+			if parameters.Parallelism != training.ParallelismAuto || parameters.GradientAccumulation < 1 || parameters.ComputePrecision != "bfloat16" || parameters.Optimizer == "" || parameters.Schedule == "" {
 				t.Fatalf("%s stage %s robustness controls = %+v", path, stage.Name, parameters)
+			}
+			wantPolicy := "distributable"
+			if path == "0001-babble.yaml" {
+				wantPolicy = ""
+			}
+			if parameters.DistributionPolicy != wantPolicy {
+				t.Fatalf("%s stage %s distribution policy = %q, want %q", path, stage.Name, parameters.DistributionPolicy, wantPolicy)
 			}
 		}
 	}

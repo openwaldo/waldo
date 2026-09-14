@@ -1,4 +1,7 @@
 # Candidate first useful model: learn coherent language, then basic interaction.
+# This is a private research/system-gate compose. distribution_policy is
+# intentionally omitted while Gutenberg and Wikimedia evidence is reviewed;
+# its model artifacts must not be represented or released as distributable.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -43,7 +46,6 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
-      distribution_policy: distributable
       sequence_length: 1024
       learning_rate: 0.00025
       optimizer: adamw
@@ -85,7 +87,6 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
-      distribution_policy: distributable
       sequence_length: 1024
       learning_rate: 0.000035
       optimizer: adamw
@@ -125,7 +126,6 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
-      distribution_policy: distributable
       sequence_length: 1024
       learning_rate: 0.000012
       optimizer: adamw
