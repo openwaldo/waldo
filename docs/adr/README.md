@@ -72,3 +72,4 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0073: Pin training precision, recomputation, and compilation](0073-pinned-training-execution-controls.md)
 - [0074: Fail closed for distributable corpus claims](0074-fail-closed-distributable-corpus-gate.md)
 - [0075: Keep evaluation and contamination gates immutable](0075-immutable-evaluation-and-contamination-gates.md)
+- [0076: Make competitive training recipes explicit](0076-make-training-recipes-explicit.md)

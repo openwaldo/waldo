@@ -126,9 +126,9 @@ WALDO requirements:
 | --- | --- |
 | Status | `conversation2` candidate; blocked on systems, evaluation, and corpus gates |
 | Builds from | Random initialization with the complete, known-good 0002 conversation recipe embedded first |
-| Model type | Approximately 681M-parameter dense model, 4,096-token context, technical knowledge midtraining, and expanded conversation SFT |
+| Model type | Approximately 758M-parameter dense model, 4,096-token context, technical knowledge midtraining, and expanded conversation SFT |
 | Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
-| Approximate runtime | Approximately 7-10 days for the roughly 22B-token curriculum; replace this estimate with measured evidence after the first run |
+| Approximate runtime | Determine from promoted G1/G2 evidence for the roughly 6.1B-token curriculum |
 
 Success criteria:
 
@@ -141,10 +141,10 @@ Success criteria:
 Corpus requirements:
 
 - Cosmopedia v2 educational material, Stack Exchange technical Q&A, PLOS, and
-  Wikimedia form the majority of the 18B-token foundation mixture.
+  Wikimedia form the majority of the 5B-token foundation mixture.
 - Linux/GNU and cloud-native source, repository documentation, and a bounded
   amount of Linux, Git, and Python development discussion provide concrete
-  systems vocabulary in a separate 3B-token stage. Known non-English rows are
+  systems vocabulary in a separate 1B-token stage. Known non-English rows are
   excluded; legacy rows without language metadata are retained.
 - Tulu 3, Smol-SmolTalk, and UltraChat provide broader assistant supervision.
 - The validated Interaction Contract and HelpSteer2 stage remains last so
@@ -152,7 +152,7 @@ Corpus requirements:
 
 WALDO requirements:
 
-- A fresh model is required because conversation3 has roughly twice the
+- A fresh model is required because conversation2 has more than twice the
   parameter capacity and context length of the 0002 conversation model as well as a corrected
   stage order.
 - Fixed side-by-side conversation evaluations.

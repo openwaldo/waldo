@@ -257,9 +257,13 @@ type Parameters struct {
 	DistributionPolicy      string            `json:"distribution_policy,omitempty" yaml:"distribution_policy,omitempty"`
 	SequenceLength          int64             `json:"sequence_length" yaml:"sequence_length"`
 	LearningRate            float64           `json:"learning_rate" yaml:"learning_rate"`
+	Optimizer               string            `json:"optimizer,omitempty" yaml:"optimizer,omitempty"`
+	Schedule                string            `json:"schedule,omitempty" yaml:"schedule,omitempty"`
 	Seed                    uint64            `json:"seed" yaml:"seed"`
 	WeightDecay             *float64          `json:"weight_decay,omitempty" yaml:"weight_decay,omitempty"`
 	WarmupSteps             *int64            `json:"warmup_steps,omitempty" yaml:"warmup_steps,omitempty"`
+	WarmdownSteps           *int64            `json:"warmdown_steps,omitempty" yaml:"warmdown_steps,omitempty"`
+	MinimumRateRatio        *float64          `json:"minimum_learning_rate_ratio,omitempty" yaml:"minimum_learning_rate_ratio,omitempty"`
 	CheckpointEvery         *int64            `json:"checkpoint_every,omitempty" yaml:"checkpoint_every,omitempty"`
 	EvaluateEvery           *int64            `json:"evaluate_every,omitempty" yaml:"evaluate_every,omitempty"`
 	ShuffleBufferRecords    *int              `json:"shuffle_buffer_records,omitempty" yaml:"shuffle_buffer_records,omitempty"`
@@ -305,6 +309,7 @@ type Optimizer struct {
 type Schedule struct {
 	Name             string  `json:"name"`
 	WarmupSteps      int64   `json:"warmup_steps"`
+	WarmdownSteps    int64   `json:"warmdown_steps,omitempty"`
 	MinimumRateRatio float64 `json:"minimum_rate_ratio"`
 }
 

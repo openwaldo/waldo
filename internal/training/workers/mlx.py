@@ -20,7 +20,7 @@ from mlx.utils import tree_flatten, tree_map, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r10"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r12"
 
 
 def emit(kind, **payload):
@@ -88,11 +88,12 @@ def commit_directory(temporary, destination):
 
 
 class Attention(nn.Module):
-    def __init__(self, hidden, heads, kv_heads):
+    def __init__(self, hidden, heads, kv_heads, qk_normalization=False):
         super().__init__()
         self.heads = heads
         self.kv_heads = kv_heads
         self.head_dim = hidden // heads
+        self.qk_normalization = qk_normalization
         kv_width = self.head_dim * kv_heads
         self.q_proj = nn.Linear(hidden, hidden, bias=False)
         self.k_proj = nn.Linear(hidden, kv_width, bias=False)
@@ -107,6 +108,9 @@ class Attention(nn.Module):
         val = self.v_proj(value).reshape(batch, length, self.kv_heads, self.head_dim).transpose(0, 2, 1, 3)
         query = self.rope(query)
         key = self.rope(key)
+        if self.qk_normalization:
+            query = query * mx.rsqrt(mx.mean(query * query, axis=-1, keepdims=True) + 1e-6)
+            key = key * mx.rsqrt(mx.mean(key * key, axis=-1, keepdims=True) + 1e-6)
         attended = mx.fast.scaled_dot_product_attention(
             query, key, val, scale=self.head_dim ** -0.5, mask="causal"
         )
@@ -126,10 +130,10 @@ class FeedForward(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, hidden, intermediate, heads, kv_heads, dropout):
+    def __init__(self, hidden, intermediate, heads, kv_heads, dropout, qk_normalization):
         super().__init__()
         self.attention_norm = nn.RMSNorm(hidden, eps=1e-5)
-        self.attention = Attention(hidden, heads, kv_heads)
+        self.attention = Attention(hidden, heads, kv_heads, qk_normalization)
         self.ffn_norm = nn.RMSNorm(hidden, eps=1e-5)
         self.feed_forward = FeedForward(hidden, intermediate)
         self.residual_dropout = nn.Dropout(dropout)
@@ -142,6 +146,7 @@ class DecoderBlock(nn.Module):
 class DecoderLM(nn.Module):
     def __init__(self, architecture):
         super().__init__()
+        self.architecture = architecture
         vocabulary = architecture["vocabulary_size"]
         hidden = architecture["hidden_size"]
         self.tie_embeddings = architecture["tie_embeddings"]
@@ -153,12 +158,27 @@ class DecoderLM(nn.Module):
                 architecture["attention_heads"],
                 architecture["key_value_heads"],
                 architecture.get("dropout", 0.0),
+                architecture.get("qk_normalization", False),
             )
             for _ in range(architecture["layers"])
         ]
         self.norm = nn.RMSNorm(hidden, eps=1e-5)
         if not self.tie_embeddings:
             self.output = nn.Linear(hidden, vocabulary, bias=False)
+
+    def initialize(self):
+        normal = nn.init.normal(mean=0.0, std=0.02)
+        self.embedding.weight = normal(self.embedding.weight)
+        for layer in self.layers:
+            for projection in (layer.attention.q_proj, layer.attention.k_proj, layer.attention.v_proj, layer.attention.o_proj, layer.feed_forward.gate, layer.feed_forward.up, layer.feed_forward.down):
+                projection.weight = normal(projection.weight)
+        if not self.tie_embeddings:
+            self.output.weight = normal(self.output.weight)
+        if self.architecture.get("initialization", "normal") == "depth-scaled":
+            residual = nn.init.normal(mean=0.0, std=0.02 / math.sqrt(2 * len(self.layers)))
+            for layer in self.layers:
+                layer.attention.o_proj.weight = residual(layer.attention.o_proj.weight)
+                layer.feed_forward.down.weight = residual(layer.feed_forward.down.weight)
 
     def __call__(self, tokens):
         value = self.embedding(tokens)
@@ -245,6 +265,7 @@ class Trainer:
         self.tokenizer = FramingTokenizer(tokenizer)
         mx.random.seed(self.parameters["seed"])
         self.model = DecoderLM(self.architecture)
+        self.model.initialize()
         self.parameter_count = sum(value.size for _, value in tree_flatten(self.model.parameters()))
         self.model.train()
         self.initialization = begin.get("initialization")
@@ -259,6 +280,8 @@ class Trainer:
             self.model.apply(lambda value: value.astype(dtype))
         mx.eval(self.model.parameters())
         optimizer_parameters = self.parameters["optimizer"]
+        if optimizer_parameters["name"] != "adamw":
+            raise ValueError("MLX backend currently supports only the adamw optimizer")
         self.optimizer = optim.AdamW(
             learning_rate=self.parameters["learning_rate"],
             betas=(optimizer_parameters["beta1"], optimizer_parameters["beta2"]),
@@ -283,6 +306,13 @@ class Trainer:
         warmup = schedule["warmup_steps"]
         if warmup > 0 and step <= warmup:
             return base * step / warmup
+        if schedule["name"] == "warmup-stable-warmdown":
+            warmdown = schedule.get("warmdown_steps", 0)
+            stable_end = self.target_steps - warmdown
+            if warmdown == 0 or step <= stable_end:
+                return base
+            progress = min(1.0, max(0.0, (step - stable_end) / warmdown))
+            return base * (1.0 - progress * (1.0 - schedule["minimum_rate_ratio"]))
         decay_steps = max(1, self.target_steps - warmup)
         progress = min(1.0, max(0.0, (step - warmup) / decay_steps))
         ratio = schedule["minimum_rate_ratio"] + (1.0 - schedule["minimum_rate_ratio"]) * 0.5 * (1.0 + math.cos(math.pi * progress))

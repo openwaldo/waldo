@@ -115,6 +115,11 @@ func TestPyTorchWorkerPinsMemoryAndPrecisionControls(t *testing.T) {
 		`self.scaler.step(self.optimizer)`,
 		`tokens.pin_memory().to(self.device, non_blocking=True)`,
 		`mask.pin_memory().to(self.device, non_blocking=True)`,
+		`class MuonAdamW(torch.optim.Optimizer)`,
+		`zeropower_via_newton_schulz5`,
+		`schedule["name"] == "warmup-stable-warmdown"`,
+		`architecture.get("qk_normalization", False)`,
+		`architecture.get("initialization", "normal") == "depth-scaled"`,
 		`"scaler": self.scaler.state_dict()`,
 		`self.scaler.load_state_dict(runtime.get("scaler", {}))`,
 	} {

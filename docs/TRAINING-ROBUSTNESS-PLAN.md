@@ -147,8 +147,8 @@ resume, and contamination gates. Only then run the 24-layer `conversation2`
 candidate.
 
 Do not start the current `0003-conversation.yaml` multi-day run before phases
-0 through 4 pass. Its 22B-token curriculum is too expensive to use as the
-systems benchmark.
+0 through 4 pass. Its approximately 6.1B-token curriculum is still too
+expensive to use as the systems benchmark.
 
 ## Durable contract work
 

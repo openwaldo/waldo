@@ -300,6 +300,8 @@ compatibility boundary.
 | `key_value_heads` | yes | positive integer | Key/value-head count. Must divide `attention_heads`. |
 | `dropout` | no | `0 <= value < 1`; default `0` | Residual dropout applied during training and disabled during evaluation and inference. |
 | `tie_embeddings` | no | boolean; default `false` | Reuses input embeddings as the output projection when true. False adds a separate output matrix. Reference composes set it explicitly. |
+| `qk_normalization` | no | boolean; default `false` | RMS-normalizes rotary query and key vectors before attention. |
+| `initialization` | no | `normal` or `depth-scaled`; default `normal` | Weight initialization recipe. `depth-scaled` reduces residual output projection variance by model depth. |
 | `parameter_dtype` | yes | `float32`, `float16`, or `bfloat16` | Portable parameter and mixed-precision artifact declaration. Backend support is checked before training. |
 | `tokenizer.name` | yes | supported name | Selects WALDO's offline tokenizer implementation. |
 | `tokenizer.revision` | yes | immutable revision | Pins exact tokenizer behavior. |
@@ -474,10 +476,14 @@ must use one representation or the other, never both.
 | `compile` | no | default `false` | Compiles the live PyTorch/TorchTitan forward graph. The unwrapped model remains the checkpoint and export source. |
 | `distribution_policy` | no | `distributable` | Requires every corpus license to be approved for redistribution and every upstream source to carry a pinned version and license evidence. The resulting review and obligations are pinned in the run BOM. |
 | `sequence_length` | yes | positive integer, at most `context_tokens` | Number of predicted token targets per packed sequence. |
-| `learning_rate` | yes | finite positive number | Peak AdamW learning rate. |
+| `learning_rate` | yes | finite positive number | Peak optimizer learning rate. |
+| `optimizer` | no | `adamw` or `muon-adamw`; default `adamw` | Optimizer recipe. Muon applies orthogonalized momentum updates to hidden matrices and AdamW to embeddings, output heads, and vectors; it currently requires PyTorch data-parallel placement. |
+| `schedule` | no | `cosine` or `warmup-stable-warmdown`; default `cosine` | Learning-rate schedule. |
 | `seed` | no | default `0` | Controls deterministic shuffling, evaluation selection, initialization, and training randomness. Reference composes set it explicitly. |
 | `weight_decay` | no | default `0.1`; `0..1` | AdamW weight decay. Explicit zero disables it. |
 | `warmup_steps` | no | `min(100, steps/10)`; `0..steps` | Linear warmup duration. For runs longer than one step, the default is at least one. Explicit zero disables warmup. |
+| `warmdown_steps` | no | half of the run for `warmup-stable-warmdown`, otherwise `0` | Linear warmdown duration. Warmup plus warmdown cannot exceed the run. |
+| `minimum_learning_rate_ratio` | no | `0.1` for cosine, `0` for warmup-stable-warmdown; `0..1` | Final learning rate as a fraction of the peak. |
 | `checkpoint_every` | no | `min(500, steps)`; `0..steps` | Checkpoint interval. Explicit zero disables periodic checkpoints. |
 | `evaluate_every` | no | `min(500, steps)`; `0..steps` | Held-out evaluation interval. Explicit zero disables periodic evaluation. |
 | `shuffle_buffer_records` | no | default `1024`; `1..1000000` | Maximum records retained by deterministic bounded shuffle. |
@@ -511,13 +517,13 @@ three values to zero.
 
 ### Fixed profile behavior
 
-All profiles resolve to AdamW with betas `0.9` and `0.95`, epsilon `1e-8`, and
-a cosine schedule ending at 10% of the peak learning rate. Those values and
-continuous EOS packing are versioned profile facts, not compose fields.
+All profiles default to AdamW with betas `0.9` and `0.95`, epsilon `1e-8`, and
+a cosine schedule ending at 10% of the peak learning rate. A compose may select
+the controlled Muon/AdamW or warmup-stable-warmdown experiments explicitly.
+Continuous EOS packing remains a versioned profile fact.
 
 A schema-1 compose has no fields for arbitrary chat-template expressions,
-optimizer choice, gradient accumulation, activation checkpointing,
-mixture-of-experts routing, or distributed topology. The optional built-in
+mixture-of-experts routing, or physical distributed topology. The optional built-in
 interaction contract controls inference formatting; it does not change the
 causal training objective. Hardware and backend topology remain machine-local
 policy; other training behaviors require a separately versioned portable

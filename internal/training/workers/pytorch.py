@@ -21,8 +21,8 @@ from torch.utils.checkpoint import checkpoint
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r10"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r20"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r11"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r21"
 IS_PRIMARY = True
 
 
@@ -160,11 +160,12 @@ def rotate_half(value):
 
 
 class Attention(nn.Module):
-    def __init__(self, hidden, heads, kv_heads):
+    def __init__(self, hidden, heads, kv_heads, qk_normalization=False):
         super().__init__()
         self.heads = heads
         self.kv_heads = kv_heads
         self.head_dim = hidden // heads
+        self.qk_normalization = qk_normalization
         kv_width = self.head_dim * kv_heads
         self.q_proj = nn.Linear(hidden, hidden, bias=False)
         self.k_proj = nn.Linear(hidden, kv_width, bias=False)
@@ -186,6 +187,9 @@ class Attention(nn.Module):
         val = self.v_proj(value).reshape(batch, length, self.kv_heads, self.head_dim).transpose(1, 2)
         query = self.rope(query)
         key = self.rope(key)
+        if self.qk_normalization:
+            query = query * torch.rsqrt(query.float().pow(2).mean(-1, keepdim=True) + 1e-6).to(query.dtype)
+            key = key * torch.rsqrt(key.float().pow(2).mean(-1, keepdim=True) + 1e-6).to(key.dtype)
         if self.heads != self.kv_heads:
             repeats = self.heads // self.kv_heads
             key = key.repeat_interleave(repeats, dim=1)
@@ -207,10 +211,10 @@ class FeedForward(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, hidden, intermediate, heads, kv_heads, dropout):
+    def __init__(self, hidden, intermediate, heads, kv_heads, dropout, qk_normalization):
         super().__init__()
         self.attention_norm = RMSNorm(hidden)
-        self.attention = Attention(hidden, heads, kv_heads)
+        self.attention = Attention(hidden, heads, kv_heads, qk_normalization)
         self.ffn_norm = RMSNorm(hidden)
         self.feed_forward = FeedForward(hidden, intermediate)
         self.residual_dropout = nn.Dropout(dropout)
@@ -223,6 +227,7 @@ class DecoderBlock(nn.Module):
 class DecoderLM(nn.Module):
     def __init__(self, architecture):
         super().__init__()
+        self.architecture = architecture
         vocabulary = architecture["vocabulary_size"]
         hidden = architecture["hidden_size"]
         self.tie_embeddings = architecture["tie_embeddings"]
@@ -235,6 +240,7 @@ class DecoderLM(nn.Module):
                 architecture["attention_heads"],
                 architecture["key_value_heads"],
                 architecture.get("dropout", 0.0),
+                architecture.get("qk_normalization", False),
             )
             for _ in range(architecture["layers"])
         ])
@@ -248,6 +254,11 @@ class DecoderLM(nn.Module):
                 nn.init.normal_(module.weight, mean=0.0, std=0.02)
             elif isinstance(module, RMSNorm):
                 nn.init.ones_(module.weight)
+        if self.architecture.get("initialization", "normal") == "depth-scaled":
+            residual_std = 0.02 / math.sqrt(2 * len(self.layers))
+            for layer in self.layers:
+                nn.init.normal_(layer.attention.o_proj.weight, mean=0.0, std=residual_std)
+                nn.init.normal_(layer.feed_forward.down.weight, mean=0.0, std=residual_std)
 
     def forward(self, tokens):
         value = self.embedding(tokens)
@@ -276,6 +287,59 @@ class FramingTokenizer:
         if self.name == "byte":
             return [byte + 3 for byte in record["text"].encode("utf-8")] + [self.eos_id]
         raise ValueError(f"record is missing pre-tokenized IDs for {self.name}")
+
+
+def zeropower_via_newton_schulz5(gradient, steps=5):
+    """Approximate the nearest semi-orthogonal matrix in reduced precision."""
+    if gradient.ndim != 2:
+        raise ValueError("Muon requires matrix parameters")
+    transposed = gradient.shape[0] > gradient.shape[1]
+    value = gradient.mT if transposed else gradient
+    value = value.to(torch.bfloat16)
+    value = value / (value.norm() + 1e-7)
+    for _ in range(steps):
+        gram = value @ value.mT
+        value = 3.4445 * value + (-4.7750 * gram + 2.0315 * gram @ gram) @ value
+    return value.mT if transposed else value
+
+
+class MuonAdamW(torch.optim.Optimizer):
+    """Muon for hidden matrices and AdamW for embeddings, heads, and vectors."""
+    def __init__(self, matrix_parameters, adam_parameters, lr, betas, eps, weight_decay):
+        groups = []
+        if matrix_parameters:
+            groups.append({"params": matrix_parameters, "optimizer_kind": "muon", "lr": lr, "momentum": 0.95, "weight_decay": weight_decay})
+        if adam_parameters:
+            groups.append({"params": adam_parameters, "optimizer_kind": "adamw", "lr": lr, "betas": betas, "eps": eps, "weight_decay": weight_decay})
+        super().__init__(groups, {})
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = closure() if closure is not None else None
+        for group in self.param_groups:
+            for parameter in group["params"]:
+                if parameter.grad is None:
+                    continue
+                state = self.state[parameter]
+                if group["optimizer_kind"] == "muon":
+                    momentum = state.setdefault("momentum_buffer", torch.zeros_like(parameter.grad))
+                    momentum.lerp_(parameter.grad, 1 - group["momentum"])
+                    update = zeropower_via_newton_schulz5(parameter.grad.lerp(momentum, group["momentum"]))
+                    update = update.to(parameter.dtype) * math.sqrt(max(1.0, parameter.shape[0] / parameter.shape[1]))
+                    parameter.mul_(1 - group["lr"] * group["weight_decay"])
+                    parameter.add_(update, alpha=-group["lr"])
+                    continue
+                step = state.get("step", 0) + 1
+                state["step"] = step
+                average = state.setdefault("exp_avg", torch.zeros_like(parameter))
+                square = state.setdefault("exp_avg_sq", torch.zeros_like(parameter))
+                beta1, beta2 = group["betas"]
+                average.lerp_(parameter.grad, 1 - beta1)
+                square.mul_(beta2).addcmul_(parameter.grad, parameter.grad, value=1 - beta2)
+                parameter.mul_(1 - group["lr"] * group["weight_decay"])
+                denominator = square.sqrt().div_(math.sqrt(1 - beta2 ** step)).add_(group["eps"])
+                parameter.addcdiv_(average, denominator, value=-group["lr"] / (1 - beta1 ** step))
+        return loss
 
 
 class Trainer:
@@ -429,13 +493,32 @@ class Trainer:
                 fully_shard(self.model, mesh=fsdp_mesh)
         self.compiled_model = torch.compile(self.model, dynamic=False) if self.parameters.get("compile", False) else self.model
         optimizer_parameters = self.parameters["optimizer"]
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=self.parameters["learning_rate"],
-            betas=(optimizer_parameters["beta1"], optimizer_parameters["beta2"]),
-            eps=optimizer_parameters["epsilon"],
-            weight_decay=optimizer_parameters["weight_decay"],
-        )
+        if optimizer_parameters["name"] == "muon-adamw":
+            if self.distributed and self.parallelism_strategy != "data-parallel":
+                raise ValueError("muon-adamw currently requires data-parallel placement; sharded Muon is not yet implemented")
+            matrix_parameters = []
+            adam_parameters = []
+            for name, parameter in self.model.named_parameters():
+                if parameter.ndim == 2 and "embedding" not in name and "output" not in name:
+                    matrix_parameters.append(parameter)
+                else:
+                    adam_parameters.append(parameter)
+            self.optimizer = MuonAdamW(
+                matrix_parameters,
+                adam_parameters,
+                lr=self.parameters["learning_rate"],
+                betas=(optimizer_parameters["beta1"], optimizer_parameters["beta2"]),
+                eps=optimizer_parameters["epsilon"],
+                weight_decay=optimizer_parameters["weight_decay"],
+            )
+        else:
+            self.optimizer = torch.optim.AdamW(
+                self.model.parameters(),
+                lr=self.parameters["learning_rate"],
+                betas=(optimizer_parameters["beta1"], optimizer_parameters["beta2"]),
+                eps=optimizer_parameters["epsilon"],
+                weight_decay=optimizer_parameters["weight_decay"],
+            )
         scaler_enabled = self.device.type == "cuda" and self.compute_dtype == torch.float16
         if scaler_enabled and self.distributed and self.parallelism_strategy != "data-parallel":
             from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
@@ -479,6 +562,13 @@ class Trainer:
         warmup = schedule["warmup_steps"]
         if warmup > 0 and step <= warmup:
             return base * step / warmup
+        if schedule["name"] == "warmup-stable-warmdown":
+            warmdown = schedule.get("warmdown_steps", 0)
+            stable_end = self.target_steps - warmdown
+            if warmdown == 0 or step <= stable_end:
+                return base
+            progress = min(1.0, max(0.0, (step - stable_end) / warmdown))
+            return base * (1.0 - progress * (1.0 - schedule["minimum_rate_ratio"]))
         decay_steps = max(1, self.target_steps - warmup)
         progress = min(1.0, max(0.0, (step - warmup) / decay_steps))
         ratio = schedule["minimum_rate_ratio"] + (1.0 - schedule["minimum_rate_ratio"]) * 0.5 * (1.0 + math.cos(math.pi * progress))

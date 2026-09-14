@@ -838,6 +838,33 @@ func TestResolveParametersPinsDistributionPolicy(t *testing.T) {
 	}
 }
 
+func TestResolveParametersPinsOptimizerAndWarmdownSchedule(t *testing.T) {
+	warmdown := int64(40)
+	minimum := 0.0
+	resolved, err := ResolveParameters(Parameters{
+		Steps: 100, BatchSize: 8, SequenceLength: 128, LearningRate: 0.001,
+		Optimizer: "muon-adamw", Schedule: "warmup-stable-warmdown",
+		WarmdownSteps: &warmdown, MinimumRateRatio: &minimum,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Optimizer.Name != "muon-adamw" || resolved.Schedule.Name != "warmup-stable-warmdown" || resolved.Schedule.WarmdownSteps != 40 || resolved.Schedule.MinimumRateRatio != 0 {
+		t.Fatalf("resolved recipe = %+v / %+v", resolved.Optimizer, resolved.Schedule)
+	}
+	for _, parameters := range []Parameters{
+		{Steps: 10, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Optimizer: "unknown"},
+		{Steps: 10, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Schedule: "unknown"},
+		{Steps: 10, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Schedule: "warmup-stable-warmdown", WarmupSteps: testInt64Pointer(6), WarmdownSteps: testInt64Pointer(5)},
+	} {
+		if _, err := ResolveParameters(parameters); err == nil {
+			t.Fatalf("invalid recipe accepted: %+v", parameters)
+		}
+	}
+}
+
+func testInt64Pointer(value int64) *int64 { return &value }
+
 func TestValidateBatchTopologyUsesPhysicalMicroBatch(t *testing.T) {
 	parameters := ResolvedParameters{BatchSize: 64, GradientAccumulation: 4}
 	if err := ValidateBatchTopology(parameters, 8); err != nil {

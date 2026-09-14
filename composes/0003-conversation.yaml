@@ -14,8 +14,10 @@ architecture:
   layers: 24
   attention_heads: 24
   key_value_heads: 8
-  dropout: 0.1
-  tie_embeddings: true
+  dropout: 0.0
+  tie_embeddings: false
+  qk_normalization: true
+  initialization: depth-scaled
   parameter_dtype: bfloat16
   tokenizer:
     name: tiktoken/r50k_base
@@ -45,7 +47,7 @@ stages:
     parameters:
       profile: causal-pretrain-weighted
       parallelism: auto
-      tokens: 18000000000
+      tokens: 5000000000
       batch_size: 16
       gradient_accumulation_steps: 4
       compute_precision: bfloat16
@@ -54,6 +56,8 @@ stages:
       distribution_policy: distributable
       sequence_length: 4096
       learning_rate: 0.00011
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 42
       weight_decay: 0.15
       warmup_steps: 2747
@@ -88,7 +92,7 @@ stages:
     parameters:
       profile: causal-pretrain-weighted
       parallelism: auto
-      tokens: 3000000000
+      tokens: 1000000000
       batch_size: 8
       gradient_accumulation_steps: 2
       compute_precision: bfloat16
@@ -97,6 +101,8 @@ stages:
       distribution_policy: distributable
       sequence_length: 4096
       learning_rate: 0.00002
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 45
       weight_decay: 0.08
       warmup_steps: 916
@@ -139,6 +145,8 @@ stages:
       distribution_policy: distributable
       sequence_length: 4096
       learning_rate: 0.00003
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 43
       weight_decay: 0.08
       warmup_steps: 305
@@ -170,7 +178,7 @@ stages:
     parameters:
       profile: causal-pretrain-weighted
       parallelism: auto
-      tokens: 400000000
+      tokens: 100000000
       batch_size: 8
       gradient_accumulation_steps: 2
       compute_precision: bfloat16
@@ -179,6 +187,8 @@ stages:
       distribution_policy: distributable
       sequence_length: 4096
       learning_rate: 0.00001
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 46
       weight_decay: 0.04
       warmup_steps: 122
@@ -219,6 +229,8 @@ stages:
       distribution_policy: distributable
       sequence_length: 4096
       learning_rate: 0.000008
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 44
       weight_decay: 0.05
       warmup_steps: 48

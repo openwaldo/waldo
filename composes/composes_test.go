@@ -233,14 +233,14 @@ func TestConversationThreeIsLargerAndKnowledgeDominant(t *testing.T) {
 		t.Fatal(err)
 	}
 	architecture := compose.Architecture
-	if architecture.ContextTokens != 4096 || architecture.HiddenSize != 1536 || architecture.IntermediateSize != 4096 || architecture.Layers != 24 || architecture.AttentionHeads != 24 || architecture.KeyValueHeads != 8 {
+	if architecture.ContextTokens != 4096 || architecture.HiddenSize != 1536 || architecture.IntermediateSize != 4096 || architecture.Layers != 24 || architecture.AttentionHeads != 24 || architecture.KeyValueHeads != 8 || architecture.TieEmbeddings || !architecture.QKNormalization || architecture.Initialization != "depth-scaled" || architecture.Dropout != 0 {
 		t.Fatalf("conversation3 architecture = %+v", architecture)
 	}
 	if got := []string{compose.Stages[0].Name, compose.Stages[1].Name, compose.Stages[2].Name, compose.Stages[3].Name, compose.Stages[4].Name}; !reflect.DeepEqual(got, []string{"pretrain", "technical-knowledge-midtrain", "conversational-midtrain", "expanded-conversation-sft", "post-train"}) {
 		t.Fatalf("conversation3 stage order = %v", got)
 	}
 	wantFoundation := []string{"core/books/gutenberg", "core/common-pile/wikimedia", "government/regulations", "science/plos", "core/synthetic/cosmopedia-v2", "core/common-pile/stackexchange"}
-	if got := corpusPaths(compose.Stages[0].Corpora); !reflect.DeepEqual(got, wantFoundation) || compose.Stages[0].Parameters.Tokens != 18000000000 {
+	if got := corpusPaths(compose.Stages[0].Corpora); !reflect.DeepEqual(got, wantFoundation) || compose.Stages[0].Parameters.Tokens != 5000000000 {
 		t.Fatalf("conversation3 foundation = %v / %+v", got, compose.Stages[0].Parameters)
 	}
 	wantFoundationWeights := []uint64{1, 3, 1, 3, 5, 5}
@@ -250,7 +250,7 @@ func TestConversationThreeIsLargerAndKnowledgeDominant(t *testing.T) {
 		}
 	}
 	wantTechnical := []string{"code/copyleft/linux-core", "code/permissive/linux-core", "community/linux-kernel-mailing-list", "code/stack-v2-html", "code/cloud-native-core", "community/git-mailing-list", "community/python-mailing-lists"}
-	if got := corpusPaths(compose.Stages[1].Corpora); !reflect.DeepEqual(got, wantTechnical) || compose.Stages[1].Parameters.Tokens != 3000000000 {
+	if got := corpusPaths(compose.Stages[1].Corpora); !reflect.DeepEqual(got, wantTechnical) || compose.Stages[1].Parameters.Tokens != 1000000000 {
 		t.Fatalf("conversation3 technical stage = %v / %+v", got, compose.Stages[1].Parameters)
 	}
 	for _, stage := range compose.Stages {
@@ -261,12 +261,15 @@ func TestConversationThreeIsLargerAndKnowledgeDominant(t *testing.T) {
 		if parameters.GradientAccumulation < 2 {
 			t.Fatalf("conversation2 candidate stage %s gradient accumulation = %d", stage.Name, parameters.GradientAccumulation)
 		}
+		if parameters.Optimizer != "adamw" || parameters.Schedule != "warmup-stable-warmdown" {
+			t.Fatalf("conversation2 candidate stage %s optimizer schedule = %q/%q", stage.Name, parameters.Optimizer, parameters.Schedule)
+		}
 	}
 	forecast, err := model.ForecastCompose(compose)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 681252864 || forecast.PlannedTokens != 21400092672 {
+	if forecast.ApproximateParameters != 758450688 || forecast.PlannedTokens != 6100025344 {
 		t.Fatalf("conversation3 forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
