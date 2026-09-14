@@ -293,13 +293,17 @@ esac
 	}
 	t.Cleanup(func() { listenHostfileRendezvous = previousListener })
 	cluster := training.Cluster{Nodes: 2, Rendezvous: "127.0.0.1:0", RendezvousID: "session-test"}
+	scratch := t.TempDir()
 	var output bytes.Buffer
-	session, err := startHostfileSession(context.Background(), trainingHostfile{Hosts: []string{"train-0", "train-1"}}, cluster, t.TempDir(), &output)
+	session, err := startHostfileSession(context.Background(), trainingHostfile{Hosts: []string{"train-0", "train-1"}}, cluster, scratch, &output)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if session.cluster.WorldSize != 2 {
 		t.Fatalf("discovered world size = %d, want 2", session.cluster.WorldSize)
+	}
+	if !strings.HasPrefix(session.remoteRoot, scratch+string(os.PathSeparator)) {
+		t.Fatalf("remote launch root = %q, want beneath configured scratch %q", session.remoteRoot, scratch)
 	}
 	evaluation := training.EvaluationSet{Selection: "lowest-sha256-v1", SHA256: strings.Repeat("a", 64)}
 	if err := session.publish(model.MultiNodePlan{
@@ -318,6 +322,9 @@ esac
 	}
 	if err := session.finish(nil); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(session.remoteRoot); !os.IsNotExist(err) {
+		t.Fatalf("launch staging remains after finish: %v", err)
 	}
 	if !strings.Contains(output.String(), "[train-1] worker accepted launcher stage 1") || !strings.Contains(output.String(), "[train-1] worker accepted launcher stage 2") {
 		t.Fatalf("worker output = %q", output.String())
@@ -410,6 +417,9 @@ func TestHostfileWorkerArgumentsCarryNCCLSettings(t *testing.T) {
 		if !strings.Contains(arguments, expected) {
 			t.Fatalf("worker arguments %q omit %q", arguments, expected)
 		}
+	}
+	if !strings.Contains(arguments, "--scratch /tmp/waldo-launch/build/runs/session-test/node-1") {
+		t.Fatalf("worker arguments %q omit session-scoped scratch", arguments)
 	}
 }
 

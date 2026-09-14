@@ -303,12 +303,12 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 		return nil, err
 	}
 	sessionContext, cancel := context.WithCancel(ctx)
-	remoteRoot := "/tmp/waldo-launch/" + digest
+	remoteRoot := filepath.Join(scratchRoot, "multinode", digest, cluster.RendezvousID)
 	session := &hostfileSession{
 		ctx: sessionContext, cancel: cancel, hostfile: hostfile, cluster: cluster,
 		binary: binary, binarySHA256: digest, remoteRoot: remoteRoot,
 		remoteBinary: remoteRoot + "/waldo",
-		resumeRoot:   filepath.Join(scratchRoot, "multinode", digest, cluster.RendezvousID, "resume"),
+		resumeRoot:   filepath.Join(remoteRoot, "resume"),
 		output:       output,
 	}
 	local, err := inspectHostfileTorchTitan(sessionContext)
@@ -722,7 +722,7 @@ func (session *hostfileSession) finish(primaryErr error) error {
 			workerErrors = append(workerErrors, fmt.Sprintf("%s: %v", worker.host, worker.err))
 		}
 	}
-	session.cleanupResumeStaging()
+	session.cleanupStaging()
 	session.cancel()
 	if len(workerErrors) > 0 && (primaryErr == nil || errors.Is(primaryErr, context.Canceled)) {
 		return fmt.Errorf("secondary training workers failed: %s", strings.Join(workerErrors, "; "))
@@ -755,11 +755,34 @@ func (session *hostfileSession) cleanupResumeStaging() {
 	}
 }
 
+func (session *hostfileSession) cleanupStaging() {
+	if err := os.RemoveAll(session.remoteRoot); err != nil {
+		session.outputMu.Lock()
+		fmt.Fprintf(session.output, "warning: clean local multi-host launch staging: %v\n", err)
+		session.outputMu.Unlock()
+	}
+	for _, host := range session.hostfile.Hosts[1:] {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		command := session.remoteCommandContext(ctx, host, "rm -rf -- "+shellQuote(session.remoteRoot))
+		err := command.Run()
+		cancel()
+		if err != nil {
+			session.outputMu.Lock()
+			fmt.Fprintf(session.output, "warning: clean multi-host launch staging on %s: %v\n", host, err)
+			session.outputMu.Unlock()
+		}
+	}
+}
+
 func (session *hostfileSession) abort() {
 	session.cancel()
 	for _, worker := range session.workers {
 		_ = worker.stdin.Close()
 	}
+	for _, worker := range session.workers {
+		<-worker.done
+	}
+	session.cleanupStaging()
 }
 
 func joinRemoteArguments(arguments []string) string {
