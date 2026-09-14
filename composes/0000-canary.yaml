@@ -27,10 +27,10 @@ stages:
     filter:
       main_content: true
     corpora:
-      - core/common-pile/public-domain-review
-      - core/common-pile/python-enhancement-proposals/peps
-      - post-train/sft/dolly
-      - post-train/sft/oasst1
+      - post-train/sft/helpsteer2
+      - post-train/sft/interaction-contract-v1
+      - post-train/conversation/schema-guided-dialogue
+      - post-train/conversation/ccpe
     parameters:
       profile: causal-pretrain-balanced
       parallelism: auto
