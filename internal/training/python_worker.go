@@ -256,7 +256,7 @@ func workerBeginFromRequest(request Request) WorkerBegin {
 		ArchitectureSHA256: request.ArchitectureSHA256, Architecture: request.Architecture,
 		Parameters: request.Parameters, Parallelism: request.Parallelism,
 		EvaluationSet: request.EvaluationSet, Tokenizer: tokenizer, DataNodeRank: request.DataNodeRank,
-		PreparedCacheDirectory: request.PreparedCacheDirectory,
+		PreparedCacheDirectory: request.PreparedCacheDirectory, PreparedCacheMaxBytes: request.PreparedCacheMaxBytes,
 	}
 	identity, _ := json.Marshal(struct {
 		Architecture string                `json:"architecture_sha256"`

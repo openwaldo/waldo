@@ -45,6 +45,7 @@ type Builder struct {
 	Progress               func(Progress)
 	ComposeName            string
 	PreparedCacheDirectory string
+	PreparedCacheMaxBytes  int64
 	MultiNode              MultiNodeHandoff
 	// StagePreparer materializes a planned stage immediately before it runs.
 	// StageReleaser releases those local objects after the stage commits.
@@ -313,8 +314,6 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	}
 	if selection.Execution.WorldSize <= 1 {
 		selection.Execution.Parallelism.DataPlane = training.DataPlaneLocal
-	} else if builder.MultiNode.Publish != nil {
-		selection.Execution.Parallelism.DataPlane = training.DataPlaneRankZero
 	} else {
 		selection.Execution.Parallelism.DataPlane = training.DataPlaneNodeLocal
 	}
@@ -634,6 +633,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 		Parallelism:       runBOM.Execution.Parallelism,
 		ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix), ArtifactPrefix: artifactPrefix, Report: report,
 		PreparedCacheDirectory: builder.PreparedCacheDirectory,
+		PreparedCacheMaxBytes:  builder.PreparedCacheMaxBytes,
 	})
 	progressMutex.Lock()
 	if progressErr != nil {

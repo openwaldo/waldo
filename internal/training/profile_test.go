@@ -978,6 +978,26 @@ func TestPreparedSequenceCacheReplaysVerifiedChunks(t *testing.T) {
 	}
 }
 
+func TestPreparedSequenceCacheStopsAtByteLimit(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 2, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := WorkerBegin{
+		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
+		Parallelism:            Parallelism{WorldSize: 2, GPUsPerNode: 1, DataPlane: DataPlaneNodeLocal},
+		PreparedCacheDirectory: t.TempDir(), PreparedCacheMaxBytes: 1, PreparedIdentity: strings.Repeat("b", 64),
+	}
+	record := Record{ID: "one", Tokens: []int{10, 11, 12, 13}, LossMask: []bool{true, true, true, true, true}, Corpus: "corpus"}
+	if err := WriteWorkerInput(context.Background(), io.Discard, begin, staticRecordSource{record}, nil); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(begin.PreparedCacheDirectory, begin.PreparedIdentity, "node-0", "MANIFEST.json")
+	if _, err := os.Stat(manifest); !os.IsNotExist(err) {
+		t.Fatalf("byte-limited prepared cache was committed: %v", err)
+	}
+}
+
 func collectRecords(t *testing.T, inputs []Input, parameters ResolvedParameters) []string {
 	t.Helper()
 	source, err := NewCanonicalRecordSource(inputs, parameters)

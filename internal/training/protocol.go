@@ -32,6 +32,7 @@ type WorkerBegin struct {
 	Resume                 *WorkerResume         `json:"resume,omitempty"`
 	DataNodeRank           int                   `json:"data_node_rank,omitempty"`
 	PreparedCacheDirectory string                `json:"-"`
+	PreparedCacheMaxBytes  int64                 `json:"-"`
 	PreparedIdentity       string                `json:"-"`
 }
 
@@ -145,7 +146,7 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 		return fmt.Errorf("invalid node-local prepared-data topology")
 	}
 	if begin.PreparedCacheDirectory != "" && begin.PreparedIdentity != "" {
-		replayed, err := replayPreparedSequences(begin.PreparedCacheDirectory, begin.PreparedIdentity, begin.DataNodeRank, worldSize, GPUsPerNode, begin.Parameters.BatchSize/begin.Parameters.GradientAccumulation, encoder)
+		replayed, err := replayPreparedSequences(begin.PreparedCacheDirectory, begin.PreparedIdentity, begin.DataNodeRank, worldSize, GPUsPerNode, begin.Parameters.BatchSize/begin.Parameters.GradientAccumulation, begin.PreparedCacheMaxBytes, encoder)
 		if err != nil {
 			return err
 		}
@@ -163,7 +164,7 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 	var masks []bool
 	var corpora []string
 	ordinal := int64(0)
-	cacheWriter, err := newPreparedCacheWriter(begin.PreparedCacheDirectory, begin.PreparedIdentity, begin.DataNodeRank, worldSize, GPUsPerNode, globalMicroBatch)
+	cacheWriter, err := newPreparedCacheWriter(begin.PreparedCacheDirectory, begin.PreparedIdentity, begin.DataNodeRank, worldSize, GPUsPerNode, globalMicroBatch, begin.PreparedCacheMaxBytes)
 	if err != nil {
 		return err
 	}

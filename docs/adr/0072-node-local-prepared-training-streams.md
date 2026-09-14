@@ -23,10 +23,11 @@ micro-batch in pinned host memory and use non-blocking device transfers.
 Sequence ordinals deterministically assign each sequence to exactly one global
 rank and are reconstructed from the beginning when resuming.
 
-The launcher-stream compatibility path remains `rank-zero-broadcast` because
-those remote workers currently receive a plan without object-store
-credentials. The selected data plane is pinned in execution provenance; it is
-not allowed to change during resume.
+The hostfile launcher passes the primary's absolute cache root, scratch root,
+byte limit, and configured mirrors to every remote coordinator. Launcher plans
+therefore use the same `node-local-cache` data plane. Initialization and resume
+artifacts are staged and verified separately. The selected data plane is pinned
+in execution provenance; it is not allowed to change during resume.
 
 ## Consequences
 
@@ -37,5 +38,5 @@ not allowed to change during resume.
 - On the first attempt, every node deterministically tokenizes and packs its
   local share while training consumes it. ADR 0078 adds bounded verified chunks
   so an identical retry can replay that work without reopening the shards.
-- Launcher-stream runs remain correct but retain the old data-plane bottleneck
-  and must identify it in their run BOM and efficiency report.
+- Hostfile runs no longer make rank zero a corpus decoding, tokenization, or
+  inter-node record-broadcast bottleneck.

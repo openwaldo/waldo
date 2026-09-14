@@ -702,6 +702,7 @@ func runModelTrainWithCluster(context Context, args []string, cluster training.C
 		return err
 	}
 	builder.PreparedCacheDirectory = filepath.Join(cache.Scratch(), "prepared")
+	builder.PreparedCacheMaxBytes = cache.MaxBytes()
 	stage, err := prepareDefaultTrainingStage(context, inspection, inputs, epochs, batch, learningRate, seed, boolOption(context, "audit"), cache, stderr)
 	if err != nil {
 		return err
@@ -818,11 +819,18 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 		if scratch == "" || !filepath.IsAbs(scratch) {
 			return fmt.Errorf("launcher-managed train-worker requires an absolute --scratch path")
 		}
+		cache, err := launcherWorkerCache(commandContext)
+		if err != nil {
+			return err
+		}
+		if err := cache.EnsureScratch(); err != nil {
+			return fmt.Errorf("prepare launcher-managed node-local cache: %w", err)
+		}
 		if err := os.MkdirAll(scratch, 0o700); err != nil {
 			return fmt.Errorf("create launcher-managed scratch: %w", err)
 		}
 		defer os.RemoveAll(scratch)
-		return runSecondaryStreamPlans(commandContext, cluster, scratch, commandContext.Command.InOrStdin(), stdout, stderr)
+		return runSecondaryStreamPlans(commandContext, cluster, scratch, cache, commandContext.Command.InOrStdin(), stdout, stderr)
 	}
 	configuration, err := config.Load()
 	if err != nil {
@@ -876,6 +884,7 @@ func runSecondaryStages(commandContext Context, cluster training.Cluster, modelR
 		if err != nil {
 			return err
 		}
+		request.DataNodeRank = cluster.NodeRank
 		fmt.Fprintf(stderr, "joining rendezvous %s as node %d of %d for stage %d/%d\n", cluster.Rendezvous, cluster.NodeRank, cluster.Nodes, plan.StageOrdinal, plan.StageCount)
 		if err := run(cluster, request); err != nil {
 			return err
@@ -890,17 +899,40 @@ func runSecondaryStages(commandContext Context, cluster training.Cluster, modelR
 	}
 }
 
-func runSecondaryStreamPlans(commandContext Context, cluster training.Cluster, scratch string, input io.Reader, stdout, stderr io.Writer) error {
+func launcherWorkerCache(commandContext Context) (*lookaside.Cache, error) {
+	root := strings.TrimSpace(stringOption(commandContext, "cache-root"))
+	scratch := strings.TrimSpace(stringOption(commandContext, "cache-scratch"))
+	maxBytes := int64Option(commandContext, "cache-max-bytes")
+	if root == "" || !filepath.IsAbs(root) {
+		return nil, fmt.Errorf("launcher-managed train-worker requires an absolute --cache-root path")
+	}
+	if scratch == "" || !filepath.IsAbs(scratch) {
+		return nil, fmt.Errorf("launcher-managed train-worker requires an absolute --cache-scratch path")
+	}
+	if maxBytes < 1 {
+		return nil, fmt.Errorf("launcher-managed train-worker requires --cache-max-bytes greater than zero")
+	}
+	cache, err := lookaside.NewCache(root, nil,
+		lookaside.WithMirrors(stringArrayOption(commandContext, "cache-mirror")),
+		lookaside.WithPersistentStorage(scratch, maxBytes),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("configure launcher-managed node-local cache: %w", err)
+	}
+	return cache, nil
+}
+
+func runSecondaryStreamPlans(commandContext Context, cluster training.Cluster, scratch string, cache *lookaside.Cache, input io.Reader, stdout, stderr io.Writer) error {
 	prepare := func(ctx stdcontext.Context, cluster training.Cluster) error {
 		if err := training.CheckSecondaryTorchTitan(ctx, cluster); err != nil {
 			return err
 		}
 		return checkTrainingRendezvous(ctx, cluster.Rendezvous)
 	}
-	return runSecondaryStreamPlansWithRunner(commandContext, cluster, scratch, input, prepare, training.RunSecondaryTorchTitan, stdout, stderr)
+	return runSecondaryStreamPlansWithRunner(commandContext, cluster, scratch, cache, input, prepare, training.RunSecondaryTorchTitan, stdout, stderr)
 }
 
-func runSecondaryStreamPlansWithRunner(commandContext Context, cluster training.Cluster, scratch string, input io.Reader, prepare func(stdcontext.Context, training.Cluster) error, run func(stdcontext.Context, training.Cluster, training.Request) error, stdout, stderr io.Writer) error {
+func runSecondaryStreamPlansWithRunner(commandContext Context, cluster training.Cluster, scratch string, cache *lookaside.Cache, input io.Reader, prepare func(stdcontext.Context, training.Cluster) error, run func(stdcontext.Context, training.Cluster, training.Request) error, stdout, stderr io.Writer) error {
 	decoder := json.NewDecoder(input)
 	lastRunID := ""
 	for {
@@ -918,10 +950,20 @@ func runSecondaryStreamPlansWithRunner(commandContext Context, cluster training.
 		if err := os.MkdirAll(stageScratch, 0o700); err != nil {
 			return err
 		}
-		request, err := secondaryStreamRequest(plan, stageScratch)
+		var request training.Request
+		var err error
+		if plan.Parallelism.DataPlane == training.DataPlaneNodeLocal {
+			if cache == nil {
+				return fmt.Errorf("launcher node-local plan requires a configured cache")
+			}
+			request, err = secondaryNodeLocalRequest(commandContext, plan, cache, stageScratch, stderr, secondaryStreamInitialization)
+		} else {
+			request, err = secondaryStreamRequest(plan, stageScratch)
+		}
 		if err != nil {
 			return err
 		}
+		request.DataNodeRank = cluster.NodeRank
 		if prepare != nil {
 			if err := prepare(commandContext.Execution, cluster); err != nil {
 				return fmt.Errorf("stage %d/%d secondary readiness: %w", plan.StageOrdinal, plan.StageCount, err)
@@ -1068,6 +1110,12 @@ func awaitMultiNodePlan(ctx stdcontext.Context, modelRoot, rendezvousID string, 
 }
 
 func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, modelRoot string, cache *lookaside.Cache, scratch string, progress io.Writer) (training.Request, error) {
+	return secondaryNodeLocalRequest(commandContext, plan, cache, scratch, progress, func(plan model.MultiNodePlan) (*training.Initialization, error) {
+		return secondaryInitialization(plan, modelRoot)
+	})
+}
+
+func secondaryNodeLocalRequest(commandContext Context, plan model.MultiNodePlan, cache *lookaside.Cache, scratch string, progress io.Writer, resolveInitialization func(model.MultiNodePlan) (*training.Initialization, error)) (training.Request, error) {
 	fmt.Fprintf(progress, "  materializing %s shards for run %s\n", humanInteger(plan.CorpusBOM.Totals.Shards), plan.RunID)
 	materialized, err := corpus.Materialize(commandContext.Execution, plan.CorpusBOM, cache, modelMaterializeProgressPrinter(progress))
 	if err != nil {
@@ -1105,7 +1153,7 @@ func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, 
 	if err != nil {
 		return training.Request{}, err
 	}
-	initialization, err := secondaryInitialization(plan, modelRoot)
+	initialization, err := resolveInitialization(plan)
 	if err != nil {
 		return training.Request{}, err
 	}
@@ -1119,7 +1167,26 @@ func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, 
 		Tokenizer:         tokenizerSpec,
 		ArtifactDirectory: scratch, ArtifactPrefix: "artifacts",
 		PreparedCacheDirectory: filepath.Join(cache.Scratch(), "prepared"),
+		PreparedCacheMaxBytes:  cache.MaxBytes(),
 	}, nil
+}
+
+func secondaryStreamInitialization(plan model.MultiNodePlan) (*training.Initialization, error) {
+	if plan.Initialization == nil {
+		if plan.InitializationPath != "" {
+			return nil, fmt.Errorf("launcher plan carries an initialization path without initialization weights")
+		}
+		return nil, nil
+	}
+	if plan.InitializationPath == "" || !filepath.IsAbs(plan.InitializationPath) {
+		return nil, fmt.Errorf("launcher plan carries initialization weights without an absolute staged path")
+	}
+	if err := model.VerifyArtifactFile(plan.InitializationPath, plan.Initialization.Artifact); err != nil {
+		return nil, fmt.Errorf("verify launcher-staged initialization weights: %w", err)
+	}
+	initialization := *plan.Initialization
+	initialization.Path = plan.InitializationPath
+	return &initialization, nil
 }
 
 func secondaryInitialization(plan model.MultiNodePlan, modelRoot string) (*training.Initialization, error) {
@@ -1224,6 +1291,7 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 		return err
 	}
 	builder.PreparedCacheDirectory = filepath.Join(cache.Scratch(), "prepared")
+	builder.PreparedCacheMaxBytes = cache.MaxBytes()
 	prepared := make([]model.PreparedStage, 0, len(compose.Stages))
 	for _, stage := range compose.Stages {
 		resolved, err := planModelStage(context, stage, corpusTargets[stage.Name], cache, stderr)

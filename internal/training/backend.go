@@ -376,6 +376,7 @@ type Request struct {
 	ArtifactDirectory      string
 	ArtifactPrefix         string
 	PreparedCacheDirectory string
+	PreparedCacheMaxBytes  int64
 	Report                 func(Event)
 }
 

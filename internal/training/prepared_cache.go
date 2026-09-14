@@ -39,15 +39,17 @@ type preparedCacheChunk struct {
 }
 
 type preparedCacheWriter struct {
-	enabled   bool
-	base      string
-	target    string
-	temporary string
-	manifest  preparedCacheManifest
-	file      *os.File
-	hash      hashWriter
-	bytes     int64
-	rows      int64
+	enabled    bool
+	base       string
+	target     string
+	temporary  string
+	manifest   preparedCacheManifest
+	file       *os.File
+	hash       hashWriter
+	bytes      int64
+	rows       int64
+	totalBytes int64
+	maxBytes   int64
 }
 
 type hashWriter struct {
@@ -55,7 +57,7 @@ type hashWriter struct {
 	sum  interface{ Sum([]byte) []byte }
 }
 
-func newPreparedCacheWriter(base, identity string, nodeRank, worldSize, GPUsPerNode int, globalMicroBatch int64) (*preparedCacheWriter, error) {
+func newPreparedCacheWriter(base, identity string, nodeRank, worldSize, GPUsPerNode int, globalMicroBatch, maxBytes int64) (*preparedCacheWriter, error) {
 	writer := &preparedCacheWriter{}
 	if base == "" || identity == "" {
 		return writer, nil
@@ -72,6 +74,7 @@ func newPreparedCacheWriter(base, identity string, nodeRank, worldSize, GPUsPerN
 	writer.base = base
 	writer.target = filepath.Join(parent, fmt.Sprintf("node-%d", nodeRank))
 	writer.temporary = temporary
+	writer.maxBytes = maxBytes
 	writer.manifest = preparedCacheManifest{Kind: "openwaldo-prepared-sequences", Schema: 1, Identity: identity, NodeRank: nodeRank, WorldSize: worldSize, GPUsPerNode: GPUsPerNode, GlobalMicroBatch: globalMicroBatch}
 	return writer, nil
 }
@@ -87,6 +90,11 @@ func (writer *preparedCacheWriter) Append(sequence PreparedSequence) error {
 	encoded = append(encoded, '\n')
 	if len(encoded) > preparedChunkLimit {
 		return fmt.Errorf("prepared sequence %d exceeds %d-byte chunk limit", sequence.Ordinal, preparedChunkLimit)
+	}
+	if writer.maxBytes > 0 && writer.totalBytes+int64(len(encoded)) > writer.maxBytes {
+		writer.Abort()
+		writer.enabled = false
+		return nil
 	}
 	if writer.file == nil || writer.bytes > 0 && writer.bytes+int64(len(encoded)) > preparedChunkLimit {
 		if err := writer.closeChunk(); err != nil {
@@ -111,6 +119,7 @@ func (writer *preparedCacheWriter) Append(sequence PreparedSequence) error {
 		return io.ErrShortWrite
 	}
 	writer.rows++
+	writer.totalBytes += int64(written)
 	writer.manifest.Sequences++
 	return nil
 }
@@ -171,7 +180,7 @@ func (writer *preparedCacheWriter) Abort() {
 	}
 }
 
-func replayPreparedSequences(base, identity string, nodeRank, worldSize, GPUsPerNode int, globalMicroBatch int64, encoder *json.Encoder) (bool, error) {
+func replayPreparedSequences(base, identity string, nodeRank, worldSize, GPUsPerNode int, globalMicroBatch, maxBytes int64, encoder *json.Encoder) (bool, error) {
 	directory := filepath.Join(base, identity, fmt.Sprintf("node-%d", nodeRank))
 	manifest, err := loadPreparedCache(directory, identity, nodeRank, worldSize, GPUsPerNode, globalMicroBatch)
 	if os.IsNotExist(err) {
@@ -179,6 +188,16 @@ func replayPreparedSequences(base, identity string, nodeRank, worldSize, GPUsPer
 	}
 	if err != nil {
 		return false, fmt.Errorf("prepared sequence cache: %w", err)
+	}
+	var totalBytes int64
+	for _, chunk := range manifest.Chunks {
+		totalBytes += chunk.Bytes
+	}
+	if maxBytes > 0 && totalBytes > maxBytes {
+		if err := os.RemoveAll(directory); err != nil {
+			return false, fmt.Errorf("remove oversized prepared sequence cache: %w", err)
+		}
+		return false, nil
 	}
 	sequences := int64(0)
 	previousOrdinal := int64(-1)
