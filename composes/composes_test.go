@@ -255,7 +255,7 @@ func TestConversationThreeIsLargerAndKnowledgeDominant(t *testing.T) {
 	}
 	for _, stage := range compose.Stages {
 		parameters := stage.Parameters
-		if parameters.Parallelism != training.ParallelismAuto || parameters.ComputePrecision != "bfloat16" || !parameters.ActivationCheckpointing || !parameters.Compile || parameters.DistributionPolicy != "distributable" {
+		if parameters.Parallelism != training.ParallelismAuto || parameters.ComputePrecision != "bfloat16" || !parameters.ActivationCheckpointing || !parameters.Compile || parameters.DistributionPolicy != "" {
 			t.Fatalf("conversation2 candidate stage %s robustness controls = %+v", stage.Name, parameters)
 		}
 		if parameters.GradientAccumulation < 2 {
@@ -308,7 +308,7 @@ func TestBabbleUsesCleanPretrainingAndLightConversationTuning(t *testing.T) {
 	}
 }
 
-func TestReferenceLadderPinsExecutionAndDistributionPolicy(t *testing.T) {
+func TestReferenceLadderPinsExecutionAndPrivateDistributionStatus(t *testing.T) {
 	for _, path := range []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation.yaml", "0003-conversation.yaml"} {
 		compose, _, err := model.LoadCompose(path)
 		if err != nil {
@@ -319,12 +319,8 @@ func TestReferenceLadderPinsExecutionAndDistributionPolicy(t *testing.T) {
 			if parameters.Parallelism != training.ParallelismAuto || parameters.GradientAccumulation < 1 || parameters.ComputePrecision != "bfloat16" || parameters.Optimizer == "" || parameters.Schedule == "" {
 				t.Fatalf("%s stage %s robustness controls = %+v", path, stage.Name, parameters)
 			}
-			wantPolicy := "distributable"
-			if path == "0001-babble.yaml" {
-				wantPolicy = ""
-			}
-			if parameters.DistributionPolicy != wantPolicy {
-				t.Fatalf("%s stage %s distribution policy = %q, want %q", path, stage.Name, parameters.DistributionPolicy, wantPolicy)
+			if parameters.DistributionPolicy != "" {
+				t.Fatalf("%s stage %s distribution policy = %q, want private/unset", path, stage.Name, parameters.DistributionPolicy)
 			}
 		}
 	}

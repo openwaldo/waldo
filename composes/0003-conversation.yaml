@@ -1,6 +1,9 @@
 # Conversation level 3: train this compose as model `conversation2`. It is a
 # larger model built from the proven 0002 conversation curriculum, with
 # technical and scientific knowledge as the majority.
+# This is a private research compose pending the corpus-rights reviews listed
+# in docs/COMPOSE-CORPUS-LICENSE-AUDIT.md. Its model artifacts must not be
+# represented or released as distributable.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -53,7 +56,6 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
-      distribution_policy: distributable
       sequence_length: 4096
       learning_rate: 0.00011
       optimizer: adamw
@@ -98,7 +100,6 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
-      distribution_policy: distributable
       sequence_length: 4096
       learning_rate: 0.00002
       optimizer: adamw
@@ -142,7 +143,6 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
-      distribution_policy: distributable
       sequence_length: 4096
       learning_rate: 0.00003
       optimizer: adamw
@@ -184,7 +184,6 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
-      distribution_policy: distributable
       sequence_length: 4096
       learning_rate: 0.00001
       optimizer: adamw
@@ -226,7 +225,6 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
-      distribution_policy: distributable
       sequence_length: 4096
       learning_rate: 0.000008
       optimizer: adamw

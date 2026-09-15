@@ -42,6 +42,8 @@ Read these in order:
 - [Nanochat corpus coverage](NANOCHAT-CORPUS-COVERAGE.md): exact input,
   licensing, index, and contamination decisions.
 - [EU GPAI disclosure](EU-GPAI-DISCLOSURE.md): regulatory JSON projection.
+- [Compose corpus licensing audit](COMPOSE-CORPUS-LICENSE-AUDIT.md): reviewed
+  rights evidence, distribution classifications, and unresolved corpus work.
 
 ## Project direction and decisions
 

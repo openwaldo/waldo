@@ -15,6 +15,7 @@ The numbered ladder also owns the measured capability-per-FLOP comparison.
 run that candidate until the correctness, data-plane, batch-semantics, and
 evaluation gates in the [training robustness plan](../docs/TRAINING-ROBUSTNESS-PLAN.md)
 pass. Corpus and license differences are tracked in the
+[compose corpus licensing audit](../docs/COMPOSE-CORPUS-LICENSE-AUDIT.md) and
 [nanochat coverage audit](../docs/NANOCHAT-CORPUS-COVERAGE.md).
 
 Stages are weight-changing operations and execute strictly in YAML order. Keep
@@ -71,8 +72,8 @@ WALDO requirements:
 | Recommended hardware | 1x NVIDIA H100 80 GB |
 | Approximate runtime | Measure from promoted G0 evidence for the 600M-token ceiling |
 
-This systems-gate compose is for private research while Gutenberg and
-Wikimedia licensing evidence is under review. It intentionally omits the
+This systems-gate compose is for private research while Gutenberg and PLOS
+record-level rights are under review. It intentionally omits the
 `distributable` policy, retains full corpus provenance, and must not be used as
 evidence that its resulting model can be distributed.
 

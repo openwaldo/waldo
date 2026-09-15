@@ -1,4 +1,7 @@
 # Conversation level 2: broad language, dialogue adaptation, and reviewed interaction tuning.
+# This is a private research compose pending record-level rights work for
+# Gutenberg, federal rulemaking, PLOS, and HelpSteer2. Its model artifacts
+# must not be represented or released as distributable.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -45,7 +48,6 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
-      distribution_policy: distributable
       sequence_length: 2048
       learning_rate: 0.00013
       optimizer: adamw
@@ -89,7 +91,6 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
-      distribution_policy: distributable
       sequence_length: 2048
       learning_rate: 0.00004
       optimizer: adamw
@@ -129,7 +130,6 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
-      distribution_policy: distributable
       sequence_length: 2048
       learning_rate: 0.000015
       optimizer: adamw

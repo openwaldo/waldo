@@ -1,4 +1,6 @@
-# Release gate: exercise the complete training and inference path cheaply.
+# Private system gate: exercise the complete training and inference path cheaply.
+# Model artifacts are non-distributable pending review of HelpSteer2's
+# user-contributed ShareGPT prompt provenance.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -40,7 +42,6 @@ stages:
       compute_precision: bfloat16
       activation_checkpointing: false
       compile: false
-      distribution_policy: distributable
       sequence_length: 512
       learning_rate: 0.0003
       optimizer: adamw
