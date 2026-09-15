@@ -132,6 +132,8 @@ type Architecture struct {
 	KeyValueHeads    uint64    `json:"key_value_heads" yaml:"key_value_heads"`
 	Dropout          float64   `json:"dropout,omitempty" yaml:"dropout,omitempty"`
 	TieEmbeddings    bool      `json:"tie_embeddings" yaml:"tie_embeddings"`
+	QKNormalization  bool      `json:"qk_normalization,omitempty" yaml:"qk_normalization,omitempty"`
+	Initialization   string    `json:"initialization,omitempty" yaml:"initialization,omitempty"`
 	ParameterDType   string    `json:"parameter_dtype" yaml:"parameter_dtype"`
 	Tokenizer        Tokenizer `json:"tokenizer" yaml:"tokenizer"`
 }
@@ -599,6 +601,9 @@ func (architecture Architecture) Validate() error {
 	}
 	if architecture.ParameterDType != "float32" && architecture.ParameterDType != "float16" && architecture.ParameterDType != "bfloat16" {
 		return fmt.Errorf("unsupported parameter_dtype %q", architecture.ParameterDType)
+	}
+	if architecture.Initialization != "" && architecture.Initialization != "normal" && architecture.Initialization != "depth-scaled" {
+		return fmt.Errorf("unsupported architecture initialization %q", architecture.Initialization)
 	}
 	if architecture.Tokenizer.Name == "" || architecture.Tokenizer.Revision == "" {
 		return fmt.Errorf("tokenizer name and immutable revision are required")

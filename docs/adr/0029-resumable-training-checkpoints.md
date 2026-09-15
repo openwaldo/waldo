@@ -35,6 +35,9 @@ WALDO's shared Safetensors contract.
 
 - Ctrl-C and other context interruptions retain useful, auditable work.
 - Resume cannot silently reset optimizer or scheduler behavior.
+- The real-backend lifecycle gate interrupts MLX immediately after a durable
+  checkpoint and requires resumed terminal tensors to be bit-identical to an
+  uninterrupted control run.
 - Corrupt, incomplete, mismatched, or path-escaping checkpoint bundles fail
   before a trainer starts.
 - ADR 0031 applies this same-run recovery contract to durable model-compose

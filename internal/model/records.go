@@ -150,6 +150,7 @@ type RunBOM struct {
 	EvaluationSet      *training.EvaluationSet        `json:"evaluation_set,omitempty"`
 	Preflight          *training.Artifact             `json:"preflight,omitempty"`
 	Initialization     *training.Initialization       `json:"initialization,omitempty"`
+	DistributionReview *corpus.DistributionReview     `json:"distribution_review,omitempty"`
 }
 
 // EffectiveInteraction returns the immutable model interaction plus the
@@ -219,12 +220,14 @@ type RunRecord struct {
 }
 
 type RunAttempt struct {
-	Ordinal    int      `json:"ordinal"`
-	Started    string   `json:"started"`
-	Finished   string   `json:"finished,omitempty"`
-	State      RunState `json:"state"`
-	Error      string   `json:"error,omitempty"`
-	ResumeStep int64    `json:"resume_step,omitempty"`
+	Ordinal             int                          `json:"ordinal"`
+	Started             string                       `json:"started"`
+	Finished            string                       `json:"finished,omitempty"`
+	State               RunState                     `json:"state"`
+	Error               string                       `json:"error,omitempty"`
+	ResumeStep          int64                        `json:"resume_step,omitempty"`
+	Correction          string                       `json:"correction,omitempty"`
+	EffectiveParameters *training.ResolvedParameters `json:"effective_parameters,omitempty"`
 }
 
 type ModelBOM struct {
@@ -399,6 +402,14 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 		if err := runBOM.CorpusBOM.Validate(); err != nil {
 			return Inspection{}, fmt.Errorf("run %s corpus OpenWALDO BOM: %w", pin.ID, err)
 		}
+		if runBOM.Parameters.DistributionPolicy == corpus.DistributionPolicyDistributable {
+			review, err := corpus.ReviewDistributable(runBOM.CorpusBOM)
+			if err != nil || runBOM.DistributionReview == nil || !reflect.DeepEqual(*runBOM.DistributionReview, review) {
+				return Inspection{}, fmt.Errorf("run %s distributable corpus review is missing or inconsistent: %v", pin.ID, err)
+			}
+		} else if runBOM.DistributionReview != nil {
+			return Inspection{}, fmt.Errorf("run %s has an unexpected distributable corpus review", pin.ID)
+		}
 		if err := validateEvaluationSet(runBOM); err != nil {
 			return Inspection{}, fmt.Errorf("run %s evaluation set: %w", pin.ID, err)
 		}
@@ -434,6 +445,9 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 				}
 			}
 		}
+		if err := validateAttemptCorrections(run, runBOM); err != nil {
+			return Inspection{}, err
+		}
 		if err := validateRunState(run, pin); err != nil {
 			return Inspection{}, err
 		}
@@ -447,6 +461,21 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 	}
 	inspection.BOM = normalized
 	return inspection, nil
+}
+
+func validateAttemptCorrections(run RunRecord, runBOM RunBOM) error {
+	for _, attempt := range run.Attempts {
+		if attempt.EffectiveParameters == nil {
+			if attempt.Correction != "" {
+				return fmt.Errorf("run %s attempt %d has a correction without effective parameters", run.ID, attempt.Ordinal)
+			}
+			continue
+		}
+		if attempt.Correction != "fixed-token-capacity-v1" || attempt.ResumeStep <= 0 || !equivalentResumeParameters(runBOM.Parameters, *attempt.EffectiveParameters) {
+			return fmt.Errorf("run %s attempt %d has an invalid fixed-token capacity correction", run.ID, attempt.Ordinal)
+		}
+	}
+	return nil
 }
 
 func validateEvaluationSet(runBOM RunBOM) error {

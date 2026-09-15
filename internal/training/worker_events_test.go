@@ -6,10 +6,48 @@
 package training
 
 import (
+	"math"
 	"regexp"
 	"strings"
 	"testing"
 )
+
+func TestWorkerEventRejectsInvalidEfficiencyTelemetry(t *testing.T) {
+	invalid := []Event{
+		{Kind: "progress", DurationSeconds: -1},
+		{Kind: "progress", DataWaitSeconds: math.Inf(1)},
+		{Kind: "progress", TrainingFLOPs: math.NaN()},
+		{Kind: "progress", ModelFLOPUtilization: -0.01},
+		{Kind: "progress", SkippedSteps: -1},
+	}
+	for _, event := range invalid {
+		if err := event.Validate(); err == nil {
+			t.Fatalf("invalid event accepted: %+v", event)
+		}
+	}
+	gradient := math.Inf(1)
+	if err := (Event{Kind: "progress", GradientNorm: &gradient}).Validate(); err == nil {
+		t.Fatal("invalid gradient norm accepted")
+	}
+}
+
+func TestEmbeddedWorkersEmitEfficiencyTelemetry(t *testing.T) {
+	for name, source := range map[string]string{"pytorch": string(pyTorchWorker), "mlx": string(mlxWorker)} {
+		for _, field := range []string{
+			`"duration_seconds"`,
+			`"data_wait_seconds"`,
+			`"peak_memory_bytes"`,
+			`"training_flops"`,
+			`"achieved_tflops"`,
+			`"gradient_norm"`,
+			`"skipped_steps"`,
+		} {
+			if !strings.Contains(source, field) {
+				t.Errorf("%s worker omits telemetry field %s", name, field)
+			}
+		}
+	}
+}
 
 func TestEmbeddedWorkerEmitsOnlyRecognizedEventKinds(t *testing.T) {
 	kindPattern := regexp.MustCompile(`"kind":\s*"([a-z_]+)"`)

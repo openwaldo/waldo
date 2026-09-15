@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/training"
 )
@@ -203,7 +204,7 @@ func TestRunSecondaryStreamPlansNeedsNoCorpusData(t *testing.T) {
 	}
 	cluster := training.Cluster{Nodes: 2, NodeRank: 1, Rendezvous: "train-0:29500", RendezvousID: "test"}
 	var stdout bytes.Buffer
-	if err := runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), &stream, nil, runner, &stdout, io.Discard); err != nil {
+	if err := runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), nil, &stream, nil, runner, &stdout, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !called {
@@ -243,12 +244,44 @@ func TestRunSecondaryStreamPlansDoesNotAcknowledgeFailedReadiness(t *testing.T) 
 	}
 	var stdout bytes.Buffer
 	cluster := training.Cluster{Nodes: 2, NodeRank: 1, Rendezvous: "train-0:29500", RendezvousID: "test"}
-	err = runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), &stream, prepare, runner, &stdout, io.Discard)
+	err = runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), nil, &stream, prepare, runner, &stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "stage 1/2 secondary readiness") || !strings.Contains(err.Error(), "rendezvous unreachable") {
 		t.Fatalf("readiness error = %v", err)
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("failed readiness emitted acknowledgement %q", stdout.String())
+	}
+}
+
+func TestRunSecondaryStreamPlansMaterializesNodeLocalCorpus(t *testing.T) {
+	bom := seedMultiNodeCorpus(t)
+	plan := multiNodePlanForTest(t, bom, `{"family":"decoder-transformer","vocabulary_size":259,"tokenizer":{"name":"byte","revision":"builtin-byte-schema-1"}}`)
+	plan.Parallelism = training.Parallelism{WorldSize: 2, GPUsPerNode: 1, DataPlane: training.DataPlaneNodeLocal}
+	var stream bytes.Buffer
+	if err := json.NewEncoder(&stream).Encode(plan); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := lookaside.NewCache(t.TempDir(), nil, lookaside.WithPersistentStorage(t.TempDir(), 1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster := training.Cluster{Nodes: 2, NodeRank: 1, WorldSize: 2, Rendezvous: "train-0:29500", RendezvousID: "test"}
+	called := false
+	runner := func(_ context.Context, _ training.Cluster, request training.Request) error {
+		called = true
+		if request.Records == nil || request.EvaluationRecords == nil || len(request.Inputs) != 1 || len(request.BOM.Shards) != 1 {
+			t.Fatalf("node-local request omitted corpus data: %+v", request)
+		}
+		if request.DataNodeRank != 1 || request.PreparedCacheDirectory != filepath.Join(cache.Scratch(), "prepared") || request.PreparedCacheMaxBytes != cache.MaxBytes() {
+			t.Fatalf("node-local cache request = %+v", request)
+		}
+		return nil
+	}
+	if err := runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), cache, &stream, nil, runner, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("secondary runner was not called")
 	}
 }
 
@@ -293,13 +326,22 @@ esac
 	}
 	t.Cleanup(func() { listenHostfileRendezvous = previousListener })
 	cluster := training.Cluster{Nodes: 2, Rendezvous: "127.0.0.1:0", RendezvousID: "session-test"}
+	scratch := t.TempDir()
+	cacheRoot := t.TempDir()
+	cache, err := lookaside.NewCache(cacheRoot, nil, lookaside.WithPersistentStorage(scratch, 1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var output bytes.Buffer
-	session, err := startHostfileSession(context.Background(), trainingHostfile{Hosts: []string{"train-0", "train-1"}}, cluster, t.TempDir(), &output)
+	session, err := startHostfileSession(context.Background(), trainingHostfile{Hosts: []string{"train-0", "train-1"}}, cluster, cache, &output)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if session.cluster.WorldSize != 2 {
 		t.Fatalf("discovered world size = %d, want 2", session.cluster.WorldSize)
+	}
+	if !strings.HasPrefix(session.remoteRoot, scratch+string(os.PathSeparator)) {
+		t.Fatalf("remote launch root = %q, want beneath configured scratch %q", session.remoteRoot, scratch)
 	}
 	evaluation := training.EvaluationSet{Selection: "lowest-sha256-v1", SHA256: strings.Repeat("a", 64)}
 	if err := session.publish(model.MultiNodePlan{
@@ -318,6 +360,9 @@ esac
 	}
 	if err := session.finish(nil); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(session.remoteRoot); !os.IsNotExist(err) {
+		t.Fatalf("launch staging remains after finish: %v", err)
 	}
 	if !strings.Contains(output.String(), "[train-1] worker accepted launcher stage 1") || !strings.Contains(output.String(), "[train-1] worker accepted launcher stage 2") {
 		t.Fatalf("worker output = %q", output.String())
@@ -398,18 +443,25 @@ func TestTrainingRendezvousReachability(t *testing.T) {
 
 func TestHostfileWorkerArgumentsCarryNCCLSettings(t *testing.T) {
 	session := hostfileSession{
-		remoteBinary: "/tmp/waldo-launch/build/waldo",
-		remoteRoot:   "/tmp/waldo-launch/build",
+		remoteBinary:  "/tmp/waldo-launch/build/waldo",
+		remoteRoot:    "/tmp/waldo-launch/build",
+		cacheRoot:     "/home/gmk/.waldo/cache",
+		cacheScratch:  "/home/gmk/.waldo/scratch",
+		cacheMaxBytes: 20 << 30,
+		cacheMirrors:  []string{"https://mirror.example/lookaside/v1"},
 		cluster: training.Cluster{
 			Nodes: 2, Rendezvous: "train-0:29500", RendezvousID: "session-test",
 			Interface: "ib0", HCA: "mlx5_0",
 		},
 	}
 	arguments := strings.Join(session.workerArguments(1, false), " ")
-	for _, expected := range []string{"--nccl-interface ib0", "--nccl-hca mlx5_0"} {
+	for _, expected := range []string{"--nccl-interface ib0", "--nccl-hca mlx5_0", "--cache-root /home/gmk/.waldo/cache", "--cache-scratch /home/gmk/.waldo/scratch", "--cache-max-bytes 21474836480", "--cache-mirror https://mirror.example/lookaside/v1"} {
 		if !strings.Contains(arguments, expected) {
 			t.Fatalf("worker arguments %q omit %q", arguments, expected)
 		}
+	}
+	if !strings.Contains(arguments, "--scratch /tmp/waldo-launch/build/runs/session-test/node-1") {
+		t.Fatalf("worker arguments %q omit session-scoped scratch", arguments)
 	}
 }
 

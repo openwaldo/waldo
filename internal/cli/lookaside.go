@@ -153,7 +153,7 @@ func protectedCacheObjects(configuration config.Config) (map[string]bool, []stri
 			return nil, nil, err
 		}
 		for index, run := range inspection.Runs {
-			resumableFailure := run.State == model.RunFailed && index == len(inspection.Runs)-1 && model.HasRecoverableFinalizationFailure(inspection)
+			resumableFailure := run.State == model.RunFailed && index == len(inspection.Runs)-1 && model.HasRecoverableCheckpointFailure(inspection)
 			if run.State != model.RunRunning && run.State != model.RunInterrupted && !resumableFailure {
 				continue
 			}

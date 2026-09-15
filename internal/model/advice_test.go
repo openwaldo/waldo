@@ -22,8 +22,8 @@ func TestBuildAdviceUsesTelemetryToRecommendStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	telemetry := strings.Join(telemetryHeader, ",") + "\n" +
-		"2026-08-09T18:00:00Z,10,run1,pretrain,1,evaluation,running,25,100,250,1000,1.2,1.0,2.718,0.001,1000,75,first evaluation\n" +
-		"2026-08-09T18:01:00Z,70,run1,pretrain,1,evaluation,running,50,100,500,1000,1.4,1.3,3.669,0.0008,1200,60,second evaluation\n"
+		strings.Join([]string{"2026-08-09T18:00:00Z", "10", "run1", "pretrain", "1", "evaluation", "running", "25", "100", "250", "1000", "1.2", "1.0", "2.718", "0.001", "1000", "", "", "", "", "", "", "", "", "75", "first evaluation"}, ",") + "\n" +
+		strings.Join([]string{"2026-08-09T18:01:00Z", "70", "run1", "pretrain", "1", "evaluation", "running", "50", "100", "500", "1000", "1.4", "1.3", "3.669", "0.0008", "1200", "", "", "", "", "", "", "", "", "60", "second evaluation"}, ",") + "\n"
 	if err := os.WriteFile(filepath.Join(root, runPath, TelemetryFilename), []byte(telemetry), 0o644); err != nil {
 		t.Fatal(err)
 	}

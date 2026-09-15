@@ -8,11 +8,12 @@ import mlx.nn as nn
 
 
 class Attention(nn.Module):
-    def __init__(self, hidden, heads, kv_heads):
+    def __init__(self, hidden, heads, kv_heads, qk_normalization=False):
         super().__init__()
         self.heads = heads
         self.kv_heads = kv_heads
         self.head_dim = hidden // heads
+        self.qk_normalization = qk_normalization
         kv_width = self.head_dim * kv_heads
         self.q_proj = nn.Linear(hidden, hidden, bias=False)
         self.k_proj = nn.Linear(hidden, kv_width, bias=False)
@@ -25,7 +26,11 @@ class Attention(nn.Module):
         query = self.q_proj(value).reshape(batch, length, self.heads, self.head_dim).transpose(0, 2, 1, 3)
         key = self.k_proj(value).reshape(batch, length, self.kv_heads, self.head_dim).transpose(0, 2, 1, 3)
         val = self.v_proj(value).reshape(batch, length, self.kv_heads, self.head_dim).transpose(0, 2, 1, 3)
-        return self.rope(query, offset=offset), self.rope(key, offset=offset), val
+        query, key = self.rope(query, offset=offset), self.rope(key, offset=offset)
+        if self.qk_normalization:
+            query = query * mx.rsqrt(mx.mean(query * query, axis=-1, keepdims=True) + 1e-6)
+            key = key * mx.rsqrt(mx.mean(key * key, axis=-1, keepdims=True) + 1e-6)
+        return query, key, val
 
     def __call__(self, value):
         query, key, val = self.project(value)
@@ -65,10 +70,10 @@ class FeedForward(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, hidden, intermediate, heads, kv_heads, dropout=0.0):
+    def __init__(self, hidden, intermediate, heads, kv_heads, dropout=0.0, qk_normalization=False):
         super().__init__()
         self.attention_norm = nn.RMSNorm(hidden, eps=1e-5)
-        self.attention = Attention(hidden, heads, kv_heads)
+        self.attention = Attention(hidden, heads, kv_heads, qk_normalization)
         self.ffn_norm = nn.RMSNorm(hidden, eps=1e-5)
         self.feed_forward = FeedForward(hidden, intermediate)
         self.residual_dropout = nn.Dropout(dropout)
@@ -86,6 +91,7 @@ class DecoderBlock(nn.Module):
 class DecoderLM(nn.Module):
     def __init__(self, architecture):
         super().__init__()
+        self.architecture = architecture
         vocabulary = architecture["vocabulary_size"]
         hidden = architecture["hidden_size"]
         self.tie_embeddings = architecture["tie_embeddings"]
@@ -97,12 +103,27 @@ class DecoderLM(nn.Module):
                 architecture["attention_heads"],
                 architecture["key_value_heads"],
                 architecture.get("dropout", 0.0),
+                architecture.get("qk_normalization", False),
             )
             for _ in range(architecture["layers"])
         ]
         self.norm = nn.RMSNorm(hidden, eps=1e-5)
         if not self.tie_embeddings:
             self.output = nn.Linear(hidden, vocabulary, bias=False)
+
+    def initialize(self):
+        normal = nn.init.normal(mean=0.0, std=0.02)
+        self.embedding.weight = normal(self.embedding.weight)
+        for layer in self.layers:
+            for projection in (layer.attention.q_proj, layer.attention.k_proj, layer.attention.v_proj, layer.attention.o_proj, layer.feed_forward.gate, layer.feed_forward.up, layer.feed_forward.down):
+                projection.weight = normal(projection.weight)
+        if not self.tie_embeddings:
+            self.output.weight = normal(self.output.weight)
+        if self.architecture.get("initialization", "normal") == "depth-scaled":
+            residual = nn.init.normal(mean=0.0, std=0.02 / (2 * len(self.layers)) ** 0.5)
+            for layer in self.layers:
+                layer.attention.o_proj.weight = residual(layer.attention.o_proj.weight)
+                layer.feed_forward.down.weight = residual(layer.feed_forward.down.weight)
 
     def logits(self, value):
         value = self.norm(value)

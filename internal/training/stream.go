@@ -43,12 +43,25 @@ type RecordPartition struct {
 	Evaluation        EvaluationSet
 	selected          map[string]bool
 	eligibleRecords   map[string]int64
+	selectionSummary  RecordSelectionSummary
 	evaluationRecords []Record
 	inputs            []Input
 	parameters        ResolvedParameters
 	codec             TokenCodec
 	objective         string
 	conversation      ConversationTransform
+}
+
+// RecordSelectionSummary records the result of applying stage record filters.
+// IncludedRecords includes held-out evaluation records; the records available
+// to the trainer are therefore IncludedRecords minus HeldOutRecords.
+type RecordSelectionSummary struct {
+	InputRecords     int64            `json:"input_records"`
+	IncludedRecords  int64            `json:"included_records"`
+	SkippedRecords   int64            `json:"skipped_records"`
+	HeldOutRecords   int64            `json:"held_out_records,omitempty"`
+	IncludedLicenses map[string]int64 `json:"included_licenses,omitempty"`
+	SkippedLicenses  map[string]int64 `json:"skipped_licenses,omitempty"`
 }
 
 const (
@@ -59,14 +72,15 @@ const (
 // StagePreflight is the immutable result of the expensive, deterministic
 // record-partition scan. The model run BOM pins the serialized artifact.
 type StagePreflight struct {
-	Kind             string             `json:"kind"`
-	Schema           int                `json:"schema"`
-	IdentitySHA256   string             `json:"identity_sha256"`
-	Evaluation       EvaluationSet      `json:"evaluation"`
-	SelectedRecords  []string           `json:"selected_records"`
-	EligibleRecords  map[string]int64   `json:"eligible_records,omitempty"`
-	Parameters       ResolvedParameters `json:"parameters"`
-	CapacityVerified bool               `json:"capacity_verified,omitempty"`
+	Kind             string                 `json:"kind"`
+	Schema           int                    `json:"schema"`
+	IdentitySHA256   string                 `json:"identity_sha256"`
+	Evaluation       EvaluationSet          `json:"evaluation"`
+	SelectedRecords  []string               `json:"selected_records"`
+	EligibleRecords  map[string]int64       `json:"eligible_records,omitempty"`
+	SelectionSummary RecordSelectionSummary `json:"selection_summary,omitempty"`
+	Parameters       ResolvedParameters     `json:"parameters"`
+	CapacityVerified bool                   `json:"capacity_verified,omitempty"`
 }
 
 func (snapshot StagePreflight) Validate() error {
@@ -90,6 +104,9 @@ func (snapshot StagePreflight) Validate() error {
 			return fmt.Errorf("stage preflight eligible record count is invalid")
 		}
 	}
+	if err := snapshot.SelectionSummary.validate(); err != nil {
+		return fmt.Errorf("stage preflight selection summary: %w", err)
+	}
 	return nil
 }
 
@@ -103,9 +120,34 @@ func (partition RecordPartition) Preflight(identity string, parameters ResolvedP
 	sort.Strings(selected)
 	return StagePreflight{
 		Kind: StagePreflightKind, Schema: StagePreflightSchema, IdentitySHA256: identity,
-		Evaluation: partition.Evaluation, SelectedRecords: selected, EligibleRecords: cloneRecordCounts(partition.eligibleRecords), Parameters: parameters,
+		Evaluation: partition.Evaluation, SelectedRecords: selected, EligibleRecords: cloneRecordCounts(partition.eligibleRecords), SelectionSummary: partition.SelectionSummary(), Parameters: parameters,
 		CapacityVerified: capacityVerified,
 	}
+}
+
+// SelectionSummary returns a detached copy of the stage's filter accounting.
+func (partition RecordPartition) SelectionSummary() RecordSelectionSummary {
+	result := partition.selectionSummary
+	result.IncludedLicenses = cloneRecordCounts(result.IncludedLicenses)
+	result.SkippedLicenses = cloneRecordCounts(result.SkippedLicenses)
+	return result
+}
+
+func (summary RecordSelectionSummary) validate() error {
+	if summary.InputRecords == 0 && summary.IncludedRecords == 0 && summary.SkippedRecords == 0 && summary.HeldOutRecords == 0 && len(summary.IncludedLicenses) == 0 && len(summary.SkippedLicenses) == 0 {
+		return nil // Legacy schema-1 preflight without selection accounting.
+	}
+	if summary.InputRecords < 0 || summary.IncludedRecords < 0 || summary.SkippedRecords < 0 || summary.HeldOutRecords < 0 || summary.IncludedRecords+summary.SkippedRecords != summary.InputRecords || summary.HeldOutRecords > summary.IncludedRecords {
+		return fmt.Errorf("record counts are inconsistent")
+	}
+	for label, values := range map[string]map[string]int64{"included": summary.IncludedLicenses, "skipped": summary.SkippedLicenses} {
+		for license, records := range values {
+			if strings.TrimSpace(license) == "" || records <= 0 {
+				return fmt.Errorf("%s license count is invalid", label)
+			}
+		}
+	}
+	return nil
 }
 
 // ZeroEligibleCorpora returns selected corpora for which the stage filters and
@@ -206,7 +248,7 @@ func NewRecordPartitionFromPreflight(ctx context.Context, inputs []Input, parame
 		return RecordPartition{}, fmt.Errorf("stage preflight held-out evidence does not match the selected records")
 	}
 	return RecordPartition{
-		Evaluation: evaluation, selected: selectedMap, eligibleRecords: cloneRecordCounts(snapshot.EligibleRecords), evaluationRecords: records,
+		Evaluation: evaluation, selected: selectedMap, eligibleRecords: cloneRecordCounts(snapshot.EligibleRecords), selectionSummary: snapshot.SelectionSummary, evaluationRecords: records,
 		inputs: ordered, parameters: parameters, codec: codec, objective: objective, conversation: conversation,
 	}, nil
 }
@@ -276,6 +318,7 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 	ordered := orderedInputs(inputs)
 	partition := RecordPartition{selected: make(map[string]bool), eligibleRecords: make(map[string]int64), inputs: ordered, parameters: parameters, codec: codec, objective: objective, conversation: conversation}
 	for _, input := range ordered {
+		partition.selectionSummary.InputRecords += input.Records
 		if input.Corpus != "" {
 			partition.eligibleRecords[input.Corpus] += 0
 		}
@@ -291,6 +334,7 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 				partition.eligibleRecords[input.Corpus] += input.Records
 			}
 		}
+		partition.selectionSummary.IncludedRecords = partition.selectionSummary.InputRecords
 		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: parameters.Seed, SHA256: emptyEvaluationDigest()}
 		return partition, nil
 	}
@@ -312,11 +356,18 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 		if physicalRecords != input.Records {
 			return RecordPartition{}, fmt.Errorf("shard %s contains %d records, corpus BOM declares %d", input.SHA256, physicalRecords, input.Records)
 		}
-		addCandidate := func(row int64) error {
+		addCandidate := func(row int64, license string) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			records++
+			partition.selectionSummary.IncludedRecords++
+			if license != "" {
+				if partition.selectionSummary.IncludedLicenses == nil {
+					partition.selectionSummary.IncludedLicenses = map[string]int64{}
+				}
+				partition.selectionSummary.IncludedLicenses[license]++
+			}
 			if input.Corpus != "" {
 				partition.eligibleRecords[input.Corpus]++
 			}
@@ -345,15 +396,20 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 		}
 		if input.RecordFilter == nil {
 			for row := int64(0); row < input.Records; row++ {
-				if err := addCandidate(row); err != nil {
+				if err := addCandidate(row, ""); err != nil {
 					return RecordPartition{}, err
 				}
 			}
 		} else if err := shard.WalkRecords(input.Path, func(row int64, view shard.RecordView) error {
 			if !inputAllows(input, view) {
+				partition.selectionSummary.SkippedRecords++
+				if partition.selectionSummary.SkippedLicenses == nil {
+					partition.selectionSummary.SkippedLicenses = map[string]int64{}
+				}
+				partition.selectionSummary.SkippedLicenses[selectionLicense(view.License)]++
 				return nil
 			}
-			return addCandidate(row)
+			return addCandidate(row, selectionLicense(view.License))
 		}); err != nil {
 			return RecordPartition{}, fmt.Errorf("apply record filters to shard %s: %w", input.SHA256, err)
 		}
@@ -458,7 +514,15 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 		Selection: policy.Selection, Seed: parameters.Seed, Records: int64(len(selected)),
 		TokenTargets: tokenTargets, TextBytes: selectedBytes, SHA256: hex.EncodeToString(hasher.Sum(nil)),
 	}
+	partition.selectionSummary.HeldOutRecords = int64(len(selected))
 	return partition, nil
+}
+
+func selectionLicense(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "(unset)"
+	}
+	return value
 }
 
 func flattenEvaluationCandidates(groups map[string][]evaluationCandidate) []evaluationCandidate {
@@ -615,6 +679,52 @@ func (partition RecordPartition) TrainingStepCapacity(ctx context.Context, reque
 		steps++
 	}
 	return steps, steps >= requested, nil
+}
+
+// WithMinimumEpochsForSteps returns the smallest deterministic pass count that
+// can supply the requested optimizer steps. Token-budget stages use this during
+// preflight so a finite corpus cannot run out after accelerators have started.
+func (partition RecordPartition) WithMinimumEpochsForSteps(ctx context.Context, requested int64) (RecordPartition, int64, error) {
+	if requested <= 0 {
+		return RecordPartition{}, 0, fmt.Errorf("requested steps must be positive")
+	}
+	const maximumEpochs = int64(1_000_000)
+	capacityAt := func(epochs int64) (int64, bool, error) {
+		partition.parameters.Epochs = epochs
+		return partition.TrainingStepCapacity(ctx, requested)
+	}
+	low, high := int64(0), max(int64(1), partition.parameters.Epochs)
+	for {
+		available, sufficient, err := capacityAt(high)
+		if err != nil {
+			return RecordPartition{}, 0, err
+		}
+		if sufficient {
+			break
+		}
+		if available == 0 {
+			return RecordPartition{}, 0, fmt.Errorf("training stream contains no usable optimizer steps")
+		}
+		low = high
+		if high == maximumEpochs {
+			return RecordPartition{}, 0, fmt.Errorf("training stream cannot supply %d optimizer steps within %d epochs", requested, maximumEpochs)
+		}
+		high = min(maximumEpochs, high*2)
+	}
+	for low+1 < high {
+		middle := low + (high-low)/2
+		_, sufficient, err := capacityAt(middle)
+		if err != nil {
+			return RecordPartition{}, 0, err
+		}
+		if sufficient {
+			high = middle
+		} else {
+			low = middle
+		}
+	}
+	partition.parameters.Epochs = high
+	return partition, high, nil
 }
 
 // TrainingSteps scans the finite epoch stream and returns its exact optimizer

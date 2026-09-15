@@ -30,17 +30,35 @@ func TestPyTorchWorkerEvaluatesArtifactAtLiveEvaluationPrecision(t *testing.T) {
 	}
 }
 
+func TestPyTorchWorkerMakesPersistedArtifactEvaluationAuthoritative(t *testing.T) {
+	source := string(pyTorchWorker)
+	for _, expected := range []string{
+		`metrics["live_compiled_heldout_loss"] = live_loss`,
+		`metrics["heldout_loss"] = artifact_loss`,
+		`persisted artifact metric is authoritative`,
+		`if not math.isfinite(artifact_loss):`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("PyTorch worker omits persisted-artifact evaluation behavior %q", expected)
+		}
+	}
+	if strings.Contains(source, `saved artifact held-out loss {artifact_loss:.6f} does not match live loss`) {
+		t.Fatal("PyTorch worker still rejects a finite persisted artifact for compiled/eager loss drift")
+	}
+}
+
 func TestTorchTitanWorkerPartitionsGlobalBatchAcrossRanks(t *testing.T) {
 	source := string(pyTorchWorker)
 	for _, expected := range []string{
-		`self.batch_size = self.global_batch_size // self.world_size`,
+		`self.global_micro_batch_size = self.global_batch_size // self.gradient_accumulation_steps`,
+		`self.batch_size = self.global_micro_batch_size // self.world_size`,
 		`owner = self.sequence_number % self.world_size`,
 		`if owner == self.rank:`,
-		`if self.sequence_number % self.global_batch_size == 0:`,
+		`if self.sequence_number % self.global_micro_batch_size == 0:`,
 		`torch.distributed.all_reduce(global_valid_tokens`,
 		`torch.distributed.all_reduce(global_loss_sum`,
 		`torch.distributed.all_gather_object(states, local)`,
-		`distinct sequences on each of`,
+		`distinct sequences per micro-batch`,
 	} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("TorchTitan worker omits distributed batch behavior %q", expected)
@@ -51,8 +69,23 @@ func TestTorchTitanWorkerPartitionsGlobalBatchAcrossRanks(t *testing.T) {
 func TestTorchTitanWorkerKeepsSingleNodeBatchSemantics(t *testing.T) {
 	source := string(pyTorchWorker)
 	if !strings.Contains(source, `else:
-            self.batch_size = self.global_batch_size`) {
-		t.Fatal("PyTorch worker no longer preserves the declared batch on a single process")
+            self.batch_size = self.global_micro_batch_size`) {
+		t.Fatal("PyTorch worker no longer uses the global micro-batch on a single process")
+	}
+}
+
+func TestPyTorchWorkerAccumulatesTokenNormalizedGradients(t *testing.T) {
+	source := string(pyTorchWorker)
+	for _, expected := range []string{
+		`self.optimizer.zero_grad(set_to_none=True)`,
+		`if self.accumulation_number < self.gradient_accumulation_steps and not final:`,
+		`parameter.grad.div_(self.accumulated_tokens)`,
+		`self.optimizer.step()`,
+		`self.replay_micro_batches = self.resume["step"] * self.gradient_accumulation_steps`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("PyTorch worker omits gradient accumulation behavior %q", expected)
+		}
 	}
 }
 
@@ -71,5 +104,44 @@ func TestTorchTitanWorkerCompletesPartialFinalGlobalBatch(t *testing.T) {
 	}
 	if strings.Contains(source, `if min(pending) > 0:`) {
 		t.Fatal("TorchTitan worker still discards a final batch when one rank has no real sequence")
+	}
+}
+
+func TestTorchTitanWorkerKeepsNodeLocalDataOffTrainingNetwork(t *testing.T) {
+	source := string(pyTorchWorker)
+	for _, expected := range []string{
+		`WALDO_TORCH_DATA_PLANE`,
+		`torch.distributed.new_group(ranks=ranks)`,
+		`source_rank = node_rank * local_world`,
+		`group=stream_group`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("TorchTitan worker omits node-local stream behavior %q", expected)
+		}
+	}
+}
+
+func TestPyTorchWorkerPinsMemoryAndPrecisionControls(t *testing.T) {
+	source := string(pyTorchWorker)
+	for _, expected := range []string{
+		`checkpoint(layer, value, use_reentrant=False)`,
+		`torch.compile(self.model, dynamic=False)`,
+		`self.compute_dtype == torch.float16`,
+		`self.scaler.scale(loss).backward()`,
+		`self.scaler.unscale_(self.optimizer)`,
+		`self.scaler.step(self.optimizer)`,
+		`tokens.pin_memory().to(self.device, non_blocking=True)`,
+		`mask.pin_memory().to(self.device, non_blocking=True)`,
+		`class MuonAdamW(torch.optim.Optimizer)`,
+		`zeropower_via_newton_schulz5`,
+		`schedule["name"] == "warmup-stable-warmdown"`,
+		`architecture.get("qk_normalization", False)`,
+		`architecture.get("initialization", "normal") == "depth-scaled"`,
+		`"scaler": self.scaler.state_dict()`,
+		`self.scaler.load_state_dict(runtime.get("scaler", {}))`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("PyTorch worker omits execution control %q", expected)
+		}
 	}
 }

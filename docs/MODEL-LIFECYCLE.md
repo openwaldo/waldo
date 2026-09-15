@@ -151,6 +151,14 @@ stream without optimization to the saved step, and continues. `RUN.json`
 records each attempt. A changed corpus, epoch count, profile, backend, or
 execution environment is a new run rather than an unsafe resume.
 
+One compatibility exception repairs a WALDO-derived value rather than a user
+change. If an older fixed-token run exhausted its input because WALDO pinned too
+few deterministic source passes, a verified checkpoint may resume with only
+that pass limit increased. The immutable run BOM remains unchanged, while the
+new `RUN.json` attempt records `fixed-token-capacity-v1` and the complete
+effective parameters. Corpus identity, held-out split, target steps, optimizer,
+schedule, backend, topology, and every other parameter must still match.
+
 Epoch boundaries remain part of one continuous-EOS token stream, while each
 epoch gets a deterministic seed-derived shuffle. Exact low-level or multi-stage
 parameters belong in a model compose.
@@ -543,6 +551,47 @@ per row, unrounded inputs, aggregate run count, measured seconds and FLOPs, and
 a hash of the contributing evidence.
 
 ## Backend boundary
+
+Before changing a compose tokenizer, train and inspect a bounded candidate:
+
+```text
+waldo model train-tokenizer core/books core/common-pile science/plos \
+  --output tokenizer.json --vocabulary-size 32000 --sample-bytes 67108864
+```
+
+The command requires every selected corpus to pass the distributable gate,
+pins the complete corpus BOM and deterministic sample identity, and reports
+bytes per token beside `r50k_base`. The resulting artifact remains a candidate
+until domain compression and G1/G2 capability tests approve it.
+
+Create a pinned evaluation BOM from a reviewed definition and index selection:
+
+```yaml
+kind: waldo-evaluation-definition
+schema: 1
+name: core-v1
+task: multiple-choice
+split: test
+corpora: [evaluation/core-v1]
+metrics:
+  - {name: accuracy, direction: max, threshold: 0.50}
+contamination:
+  max_exact_records: 0
+  max_fuzzy_records: 0
+  fuzzy_ratio: 0.80
+  shingle_words: 13
+```
+
+```text
+waldo model evaluation-bom core-v1.yaml core-v1.bom.json
+waldo model gate conversation2 core-v1.bom.json core-v1.results.json core-v1.gate.json
+```
+
+The evaluator-owned results file uses kind `openwaldo-evaluation-results`,
+schema 1, the evaluation BOM SHA-256, and a `results` array of metric/value
+pairs. The gate re-materializes every completed real training BOM, scans each
+corpus once for exact and fuzzy overlap, and fails promotion on contamination
+or threshold errors. Simulated runs can never pass this release gate.
 
 Model composes never select MLX, PyTorch, TensorFlow, or TorchTitan. Before a
 run is written, the environment-aware resolver chooses an adapter and records

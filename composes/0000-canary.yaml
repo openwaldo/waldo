@@ -1,4 +1,6 @@
-# Release gate: exercise the complete training and inference path cheaply.
+# Private system gate: exercise the complete training and inference path cheaply.
+# Model artifacts are non-distributable pending review of HelpSteer2's
+# user-contributed ShareGPT prompt provenance.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -27,16 +29,23 @@ stages:
     filter:
       main_content: true
     corpora:
-      - core/common-pile/public-domain-review
-      - core/common-pile/python-enhancement-proposals/peps
-      - post-train/sft/dolly
-      - post-train/sft/oasst1
+      - post-train/sft/helpsteer2
+      - post-train/sft/interaction-contract-v1
+      - post-train/conversation/schema-guided-dialogue
+      - post-train/conversation/ccpe
     parameters:
       profile: causal-pretrain-balanced
+      parallelism: auto
       tokens: 4096000
       batch_size: 32
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: false
+      compile: false
       sequence_length: 512
       learning_rate: 0.0003
+      optimizer: adamw
+      schedule: cosine
       seed: 42
       warmup_steps: 25
       checkpoint_every: 50

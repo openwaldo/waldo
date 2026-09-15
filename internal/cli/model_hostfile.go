@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/openwaldo/waldo/internal/config"
+	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/training"
 )
@@ -81,11 +82,25 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 	if hostfile.Source == "fuzzball" {
 		fmt.Fprintf(stderr, "multi-host topology  discovered %d Fuzzball nodes; remote launch uses %s\n", len(hostfile.Hosts), hostfile.Wrapper)
 	}
+	cacheRoot, err := config.EffectiveCacheRoot(configuration)
+	if err != nil {
+		return fmt.Errorf("resolve multi-host node-local cache root: %w", err)
+	}
 	scratchRoot, err := config.EffectiveScratchRoot(configuration)
 	if err != nil {
-		return fmt.Errorf("resolve multi-host checkpoint staging root: %w", err)
+		return fmt.Errorf("resolve multi-host node-local scratch root: %w", err)
 	}
-	session, err := startHostfileSession(commandContext.Execution, hostfile, cluster, scratchRoot, stderr)
+	cache, err := lookaside.NewCache(cacheRoot, nil,
+		lookaside.WithMirrors(configuration.Lookaside.Mirrors),
+		lookaside.WithPersistentStorage(scratchRoot, config.EffectiveCacheMaxBytes(configuration)),
+	)
+	if err != nil {
+		return fmt.Errorf("resolve multi-host node-local cache: %w", err)
+	}
+	if err := cache.EnsureScratch(); err != nil {
+		return fmt.Errorf("prepare multi-host node-local cache: %w", err)
+	}
+	session, err := startHostfileSession(commandContext.Execution, hostfile, cluster, cache, stderr)
 	if err != nil {
 		return err
 	}
@@ -268,28 +283,35 @@ type hostfileStageReady struct {
 }
 
 type hostfileSession struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	hostfile     trainingHostfile
-	cluster      training.Cluster
-	binary       string
-	binarySHA256 string
-	remoteBinary string
-	remoteRoot   string
-	resumeRoot   string
-	resumeStaged bool
-	pythonDir    string
-	workers      []*hostfileWorker
-	output       io.Writer
-	outputMu     sync.Mutex
-	publishMu    sync.Mutex
+	ctx           context.Context
+	cancel        context.CancelFunc
+	hostfile      trainingHostfile
+	cluster       training.Cluster
+	binary        string
+	binarySHA256  string
+	remoteBinary  string
+	remoteRoot    string
+	resumeRoot    string
+	resumeStaged  bool
+	pythonDir     string
+	cacheRoot     string
+	cacheScratch  string
+	cacheMaxBytes int64
+	cacheMirrors  []string
+	workers       []*hostfileWorker
+	output        io.Writer
+	outputMu      sync.Mutex
+	publishMu     sync.Mutex
 }
 
 const hostfileWorkerExitGrace = 10 * time.Second
 
-var hostfileStageReadyTimeout = 30 * time.Second
+var hostfileStageReadyTimeout = 24 * time.Hour
 
-func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluster training.Cluster, scratchRoot string, output io.Writer) (*hostfileSession, error) {
+func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluster training.Cluster, cache *lookaside.Cache, output io.Writer) (*hostfileSession, error) {
+	if cache == nil {
+		return nil, fmt.Errorf("multi-host launch requires a node-local cache configuration")
+	}
 	binary, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("locate current WALDO executable: %w", err)
@@ -303,13 +325,14 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 		return nil, err
 	}
 	sessionContext, cancel := context.WithCancel(ctx)
-	remoteRoot := "/tmp/waldo-launch/" + digest
+	remoteRoot := filepath.Join(cache.Scratch(), "multinode", digest, cluster.RendezvousID)
 	session := &hostfileSession{
 		ctx: sessionContext, cancel: cancel, hostfile: hostfile, cluster: cluster,
 		binary: binary, binarySHA256: digest, remoteRoot: remoteRoot,
 		remoteBinary: remoteRoot + "/waldo",
-		resumeRoot:   filepath.Join(scratchRoot, "multinode", digest, cluster.RendezvousID, "resume"),
-		output:       output,
+		resumeRoot:   filepath.Join(remoteRoot, "resume"),
+		cacheRoot:    cache.Root(), cacheScratch: cache.Scratch(), cacheMaxBytes: cache.MaxBytes(), cacheMirrors: cache.Mirrors(),
+		output: output,
 	}
 	local, err := inspectHostfileTorchTitan(sessionContext)
 	if err != nil {
@@ -515,7 +538,16 @@ func (session *hostfileSession) workerArguments(rank int, check bool) []string {
 		return append(arguments, "--check")
 	}
 	scratch := fmt.Sprintf("%s/runs/%s/node-%d", session.remoteRoot, session.cluster.RendezvousID, rank)
-	return append(arguments, "--plan-stdin", "--scratch", scratch)
+	arguments = append(arguments,
+		"--plan-stdin", "--scratch", scratch,
+		"--cache-root", session.cacheRoot,
+		"--cache-scratch", session.cacheScratch,
+		"--cache-max-bytes", fmt.Sprintf("%d", session.cacheMaxBytes),
+	)
+	for _, mirror := range session.cacheMirrors {
+		arguments = append(arguments, "--cache-mirror", mirror)
+	}
+	return arguments
 }
 
 func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWorker, error) {
@@ -584,6 +616,9 @@ func (session *hostfileSession) copyWorkerStdout(worker *hostfileWorker, source 
 func (session *hostfileSession) publish(plan model.MultiNodePlan) error {
 	session.publishMu.Lock()
 	defer session.publishMu.Unlock()
+	if err := session.prepareInitialization(&plan); err != nil {
+		return err
+	}
 	rendezvousListener, err := listenHostfileRendezvous(session.cluster.Rendezvous)
 	if err != nil {
 		return fmt.Errorf("prepare rank 0 rendezvous for stage %d/%d: %w", plan.StageOrdinal, plan.StageCount, err)
@@ -625,6 +660,33 @@ func (session *hostfileSession) publish(plan model.MultiNodePlan) error {
 	if err := rendezvousListener.Close(); err != nil {
 		return fmt.Errorf("release rank 0 rendezvous preflight for stage %d/%d: %w", plan.StageOrdinal, plan.StageCount, err)
 	}
+	return nil
+}
+
+func (session *hostfileSession) prepareInitialization(plan *model.MultiNodePlan) error {
+	if plan.Initialization == nil {
+		return nil
+	}
+	if plan.Initialization.Path == "" {
+		return fmt.Errorf("stage initialization for run %s: source path is missing", plan.RunID)
+	}
+	artifact := plan.Initialization.Artifact
+	target := filepath.Join(session.remoteRoot, "initialization", plan.RunID, filepath.Base(artifact.Path))
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return fmt.Errorf("create local initialization staging directory: %w", err)
+	}
+	if err := ensureLocalResumeLink(plan.Initialization.Path, target, artifact); err != nil {
+		return fmt.Errorf("stage initialization for run %s: %w", plan.RunID, err)
+	}
+	for _, worker := range session.workers {
+		session.outputMu.Lock()
+		fmt.Fprintf(session.output, "multi-host initialize staging %s on %s\n", humanBytes(artifact.Bytes), worker.host)
+		session.outputMu.Unlock()
+		if err := session.stageResume(worker.host, []training.Artifact{artifact}, []string{plan.Initialization.Path}, []string{target}); err != nil {
+			return err
+		}
+	}
+	plan.InitializationPath = target
 	return nil
 }
 
@@ -722,7 +784,7 @@ func (session *hostfileSession) finish(primaryErr error) error {
 			workerErrors = append(workerErrors, fmt.Sprintf("%s: %v", worker.host, worker.err))
 		}
 	}
-	session.cleanupResumeStaging()
+	session.cleanupStaging()
 	session.cancel()
 	if len(workerErrors) > 0 && (primaryErr == nil || errors.Is(primaryErr, context.Canceled)) {
 		return fmt.Errorf("secondary training workers failed: %s", strings.Join(workerErrors, "; "))
@@ -755,11 +817,34 @@ func (session *hostfileSession) cleanupResumeStaging() {
 	}
 }
 
+func (session *hostfileSession) cleanupStaging() {
+	if err := os.RemoveAll(session.remoteRoot); err != nil {
+		session.outputMu.Lock()
+		fmt.Fprintf(session.output, "warning: clean local multi-host launch staging: %v\n", err)
+		session.outputMu.Unlock()
+	}
+	for _, host := range session.hostfile.Hosts[1:] {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		command := session.remoteCommandContext(ctx, host, "rm -rf -- "+shellQuote(session.remoteRoot))
+		err := command.Run()
+		cancel()
+		if err != nil {
+			session.outputMu.Lock()
+			fmt.Fprintf(session.output, "warning: clean multi-host launch staging on %s: %v\n", host, err)
+			session.outputMu.Unlock()
+		}
+	}
+}
+
 func (session *hostfileSession) abort() {
 	session.cancel()
 	for _, worker := range session.workers {
 		_ = worker.stdin.Close()
 	}
+	for _, worker := range session.workers {
+		<-worker.done
+	}
+	session.cleanupStaging()
 }
 
 func joinRemoteArguments(arguments []string) string {

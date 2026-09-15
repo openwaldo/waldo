@@ -664,7 +664,7 @@ func runModelTrainWithCluster(context Context, args []string, cluster training.C
 	if batch < 1 || batch > 1_000_000 {
 		return fmt.Errorf("--batch-size must be an integer in 1..1000000")
 	}
-	if err := validateDistributedBatchSize("training", batch, cluster.WorldSize); err != nil {
+	if err := validateDistributedBatchSize("training", batch, 1, cluster.WorldSize); err != nil {
 		return err
 	}
 	learningRate := float64Option(context, "learning-rate")
@@ -701,6 +701,8 @@ func runModelTrainWithCluster(context Context, args []string, cluster training.C
 	if err != nil {
 		return err
 	}
+	builder.PreparedCacheDirectory = filepath.Join(cache.Scratch(), "prepared")
+	builder.PreparedCacheMaxBytes = cache.MaxBytes()
 	stage, err := prepareDefaultTrainingStage(context, inspection, inputs, epochs, batch, learningRate, seed, boolOption(context, "audit"), cache, stderr)
 	if err != nil {
 		return err
@@ -817,11 +819,18 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 		if scratch == "" || !filepath.IsAbs(scratch) {
 			return fmt.Errorf("launcher-managed train-worker requires an absolute --scratch path")
 		}
+		cache, err := launcherWorkerCache(commandContext)
+		if err != nil {
+			return err
+		}
+		if err := cache.EnsureScratch(); err != nil {
+			return fmt.Errorf("prepare launcher-managed node-local cache: %w", err)
+		}
 		if err := os.MkdirAll(scratch, 0o700); err != nil {
 			return fmt.Errorf("create launcher-managed scratch: %w", err)
 		}
 		defer os.RemoveAll(scratch)
-		return runSecondaryStreamPlans(commandContext, cluster, scratch, commandContext.Command.InOrStdin(), stdout, stderr)
+		return runSecondaryStreamPlans(commandContext, cluster, scratch, cache, commandContext.Command.InOrStdin(), stdout, stderr)
 	}
 	configuration, err := config.Load()
 	if err != nil {
@@ -875,6 +884,7 @@ func runSecondaryStages(commandContext Context, cluster training.Cluster, modelR
 		if err != nil {
 			return err
 		}
+		request.DataNodeRank = cluster.NodeRank
 		fmt.Fprintf(stderr, "joining rendezvous %s as node %d of %d for stage %d/%d\n", cluster.Rendezvous, cluster.NodeRank, cluster.Nodes, plan.StageOrdinal, plan.StageCount)
 		if err := run(cluster, request); err != nil {
 			return err
@@ -889,17 +899,40 @@ func runSecondaryStages(commandContext Context, cluster training.Cluster, modelR
 	}
 }
 
-func runSecondaryStreamPlans(commandContext Context, cluster training.Cluster, scratch string, input io.Reader, stdout, stderr io.Writer) error {
+func launcherWorkerCache(commandContext Context) (*lookaside.Cache, error) {
+	root := strings.TrimSpace(stringOption(commandContext, "cache-root"))
+	scratch := strings.TrimSpace(stringOption(commandContext, "cache-scratch"))
+	maxBytes := int64Option(commandContext, "cache-max-bytes")
+	if root == "" || !filepath.IsAbs(root) {
+		return nil, fmt.Errorf("launcher-managed train-worker requires an absolute --cache-root path")
+	}
+	if scratch == "" || !filepath.IsAbs(scratch) {
+		return nil, fmt.Errorf("launcher-managed train-worker requires an absolute --cache-scratch path")
+	}
+	if maxBytes < 1 {
+		return nil, fmt.Errorf("launcher-managed train-worker requires --cache-max-bytes greater than zero")
+	}
+	cache, err := lookaside.NewCache(root, nil,
+		lookaside.WithMirrors(stringArrayOption(commandContext, "cache-mirror")),
+		lookaside.WithPersistentStorage(scratch, maxBytes),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("configure launcher-managed node-local cache: %w", err)
+	}
+	return cache, nil
+}
+
+func runSecondaryStreamPlans(commandContext Context, cluster training.Cluster, scratch string, cache *lookaside.Cache, input io.Reader, stdout, stderr io.Writer) error {
 	prepare := func(ctx stdcontext.Context, cluster training.Cluster) error {
 		if err := training.CheckSecondaryTorchTitan(ctx, cluster); err != nil {
 			return err
 		}
 		return checkTrainingRendezvous(ctx, cluster.Rendezvous)
 	}
-	return runSecondaryStreamPlansWithRunner(commandContext, cluster, scratch, input, prepare, training.RunSecondaryTorchTitan, stdout, stderr)
+	return runSecondaryStreamPlansWithRunner(commandContext, cluster, scratch, cache, input, prepare, training.RunSecondaryTorchTitan, stdout, stderr)
 }
 
-func runSecondaryStreamPlansWithRunner(commandContext Context, cluster training.Cluster, scratch string, input io.Reader, prepare func(stdcontext.Context, training.Cluster) error, run func(stdcontext.Context, training.Cluster, training.Request) error, stdout, stderr io.Writer) error {
+func runSecondaryStreamPlansWithRunner(commandContext Context, cluster training.Cluster, scratch string, cache *lookaside.Cache, input io.Reader, prepare func(stdcontext.Context, training.Cluster) error, run func(stdcontext.Context, training.Cluster, training.Request) error, stdout, stderr io.Writer) error {
 	decoder := json.NewDecoder(input)
 	lastRunID := ""
 	for {
@@ -917,10 +950,20 @@ func runSecondaryStreamPlansWithRunner(commandContext Context, cluster training.
 		if err := os.MkdirAll(stageScratch, 0o700); err != nil {
 			return err
 		}
-		request, err := secondaryStreamRequest(plan, stageScratch)
+		var request training.Request
+		var err error
+		if plan.Parallelism.DataPlane == training.DataPlaneNodeLocal {
+			if cache == nil {
+				return fmt.Errorf("launcher node-local plan requires a configured cache")
+			}
+			request, err = secondaryNodeLocalRequest(commandContext, plan, cache, stageScratch, stderr, secondaryStreamInitialization)
+		} else {
+			request, err = secondaryStreamRequest(plan, stageScratch)
+		}
 		if err != nil {
 			return err
 		}
+		request.DataNodeRank = cluster.NodeRank
 		if prepare != nil {
 			if err := prepare(commandContext.Execution, cluster); err != nil {
 				return fmt.Errorf("stage %d/%d secondary readiness: %w", plan.StageOrdinal, plan.StageCount, err)
@@ -1067,6 +1110,12 @@ func awaitMultiNodePlan(ctx stdcontext.Context, modelRoot, rendezvousID string, 
 }
 
 func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, modelRoot string, cache *lookaside.Cache, scratch string, progress io.Writer) (training.Request, error) {
+	return secondaryNodeLocalRequest(commandContext, plan, cache, scratch, progress, func(plan model.MultiNodePlan) (*training.Initialization, error) {
+		return secondaryInitialization(plan, modelRoot)
+	})
+}
+
+func secondaryNodeLocalRequest(commandContext Context, plan model.MultiNodePlan, cache *lookaside.Cache, scratch string, progress io.Writer, resolveInitialization func(model.MultiNodePlan) (*training.Initialization, error)) (training.Request, error) {
 	fmt.Fprintf(progress, "  materializing %s shards for run %s\n", humanInteger(plan.CorpusBOM.Totals.Shards), plan.RunID)
 	materialized, err := corpus.Materialize(commandContext.Execution, plan.CorpusBOM, cache, modelMaterializeProgressPrinter(progress))
 	if err != nil {
@@ -1104,7 +1153,7 @@ func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, 
 	if err != nil {
 		return training.Request{}, err
 	}
-	initialization, err := secondaryInitialization(plan, modelRoot)
+	initialization, err := resolveInitialization(plan)
 	if err != nil {
 		return training.Request{}, err
 	}
@@ -1112,11 +1161,32 @@ func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, 
 		RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
 		Conversation:       plan.Conversation,
 		ArchitectureSHA256: plan.ArchitectureSHA256, Architecture: plan.Architecture,
-		Parameters: plan.Parameters, Records: records, EvaluationRecords: partition.EvaluationRecords(),
+		Parameters: plan.Parameters, BOM: plan.CorpusBOM, Inputs: inputs, Records: records, EvaluationRecords: partition.EvaluationRecords(),
+		Parallelism:   plan.Parallelism,
 		EvaluationSet: model.EvaluationSetValue(plan.EvaluationSet), Initialization: initialization,
 		Tokenizer:         tokenizerSpec,
 		ArtifactDirectory: scratch, ArtifactPrefix: "artifacts",
+		PreparedCacheDirectory: filepath.Join(cache.Scratch(), "prepared"),
+		PreparedCacheMaxBytes:  cache.MaxBytes(),
 	}, nil
+}
+
+func secondaryStreamInitialization(plan model.MultiNodePlan) (*training.Initialization, error) {
+	if plan.Initialization == nil {
+		if plan.InitializationPath != "" {
+			return nil, fmt.Errorf("launcher plan carries an initialization path without initialization weights")
+		}
+		return nil, nil
+	}
+	if plan.InitializationPath == "" || !filepath.IsAbs(plan.InitializationPath) {
+		return nil, fmt.Errorf("launcher plan carries initialization weights without an absolute staged path")
+	}
+	if err := model.VerifyArtifactFile(plan.InitializationPath, plan.Initialization.Artifact); err != nil {
+		return nil, fmt.Errorf("verify launcher-staged initialization weights: %w", err)
+	}
+	initialization := *plan.Initialization
+	initialization.Path = plan.InitializationPath
+	return &initialization, nil
 }
 
 func secondaryInitialization(plan model.MultiNodePlan, modelRoot string) (*training.Initialization, error) {
@@ -1167,7 +1237,7 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 		return err
 	}
 	for _, stage := range compose.Stages {
-		if err := validateDistributedBatchSize("stage "+stage.Name, stage.Parameters.BatchSize, cluster.WorldSize); err != nil {
+		if err := validateDistributedBatchSize("stage "+stage.Name, stage.Parameters.BatchSize, stage.Parameters.GradientAccumulation, cluster.WorldSize); err != nil {
 			return err
 		}
 	}
@@ -1220,6 +1290,8 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 	if err != nil {
 		return err
 	}
+	builder.PreparedCacheDirectory = filepath.Join(cache.Scratch(), "prepared")
+	builder.PreparedCacheMaxBytes = cache.MaxBytes()
 	prepared := make([]model.PreparedStage, 0, len(compose.Stages))
 	for _, stage := range compose.Stages {
 		resolved, err := planModelStage(context, stage, corpusTargets[stage.Name], cache, stderr)
@@ -1253,12 +1325,19 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 	return writeModelMutationResult(context, stdout, result, "trained")
 }
 
-func validateDistributedBatchSize(label string, batchSize int64, worldSize int) error {
+func validateDistributedBatchSize(label string, batchSize, accumulation int64, worldSize int) error {
 	if worldSize <= 1 {
 		return nil
 	}
-	if batchSize < int64(worldSize) || batchSize%int64(worldSize) != 0 {
-		return fmt.Errorf("%s global batch size %d must be at least and divisible by distributed world size %d", label, batchSize, worldSize)
+	if accumulation == 0 {
+		accumulation = 1
+	}
+	if accumulation < 1 || batchSize%accumulation != 0 {
+		return fmt.Errorf("%s gradient accumulation %d must divide global batch size %d", label, accumulation, batchSize)
+	}
+	microBatch := batchSize / accumulation
+	if microBatch < int64(worldSize) || microBatch%int64(worldSize) != 0 {
+		return fmt.Errorf("%s global micro-batch size %d must be at least and divisible by distributed world size %d", label, microBatch, worldSize)
 	}
 	return nil
 }
@@ -1329,22 +1408,23 @@ func runModelContinue(context Context, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return err
 	}
+	recoverableFailure := model.HasRecoverableCheckpointFailure(inspection)
 	if !pending {
 		state := "untrained"
 		if len(inspection.Runs) > 0 {
 			state = string(inspection.Runs[len(inspection.Runs)-1].State)
 		}
 		staleRunning := state == string(model.RunRunning)
-		if !staleRunning && !model.HasRecoverableFinalizationFailure(inspection) {
+		if !staleRunning && !recoverableFailure {
 			return fmt.Errorf("model %q has no interrupted compose to continue (current state: %s)", name, state)
 		}
 		if staleRunning {
 			fmt.Fprintf(stderr, "continue               checking abandoned running state for %s\n", name)
 		} else {
-			fmt.Fprintf(stderr, "continue               recovering checkpoint-backed finalization failure for %s\n", name)
+			fmt.Fprintf(stderr, "continue               recovering checkpoint-backed failure for %s\n", name)
 		}
 	}
-	if pending && len(inspection.RunBOMs) > 0 && inspection.RunBOMs[len(inspection.RunBOMs)-1].Execution.Nodes > 1 {
+	if (pending || recoverableFailure) && len(inspection.RunBOMs) > 0 && inspection.RunBOMs[len(inspection.RunBOMs)-1].Execution.Nodes > 1 {
 		return fmt.Errorf("model %q has an interrupted multi-host compose; continue runs single-host and would silently change the topology — re-run `waldo model train %s <compose>` with the original multi-host options (normally --hostfile)", name, name)
 	}
 	composePath, err := model.LatestComposePath(inspection.Path)
@@ -1391,6 +1471,16 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 		return err
 	}
 	euBOM = append(euBOM, '\n')
+	trainingBOMs := make([]corpus.BOM, 0, len(inspection.RunBOMs))
+	for position, runBOM := range inspection.RunBOMs {
+		if position < len(inspection.Runs) && inspection.Runs[position].State == model.RunComplete {
+			trainingBOMs = append(trainingBOMs, runBOM.CorpusBOM)
+		}
+	}
+	attribution, err := corpus.AttributionNotice(trainingBOMs)
+	if err != nil {
+		return fmt.Errorf("build training data attribution: %w", err)
+	}
 	signed := signing.Configured(configuration.Signing)
 	finalize := func(string) error { return nil }
 	if signed {
@@ -1446,31 +1536,31 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 	}
 	switch parsed.Format {
 	case "waldo":
-		options := model.ExportOptions{Files: map[string][]byte{signing.EUBOM: euBOM}}
+		options := model.ExportOptions{Files: map[string][]byte{signing.EUBOM: euBOM, "ATTRIBUTION.md": attribution}}
 		if signed {
 			options.Finalize = finalize
 		}
 		output, err = model.ExportPackage(root, parsed.Name, parsed.Destination, options)
 	case "huggingface":
-		options := modelexport.Options{EUBOM: euBOM}
+		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution}
 		if signed {
 			options.Finalize = finalize
 		}
 		output, err = modelexport.ExportHuggingFace(context.Execution, inspection, parsed.Destination, options)
 	case "mlx":
-		options := modelexport.Options{EUBOM: euBOM}
+		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution}
 		if signed {
 			options.Finalize = finalize
 		}
 		output, err = modelexport.ExportMLX(context.Execution, inspection, parsed.Destination, options)
 	case "gguf":
-		options := modelexport.Options{EUBOM: euBOM, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
+		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
 		if signed {
 			options.Finalize = finalize
 		}
 		output, err = modelexport.ExportGGUF(context.Execution, inspection, parsed.Destination, options)
 	case "ollama":
-		options := modelexport.Options{EUBOM: euBOM, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
+		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
 		if signed {
 			options.Finalize = finalize
 		}
@@ -1947,12 +2037,39 @@ func planModelStage(context Context, stage model.Stage, targets []waldoindex.Tar
 	if err != nil {
 		return model.PreparedStage{}, fmt.Errorf("stage %s: %w", stage.Name, err)
 	}
+	parameters, err := stage.ResolvePlanningParameters()
+	if err != nil {
+		return model.PreparedStage{}, fmt.Errorf("stage %s training profile: %w", stage.Name, err)
+	}
+	if parameters.DistributionPolicy == corpus.DistributionPolicyDistributable {
+		if recordFilter == nil {
+			recordFilter = &corpus.RecordFilterPolicy{Schema: corpus.RecordFilterSchema}
+		}
+		recordFilter.Distributable = true
+	}
 	bom.RecordFilter = recordFilter
 	if err := bom.Validate(); err != nil {
 		return model.PreparedStage{}, fmt.Errorf("stage %s filtered corpus BOM: %w", stage.Name, err)
 	}
+	if err := reviewPlannedStageDistribution(stage, bom); err != nil {
+		return model.PreparedStage{}, err
+	}
 	emitUnassessedFilterWarning(progress, stage.Name, bom)
 	return model.PlanStage(stage, bom)
+}
+
+func reviewPlannedStageDistribution(stage model.Stage, bom corpus.BOM) error {
+	parameters, err := stage.ResolvePlanningParameters()
+	if err != nil {
+		return fmt.Errorf("stage %s training profile: %w", stage.Name, err)
+	}
+	if parameters.DistributionPolicy != corpus.DistributionPolicyDistributable {
+		return nil
+	}
+	if _, err := corpus.ReviewDistributable(bom); err != nil {
+		return fmt.Errorf("stage %s distributable corpus gate: %w", stage.Name, err)
+	}
+	return nil
 }
 
 func emitUnassessedFilterWarning(output io.Writer, stageName string, bom corpus.BOM) {

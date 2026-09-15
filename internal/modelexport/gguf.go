@@ -169,8 +169,14 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	if err := os.WriteFile(filepath.Join(temporary, "EU-BOM.json"), options.EUBOM, 0o644); err != nil {
 		return "", err
 	}
+	if len(options.Attribution) == 0 {
+		return "", fmt.Errorf("ATTRIBUTION.md is empty")
+	}
+	if err := os.WriteFile(filepath.Join(temporary, "ATTRIBUTION.md"), options.Attribution, 0o644); err != nil {
+		return "", err
+	}
 	format := "gguf"
-	roles := map[string]string{"model.gguf": "weights", "EU-BOM.json": "regulatory-disclosure"}
+	roles := map[string]string{"model.gguf": "weights", "EU-BOM.json": "regulatory-disclosure", "ATTRIBUTION.md": "training-data-attribution"}
 	if ollama {
 		format = "ollama"
 		modelfile, err := ollamaModelfile(inspection)
