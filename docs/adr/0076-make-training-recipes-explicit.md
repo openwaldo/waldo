@@ -22,7 +22,7 @@ parameters. The current implementation is limited to PyTorch data parallelism;
 MLX and sharded TorchTitan placements reject it explicitly rather than silently
 falling back to AdamW.
 
-The `conversation2` candidate uses untied embeddings, QK normalization,
+The `conversation3` candidate uses untied embeddings, QK normalization,
 depth-scaled initialization, zero dropout, and a warmup-stable-warmdown AdamW
 baseline. Muon remains a measured G1/G2 experiment until it wins at equal
 FLOPs.

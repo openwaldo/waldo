@@ -33,5 +33,5 @@ before a compose adopts it.
   of thousands of complete corpus rescans.
 - The exact corpus BOM, sample identity, ordered vocabulary, and special-token
   IDs are immutable artifact facts.
-- The `conversation2` compose retains `r50k_base` until the admitted corpus is
+- The `conversation3` compose retains `r50k_base` until the admitted corpus is
   finalized and the candidate wins its promotion tests.

@@ -7,10 +7,11 @@ stronger immutable BOM, provenance, replay, and artifact contracts while
 adopting the training practices that make nanochat efficient and measurable.
 
 The comparison target is the numbered
-[`composes/0003-conversation.yaml`](../composes/0003-conversation.yaml), trained
-as model `conversation2`. The existing `0000` and `0001` composes provide its
-canary and systems gates, and `0002-conversation.yaml` remains the known-good
-comparison model.
+[`composes/0004-conversation.yaml`](../composes/0004-conversation.yaml), trained
+as model `conversation3`. The existing `0000` and `0001` composes provide its
+canary and systems gates. `0002-conversation.yaml` records the undertrained
+2.4B-token experiment, while `0003-conversation.yaml`, trained as
+`conversation2`, restores the 12B-token comparison baseline.
 
 ## Definition of done
 
@@ -150,10 +151,10 @@ domain and round-trip, special-token, and distributed-training tests pass.
 
 Run canary, then approximately 100M-, 300M-, and 700M-parameter experiments.
 Each rung gets a fixed FLOP budget and must pass throughput, loss, capability,
-resume, and contamination gates. Only then run the 24-layer `conversation2`
+resume, and contamination gates. Only then run the 24-layer `conversation3`
 candidate.
 
-Do not start the current `0003-conversation.yaml` multi-day run before phases
+Do not start the current `0004-conversation.yaml` multi-day run before phases
 0 through 4 pass. Its approximately 6.1B-token curriculum is still too
 expensive to use as the systems benchmark.
 

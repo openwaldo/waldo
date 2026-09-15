@@ -3,7 +3,7 @@
 Status: engineering review completed 2026-09-14. This is not legal advice.
 
 This audit covers every corpus selected by `composes/0000-canary.yaml` through
-`0003-conversation.yaml`. A source license, a dataset/database license, and a
+`0004-conversation.yaml`. A source license, a dataset/database license, and a
 license or public-domain status for each contained work are separate facts.
 WALDO implements `distribution_policy: distributable` as one simple,
 record-level rule: include a document when its effective license is on the

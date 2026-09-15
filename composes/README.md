@@ -10,9 +10,10 @@ They are planning ranges until replaced by observed WALDO run evidence.
 
 The numbered ladder also owns the measured capability-per-FLOP comparison.
 `0000-canary.yaml` and `0001-babble.yaml` are the systems gates,
-`0002-conversation.yaml` is the existing comparison model, and
-`0003-conversation.yaml` is trained as the `conversation2` candidate. Do not
-run that candidate until the correctness, data-plane, batch-semantics, and
+`0002-conversation.yaml` records the undertrained 2.4B-token experiment,
+`0003-conversation.yaml` restores the 12B-token comparison baseline, and
+`0004-conversation.yaml` is the larger `conversation3` candidate. Do not run
+the larger candidate until the correctness, data-plane, batch-semantics, and
 evaluation gates in the [training robustness plan](../docs/TRAINING-ROBUSTNESS-PLAN.md)
 pass. Corpus and license differences are tracked in the
 [compose corpus licensing audit](../docs/COMPOSE-CORPUS-LICENSE-AUDIT.md) and
@@ -100,7 +101,7 @@ WALDO requirements:
 
 | Field | Plan |
 | --- | --- |
-| Status | Existing known-good compose preserved |
+| Status | Completed 2.4B-token experiment; materially undertrained and not the known-good baseline |
 | Builds from | New larger initialization using the babbling model's proven recipe and tests |
 | Model type | Dense monolithic foundation plus conversation SFT; approximately 337M parameters |
 | Recommended hardware | 1x 8-GPU NVIDIA H100 SXM system |
@@ -122,7 +123,7 @@ Corpus requirements:
 
 WALDO requirements:
 
-- Assistant-response modeling and assistant-only loss masks (supported).
+- Causal conversation modeling is retained so the restored run changes only training exposure.
 - Add fixed conversation tests.
 - Replay foundation regression tests.
 
@@ -130,15 +131,43 @@ WALDO requirements:
 
 | Field | Plan |
 | --- | --- |
-| Status | `conversation2` candidate; blocked on systems, evaluation, and corpus gates |
-| Builds from | Random initialization with the complete, known-good 0002 conversation recipe embedded first |
+| Status | Restored 12B-token comparison baseline; train as `conversation2` |
+| Builds from | Fresh random initialization; same architecture and corpus sequence as 0002 |
+| Model type | Dense monolithic foundation plus conversation SFT; approximately 337M parameters |
+| Recommended hardware | 1x 8-GPU NVIDIA H100 SXM system |
+| Approximate runtime | Measure directly; approximately five times the pretraining exposure of 0002 |
+
+Success criteria:
+
+- Restore direct answers, basic factual grounding, and simple constraint following.
+- Preserve prior-turn context and correction handling.
+- Avoid the repetition collapse observed in the 2.4B-token run.
+- Beat 0002 on fixed foundation and conversation evaluations.
+
+Corpus requirements:
+
+- The exact 0002 corpus selection and weights.
+- 12B pretraining tokens followed by three epochs of each conversation stage.
+
+WALDO requirements:
+
+- Train under a fresh model name; do not append pretraining after 0002 post-training.
+- Preserve causal conversation modeling for this controlled restoration.
+- Add fixed side-by-side generation and held-out evaluations.
+
+## Conversation level 4 (`0004-conversation.yaml`)
+
+| Field | Plan |
+| --- | --- |
+| Status | `conversation3` candidate; blocked on systems, evaluation, and corpus gates |
+| Builds from | Random initialization with the restored 0003 curriculum embedded first |
 | Model type | Approximately 758M-parameter dense model, 4,096-token context, technical knowledge midtraining, and expanded conversation SFT |
 | Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
 | Approximate runtime | Determine from promoted G1/G2 evidence for the roughly 6.1B-token curriculum |
 
 Success criteria:
 
-- Clearly improves instruction following, knowledge, and multi-turn coherence over the 0002 conversation model.
+- Clearly improves instruction following, knowledge, and multi-turn coherence over the restored 0003 model.
 - Correctly answers basic factual questions about operating systems, Linux, programming, and systems administration.
 - Improves familiarity with software development, systems, debugging, review, and technical documentation.
 - Preserves the baseline's directness, correction handling, and no-tool behavior.
@@ -158,12 +187,12 @@ Corpus requirements:
 
 WALDO requirements:
 
-- A fresh model is required because conversation2 has more than twice the
-  parameter capacity and context length of the 0002 conversation model as well as a corrected
+- A fresh model is required because conversation3 has more than twice the
+  parameter capacity and context length of the 0003 conversation model as well as a corrected
   stage order.
 - Fixed side-by-side conversation evaluations.
 - Promote only when it beats the previous rung without material regression.
-- Train this compose under the model name `conversation2`; the numeric compose
+- Train this compose under the model name `conversation3`; the numeric compose
   prefix describes its ladder position, not its model artifact name.
 
 ## Tool-use model (`holding/tool-use.yaml`)
@@ -438,9 +467,10 @@ WALDO requirements:
 ## Next steps
 
 - Freeze the language, conversation, and tool evaluation sets.
-- Run `0002-conversation` as the known-good baseline.
-- Train `0003-conversation` as `conversation2` and compare it with the 0002
-  conversation model. Its larger architecture cannot reuse the old weights.
+- Preserve `conversation1` as the 2.4B-token diagnostic result.
+- Train `0003-conversation` as `conversation2` and compare it with conversation1.
+- Train `0004-conversation` as `conversation3` only after the restored baseline
+  passes. Its larger architecture cannot reuse the earlier weights.
 - Keep tool-use training on hold until a conversation checkpoint is promoted,
   then update and revalidate `holding/tool-use.yaml` against that parent.
 - Build the capable dense foundation, assistant, reasoning, and agent rungs.
