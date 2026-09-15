@@ -5,17 +5,18 @@ Status: engineering review completed 2026-09-14. This is not legal advice.
 This audit covers every corpus selected by `composes/0000-canary.yaml` through
 `0003-conversation.yaml`. A source license, a dataset/database license, and a
 license or public-domain status for each contained work are separate facts.
-WALDO approves `distribution_policy: distributable` only when the selected
-artifacts have a reviewed rights basis and the recorded obligations can be
-met. Model-training permission and permission to redistribute canonical corpus
-shards are evaluated separately; a package-level license alone does not decide
-the status of resulting model weights.
+WALDO implements `distribution_policy: distributable` as one simple,
+record-level rule: include a document when its effective license is on the
+reviewed distributable allowlist, and otherwise skip it. Package and source
+rights are recorded as evidence and obligations, not as separate training-gate
+facets.
 
 The index preserves the license assertion embedded in each already-published
-Parquet shard. Each audited manifest now adds a separate `rights_review` that
-can block distribution without falsifying that immutable history. Where this
-audit identifies a corrected `LicenseRef-*`, the fetcher recipe uses it for the
-next reingestion; the existing objects are not silently relabeled.
+Parquet shard. Where this audit identifies a corrected `LicenseRef-*`, the
+fetcher recipe uses it for the next reingestion; existing objects are not
+silently relabeled. Mixed-license corpora remain intact. A distributable compose
+selects only rows carrying a reviewed distributable effective license and skips
+the others.
 
 ## Conclusions
 

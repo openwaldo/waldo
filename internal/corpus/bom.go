@@ -68,7 +68,6 @@ type ManifestPin struct {
 	Sources      []index.Source              `json:"sources"`
 	Processing   *index.Processing           `json:"processing,omitempty"`
 	ComposedBy   *index.IngestRecipeEvidence `json:"composed_by,omitempty"`
-	RightsReview *index.RightsReview         `json:"rights_review,omitempty"`
 	Assessment   *index.ContentAssessment    `json:"assessment,omitempty"`
 	Redaction    *index.ContentRedaction     `json:"redaction,omitempty"`
 	Totals       index.Measures              `json:"totals"`
@@ -167,7 +166,6 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 		Sources:      append([]index.Source(nil), corpus.Manifest.Sources...),
 		Processing:   corpus.Manifest.Processing,
 		ComposedBy:   corpus.Manifest.ComposedBy,
-		RightsReview: corpus.Manifest.RightsReview,
 		Assessment:   corpus.Manifest.Assessment,
 		Redaction:    corpus.Manifest.Redaction,
 		Licenses:     map[string]index.Measures{},

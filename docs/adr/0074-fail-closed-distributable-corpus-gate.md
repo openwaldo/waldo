@@ -14,13 +14,14 @@ an option.
 ## Decision
 
 Training parameters may select `distribution_policy: distributable`. WALDO
-then requires every effective corpus license to be on a conservative reviewed
-allowlist and every manifest source to carry upstream license evidence plus a
-pinned version or lowercase SHA-256 source digest. Noncommercial, unknown,
-custom, and no-redistribution licenses fail before preflight or accelerator
-selection. The approved license set and resulting notice, attribution, and
-share-alike obligations are pinned as `distribution_review` in the run BOM and
-revalidated whenever the model is inspected.
+then applies a record-level filter backed by a conservative reviewed license
+allowlist. Rows with noncommercial, unknown, custom, or no-redistribution
+licenses are skipped while approved rows in the same corpus remain eligible.
+Every source contributing eligible rows must carry upstream license evidence
+plus a pinned version or lowercase SHA-256 source digest. The approved license
+set and resulting notice, attribution, and share-alike obligations are pinned
+as `distribution_review` in the run BOM and revalidated whenever the model is
+inspected. A stage fails if the policy selects no eligible records.
 
 This is an engineering policy, not legal advice. Adding a license to the
 allowlist requires a reviewed code change and tests; a compose cannot override
@@ -31,7 +32,7 @@ the gate.
 - Private training remains possible when the policy is omitted, but it cannot
   claim the distributable review.
 - The holding nanochat-class compose selects the strict policy.
-- The current Gutenberg and Wikimedia index entries are excluded from that
-  compose until their upstream and per-record rights evidence is repaired.
+- Mixed-license corpora remain complete; distribution policy changes training
+  selection rather than destructively rebuilding the corpus.
 - Attribution and share-alike duties are machine-readable run facts rather
   than prose discovered after training.

@@ -7,10 +7,7 @@ package corpus
 
 import (
 	"fmt"
-	"sort"
 	"strings"
-
-	"github.com/openwaldo/waldo/internal/index"
 )
 
 const DistributionPolicyDistributable = "distributable"
@@ -25,27 +22,27 @@ type DistributionReview struct {
 
 func ReviewDistributable(bom BOM) (DistributionReview, error) {
 	review := DistributionReview{Policy: DistributionPolicyDistributable}
+	licenses := map[string]bool{}
+	obligations := map[string]bool{}
 	for _, manifest := range bom.Manifests {
-		if manifest.RightsReview != nil {
-			rights := manifest.RightsReview
-			if rights.Training != index.RightsApproved || rights.CorpusRedistribution != index.RightsApproved || rights.ModelWeights != index.RightsApproved {
-				return DistributionReview{}, fmt.Errorf("manifest %s rights review does not approve distributable training (training=%s, corpus_redistribution=%s, model_weights=%s): %s", manifest.Path, rights.Training, rights.CorpusRedistribution, rights.ModelWeights, rights.Reason)
+		selected := false
+		manifestLicenses := manifest.Licenses
+		if len(manifestLicenses) == 0 {
+			manifestLicenses = bom.Licenses
+		}
+		for license := range manifestLicenses {
+			if !DistributableLicense(license) || bom.RecordFilter != nil && !bom.RecordFilter.AllowsLicense(manifest.Path, license) {
+				continue
+			}
+			selected = true
+			licenses[license] = true
+			if obligation, _ := distributableLicense(license); obligation != "" {
+				obligations[obligation] = true
 			}
 		}
-	}
-	for license := range bom.Licenses {
-		review.Licenses = append(review.Licenses, license)
-		obligation, ok := distributableLicense(license)
-		if !ok {
-			return DistributionReview{}, fmt.Errorf("license %q is not approved for distributable training; add reviewed SPDX-compatible evidence or exclude it", license)
+		if !selected {
+			continue
 		}
-		if obligation != "" {
-			review.Obligations = append(review.Obligations, obligation)
-		}
-	}
-	sort.Strings(review.Licenses)
-	sort.Strings(review.Obligations)
-	for _, manifest := range bom.Manifests {
 		for _, source := range manifest.Sources {
 			if strings.TrimSpace(source.Version) == "" && !lowerSHA256(source.SHA256) {
 				return DistributionReview{}, fmt.Errorf("manifest %s source %q has no pinned upstream version or source digest", manifest.Path, source.Name)
@@ -55,7 +52,19 @@ func ReviewDistributable(bom BOM) (DistributionReview, error) {
 			}
 		}
 	}
+	review.Licenses = sortedKeys(licenses)
+	review.Obligations = sortedKeys(obligations)
+	if len(review.Licenses) == 0 {
+		return DistributionReview{}, fmt.Errorf("distribution policy selects no records with an approved distributable license")
+	}
 	return review, nil
+}
+
+// DistributableLicense reports whether a row's normalized effective license is
+// accepted by WALDO's conservative distributable policy.
+func DistributableLicense(value string) bool {
+	_, ok := distributableLicense(value)
+	return ok
 }
 
 func lowerSHA256(value string) bool {

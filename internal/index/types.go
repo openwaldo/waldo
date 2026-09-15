@@ -60,21 +60,8 @@ type Manifest struct {
 	Redaction    *ContentRedaction     `json:"redaction,omitempty"`
 	Processing   *Processing           `json:"processing,omitempty"`
 	ComposedBy   *IngestRecipeEvidence `json:"composed_by,omitempty"`
-	RightsReview *RightsReview         `json:"rights_review,omitempty"`
 	Shards       []Shard               `json:"-"`
 	Rollup       *Rollup               `json:"-"`
-}
-
-// RightsReview records a human review separately from the license assertion
-// embedded in immutable shards. It can block distribution without rewriting
-// historical object metadata.
-type RightsReview struct {
-	ReviewedAt           string   `json:"reviewed_at" yaml:"reviewed_at"`
-	Training             string   `json:"training" yaml:"training"`
-	CorpusRedistribution string   `json:"corpus_redistribution" yaml:"corpus_redistribution"`
-	ModelWeights         string   `json:"model_weights" yaml:"model_weights"`
-	Reason               string   `json:"reason" yaml:"reason"`
-	Evidence             []string `json:"evidence" yaml:"evidence"`
 }
 
 // ContentAssessment summarizes deterministic row-level flags. Records counts

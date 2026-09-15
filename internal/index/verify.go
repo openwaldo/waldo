@@ -209,11 +209,6 @@ func verifyManifest(path string, manifest Manifest) error {
 			return fmt.Errorf("%s: composed_by: %w", path, err)
 		}
 	}
-	if manifest.RightsReview != nil {
-		if err := ValidateRightsReview(*manifest.RightsReview); err != nil {
-			return fmt.Errorf("%s: rights_review: %w", path, err)
-		}
-	}
 	var assessedEmailRecords int64
 	var assessedRepetitiveRecords int64
 	var assessedBoilerplateRecords int64

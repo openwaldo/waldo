@@ -2037,6 +2037,16 @@ func planModelStage(context Context, stage model.Stage, targets []waldoindex.Tar
 	if err != nil {
 		return model.PreparedStage{}, fmt.Errorf("stage %s: %w", stage.Name, err)
 	}
+	parameters, err := stage.ResolvePlanningParameters()
+	if err != nil {
+		return model.PreparedStage{}, fmt.Errorf("stage %s training profile: %w", stage.Name, err)
+	}
+	if parameters.DistributionPolicy == corpus.DistributionPolicyDistributable {
+		if recordFilter == nil {
+			recordFilter = &corpus.RecordFilterPolicy{Schema: corpus.RecordFilterSchema}
+		}
+		recordFilter.Distributable = true
+	}
 	bom.RecordFilter = recordFilter
 	if err := bom.Validate(); err != nil {
 		return model.PreparedStage{}, fmt.Errorf("stage %s filtered corpus BOM: %w", stage.Name, err)

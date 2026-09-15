@@ -42,10 +42,8 @@ file hash.
 - `license_policy` records include and exclude globs; excludes take precedence.
 - `manifests` records each selected manifest's hash and resolved corpus-level
   facts, including format, record schema, conversion recipe, upstream sources,
-  structured processing declarations, any human `rights_review`, modality
-  measures, and exact totals after policy filtering. The rights review records
-  separate conclusions for training, canonical-corpus redistribution, and
-  model-weight distribution without changing immutable shard license facts.
+  structured processing declarations, modality measures, and exact totals
+  after policy filtering.
 - `sub_manifests` records every verified external manifest node, its parent,
   aggregate totals, and encoded object size. It is absent for inline corpora.
 - `shards` is the ordered leaf sequence after inheritance and policy filtering.
