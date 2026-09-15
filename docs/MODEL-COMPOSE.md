@@ -474,7 +474,7 @@ must use one representation or the other, never both.
 | `compute_precision` | no | `auto`, `float32`, `float16`, or `bfloat16` | Compute autocast precision. `auto` follows `parameter_dtype`. CUDA FP16 uses persisted dynamic loss scaling. |
 | `activation_checkpointing` | no | default `false` | Recomputes transformer layers during backward to reduce activation memory. PyTorch/TorchTitan only. |
 | `compile` | no | default `false` | Compiles the live PyTorch/TorchTitan forward graph. The unwrapped model remains the checkpoint and export source. |
-| `distribution_policy` | no | `distributable` | Requires every corpus license to be approved for redistribution and every upstream source to carry a pinned version and license evidence. The resulting review and obligations are pinned in the run BOM. |
+| `distribution_policy` | no | `distributable` | Requires every corpus license to be approved for redistribution, every upstream source to carry a pinned version and license evidence, and every present `rights_review` to approve training, corpus redistribution, and model weights. The resulting review and obligations are pinned in the run BOM. |
 | `sequence_length` | yes | positive integer, at most `context_tokens` | Number of predicted token targets per packed sequence. |
 | `learning_rate` | yes | finite positive number | Peak optimizer learning rate. |
 | `optimizer` | no | `adamw` or `muon-adamw`; default `adamw` | Optimizer recipe. Muon applies orthogonalized momentum updates to hidden matrices and AdamW to embeddings, output heads, and vectors; it currently requires PyTorch data-parallel placement. |

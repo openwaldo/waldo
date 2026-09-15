@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/openwaldo/waldo/internal/index"
 )
 
 const DistributionPolicyDistributable = "distributable"
@@ -23,6 +25,14 @@ type DistributionReview struct {
 
 func ReviewDistributable(bom BOM) (DistributionReview, error) {
 	review := DistributionReview{Policy: DistributionPolicyDistributable}
+	for _, manifest := range bom.Manifests {
+		if manifest.RightsReview != nil {
+			rights := manifest.RightsReview
+			if rights.Training != index.RightsApproved || rights.CorpusRedistribution != index.RightsApproved || rights.ModelWeights != index.RightsApproved {
+				return DistributionReview{}, fmt.Errorf("manifest %s rights review does not approve distributable training (training=%s, corpus_redistribution=%s, model_weights=%s): %s", manifest.Path, rights.Training, rights.CorpusRedistribution, rights.ModelWeights, rights.Reason)
+			}
+		}
+	}
 	for license := range bom.Licenses {
 		review.Licenses = append(review.Licenses, license)
 		obligation, ok := distributableLicense(license)

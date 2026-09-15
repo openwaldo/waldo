@@ -94,6 +94,11 @@ func (bom BOM) Validate() error {
 				return fmt.Errorf("manifest %s composed_by: %w", manifest.Path, err)
 			}
 		}
+		if manifest.RightsReview != nil {
+			if err := index.ValidateRightsReview(*manifest.RightsReview); err != nil {
+				return fmt.Errorf("manifest %s rights review: %w", manifest.Path, err)
+			}
+		}
 		if manifest.RecordKind == record.KindConversation || manifest.RecordSchema >= waldoshard.TextRecordSchema {
 			if err := validateAssessment(manifest.Assessment, manifest.Totals.Docs); err != nil {
 				return fmt.Errorf("manifest %s assessment: %w", manifest.Path, err)
