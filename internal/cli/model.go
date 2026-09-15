@@ -1408,22 +1408,23 @@ func runModelContinue(context Context, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return err
 	}
+	recoverableFailure := model.HasRecoverableCheckpointFailure(inspection)
 	if !pending {
 		state := "untrained"
 		if len(inspection.Runs) > 0 {
 			state = string(inspection.Runs[len(inspection.Runs)-1].State)
 		}
 		staleRunning := state == string(model.RunRunning)
-		if !staleRunning && !model.HasRecoverableFinalizationFailure(inspection) {
+		if !staleRunning && !recoverableFailure {
 			return fmt.Errorf("model %q has no interrupted compose to continue (current state: %s)", name, state)
 		}
 		if staleRunning {
 			fmt.Fprintf(stderr, "continue               checking abandoned running state for %s\n", name)
 		} else {
-			fmt.Fprintf(stderr, "continue               recovering checkpoint-backed finalization failure for %s\n", name)
+			fmt.Fprintf(stderr, "continue               recovering checkpoint-backed failure for %s\n", name)
 		}
 	}
-	if pending && len(inspection.RunBOMs) > 0 && inspection.RunBOMs[len(inspection.RunBOMs)-1].Execution.Nodes > 1 {
+	if (pending || recoverableFailure) && len(inspection.RunBOMs) > 0 && inspection.RunBOMs[len(inspection.RunBOMs)-1].Execution.Nodes > 1 {
 		return fmt.Errorf("model %q has an interrupted multi-host compose; continue runs single-host and would silently change the topology — re-run `waldo model train %s <compose>` with the original multi-host options (normally --hostfile)", name, name)
 	}
 	composePath, err := model.LatestComposePath(inspection.Path)

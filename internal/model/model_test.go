@@ -579,7 +579,7 @@ func TestResumeReplacesEvaluationAtCheckpointStep(t *testing.T) {
 	}
 }
 
-func TestOnlyFinalCheckpointBookkeepingFailureIsResumable(t *testing.T) {
+func TestOnlyRecognizedCheckpointBackedFailuresAreResumable(t *testing.T) {
 	requested := training.Parameters{Steps: 10, BatchSize: 1, SequenceLength: 10, LearningRate: 0.001, Seed: 1}
 	parameters, err := training.ResolveParameters(requested)
 	if err != nil {
@@ -620,9 +620,51 @@ func TestOnlyFinalCheckpointBookkeepingFailureIsResumable(t *testing.T) {
 	if !resumableRunState(run, parameters) {
 		t.Fatal("final-checkpoint artifact evaluation mismatch is not resumable")
 	}
+	run.Error = "TorchTitan worker: worker input ended without begin/end framing"
+	run.Progress.Checkpoints[0].Step = 5
+	run.Progress.Checkpoints[0].Tokens = 50
+	if !resumableRunState(run, parameters) {
+		t.Fatal("partial checkpoint after worker input exhaustion is not resumable")
+	}
+	run.Error = "trainer exited"
+	if resumableRunState(run, parameters) {
+		t.Fatal("ordinary partial-checkpoint failure became resumable")
+	}
+	run.Error = "TorchTitan worker: worker input ended without begin/end framing"
+	run.Progress.Checkpoints[0].Step = parameters.Steps
+	run.Progress.Checkpoints[0].Tokens = parameters.PlannedTokenCapacity
+	if resumableRunState(run, parameters) {
+		t.Fatal("input exhaustion at a final checkpoint became a partial resume")
+	}
+	run.Error = "TorchTitan worker: saved artifact held-out loss 4.030349 does not match live loss 3.856039 within tolerance 0.038560"
 	run.Progress.Checkpoints[0].Step--
 	if resumableRunState(run, parameters) {
 		t.Fatal("partial-checkpoint corpus accounting failure became resumable")
+	}
+}
+
+func TestFixedTokenResumeMayCorrectOnlyDerivedEpochLimit(t *testing.T) {
+	persisted, err := training.ResolveParameters(training.Parameters{Tokens: 100, BatchSize: 1, SequenceLength: 10, LearningRate: 0.001, Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective := persisted
+	effective.Epochs = 2
+	if !equivalentResumeParameters(persisted, effective) {
+		t.Fatal("derived fixed-token epoch correction is not resume-compatible")
+	}
+	run := RunRecord{ID: "run", Attempts: []RunAttempt{{Ordinal: 1, ResumeStep: 5, Correction: "fixed-token-capacity-v1", EffectiveParameters: &effective}}}
+	if err := validateAttemptCorrections(run, RunBOM{Parameters: persisted}); err != nil {
+		t.Fatalf("valid attempt correction: %v", err)
+	}
+	changed := effective
+	changed.Seed++
+	if equivalentResumeParameters(persisted, changed) {
+		t.Fatal("seed change became resume-compatible")
+	}
+	run.Attempts[0].EffectiveParameters = &changed
+	if err := validateAttemptCorrections(run, RunBOM{Parameters: persisted}); err == nil {
+		t.Fatal("invalid attempt correction was accepted")
 	}
 }
 
@@ -903,6 +945,112 @@ func TestTrainResumesInterruptedRunFromVerifiedCheckpoint(t *testing.T) {
 	}
 	if len(completed.Runs[0].Observation.Checkpoints) != 1 || completed.Runs[0].Observation.Checkpoints[0].Step != 1 {
 		t.Fatalf("completed observation = %+v", completed.Runs[0].Observation)
+	}
+}
+
+func TestTrainRepairsFixedTokenCapacityAndResumesFailedCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	attempts := 0
+	backend := backendFunc(func(_ context.Context, request training.Request) (training.Observation, error) {
+		attempts++
+		if attempts == 1 {
+			path := filepath.Join(request.ArtifactDirectory, "checkpoints", "step-00000001", "state.json")
+			data := []byte("{\"kind\":\"waldo-test-checkpoint\",\"schema\":1,\"step\":1}\n")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return training.Observation{}, err
+			}
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				return training.Observation{}, err
+			}
+			digest := sha256.Sum256(data)
+			checkpoint := training.Checkpoint{Step: 1, Tokens: 64, Artifacts: []training.Artifact{{Path: "artifacts/checkpoints/step-00000001/state.json", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}}}
+			request.Report(training.Event{Kind: "checkpoint", Message: "test checkpoint", Step: 1, Tokens: 64, Checkpoint: &checkpoint})
+			return training.Observation{}, errors.New("TorchTitan worker: worker input ended without begin/end framing")
+		}
+		if request.Resume == nil || request.Resume.Step != 1 || request.Parameters.Epochs <= 1 {
+			return training.Observation{}, fmt.Errorf("capacity-corrected resume = %+v, epochs %d", request.Resume, request.Parameters.Epochs)
+		}
+		data := []byte("capacity-corrected resumed weights")
+		path := filepath.Join(request.ArtifactDirectory, "model.safetensors")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return training.Observation{}, err
+		}
+		digest := sha256.Sum256(data)
+		loss := 0.5
+		return training.Observation{
+			Steps: request.Parameters.Steps, ConsumedTokens: request.Parameters.PlannedTokenCapacity, FinalLoss: &loss,
+			Evaluations: []training.Evaluation{{Step: request.Parameters.Steps, Tokens: request.Parameters.PlannedTokenCapacity, Metrics: map[string]float64{"heldout_loss": 0.75}}},
+			Artifacts:   []training.Artifact{{Path: "artifacts/model.safetensors", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}},
+		}, nil
+	})
+	builder := Builder{Root: root, NewID: func() (string, error) { return "capacity0001", nil }, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backend), nil
+	})}
+	if _, err := builder.Initialize("capacity", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	stage := testStage("midtrain")
+	stage.Parameters.Steps = 0
+	stage.Parameters.Tokens = 1024
+	prepared := preparedFixture(t, stage)
+	if _, err := builder.Train(context.Background(), "capacity", prepared); err == nil || !strings.Contains(err.Error(), "worker input ended") {
+		t.Fatalf("first Train error = %v", err)
+	}
+	failed, err := Inspect(root, "capacity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.RunBOMs[0].Parameters.Epochs <= 1 {
+		t.Fatalf("test fixture did not require multiple epochs: %+v", failed.RunBOMs[0].Parameters)
+	}
+	runDirectory := filepath.Join(failed.Path, "runs", runDirectoryName(failed.Model.Runs[0]))
+	var snapshot training.StagePreflight
+	if err := readStrictJSON(filepath.Join(runDirectory, "PREFLIGHT.json"), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Parameters.Epochs = 1
+	snapshot.CapacityVerified = false
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "PREFLIGHT.json"), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	preflightHash, preflightBytes, err := hashFile(filepath.Join(runDirectory, "PREFLIGHT.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runBOM := failed.RunBOMs[0]
+	runBOM.Parameters.Epochs = 1
+	runBOM.Preflight = &training.Artifact{Path: "PREFLIGHT.json", SHA256: preflightHash, Bytes: preflightBytes}
+	runBOMHash, err := hashJSON(runBOM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "RUN-BOM.json"), runBOM); err != nil {
+		t.Fatal(err)
+	}
+	run := failed.Runs[0]
+	run.BOMSHA256 = runBOMHash
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "RUN.json"), run); err != nil {
+		t.Fatal(err)
+	}
+	record := failed.Model
+	record.Runs[0].BOMSHA256 = runBOMHash
+	if err := persistModel(failed.Path, &record, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	completed, err := builder.Train(context.Background(), "capacity", prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || len(completed.Runs) != 1 || completed.Runs[0].State != RunComplete || len(completed.Runs[0].Attempts) != 2 {
+		t.Fatalf("capacity recovery = attempts %d, runs %+v", attempts, completed.Runs)
+	}
+	correction := completed.Runs[0].Attempts[1]
+	if correction.ResumeStep != 1 || correction.Correction != "fixed-token-capacity-v1" || correction.EffectiveParameters == nil || correction.EffectiveParameters.Epochs <= 1 {
+		t.Fatalf("capacity correction = %+v", correction)
+	}
+	if completed.RunBOMs[0].Parameters.Epochs != 1 {
+		t.Fatalf("immutable legacy run BOM was changed: %+v", completed.RunBOMs[0].Parameters)
 	}
 }
 

@@ -151,6 +151,14 @@ stream without optimization to the saved step, and continues. `RUN.json`
 records each attempt. A changed corpus, epoch count, profile, backend, or
 execution environment is a new run rather than an unsafe resume.
 
+One compatibility exception repairs a WALDO-derived value rather than a user
+change. If an older fixed-token run exhausted its input because WALDO pinned too
+few deterministic source passes, a verified checkpoint may resume with only
+that pass limit increased. The immutable run BOM remains unchanged, while the
+new `RUN.json` attempt records `fixed-token-capacity-v1` and the complete
+effective parameters. Corpus identity, held-out split, target steps, optimizer,
+schedule, backend, topology, and every other parameter must still match.
+
 Epoch boundaries remain part of one continuous-EOS token stream, while each
 epoch gets a deterministic seed-derived shuffle. Exact low-level or multi-stage
 parameters belong in a model compose.
