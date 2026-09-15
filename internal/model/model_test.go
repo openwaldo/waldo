@@ -1072,6 +1072,24 @@ func TestTrainDerivesAndPersistsEpochSteps(t *testing.T) {
 	}
 }
 
+func TestRecordSelectionSummaryProgress(t *testing.T) {
+	var messages []string
+	builder := Builder{Progress: func(event Progress) { messages = append(messages, event.Message) }}
+	builder.reportRecordSelection("pretrain", training.RecordSelectionSummary{
+		InputRecords: 10, IncludedRecords: 7, HeldOutRecords: 1, SkippedRecords: 3,
+		IncludedLicenses: map[string]int64{"CC-BY-4.0": 2, "Apache-2.0": 5},
+		SkippedLicenses:  map[string]int64{"CC-BY-NC-4.0": 3},
+	})
+	want := []string{
+		"data selection: 10 input, 7 included (6 available for training, 1 held out), 3 skipped",
+		"included licenses: Apache-2.0=5, CC-BY-4.0=2",
+		"skipped licenses: CC-BY-NC-4.0=3",
+	}
+	if !reflect.DeepEqual(messages, want) {
+		t.Fatalf("selection summary messages = %v", messages)
+	}
+}
+
 func TestTrainReusesPinnedStagePreflight(t *testing.T) {
 	root := t.TempDir()
 	var progress []Progress

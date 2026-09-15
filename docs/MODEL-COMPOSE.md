@@ -453,6 +453,11 @@ silently train on a different subset. The BOM's manifest totals remain the
 indexed reference totals; run and evaluation evidence describe actual training
 consumption. If the combined filters eliminate every row from one selected
 corpus, preflight warns that the corpus will contribute zero training tokens.
+
+After each successful stage, WALDO prints the input, included, held-out, and
+skipped record counts. When filtering required a row scan, it also prints
+included and skipped counts grouped by effective license. The same selection
+accounting is preserved in the stage preflight artifact.
 The corpus remains in the selection BOM for auditability, while observed
 consumption lists only corpora that supplied positive token targets.
 

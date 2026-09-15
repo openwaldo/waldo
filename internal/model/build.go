@@ -345,7 +345,11 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	}
 
 	if candidate, ok := resumableRun(inspection, stage, resolvedParameters, partition.Evaluation, bomHash, selection.Execution); ok {
-		return builder.resumeTraining(ctx, name, inspection, candidate, stage, prepared, records, evaluationRecords, partition.EligibleRecords(), architectureJSON, selection, resolvedParameters)
+		result, err := builder.resumeTraining(ctx, name, inspection, candidate, stage, prepared, records, evaluationRecords, partition.EligibleRecords(), architectureJSON, selection, resolvedParameters)
+		if err == nil {
+			builder.reportRecordSelection(stage.Name, partition.SelectionSummary())
+		}
+		return result, err
 	}
 
 	runID, err := builder.identifier()()
@@ -395,7 +399,37 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		return Inspection{}, err
 	}
 	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunPlanned, Message: "persisted run OpenWALDO BOM"})
-	return builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, partition.EligibleRecords(), architectureJSON, selection, nil, nil)
+	result, err := builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, partition.EligibleRecords(), architectureJSON, selection, nil, nil)
+	if err == nil {
+		builder.reportRecordSelection(stage.Name, partition.SelectionSummary())
+	}
+	return result, err
+}
+
+func (builder Builder) reportRecordSelection(stage string, summary training.RecordSelectionSummary) {
+	if summary.InputRecords == 0 {
+		return
+	}
+	available := summary.IncludedRecords - summary.HeldOutRecords
+	builder.report(Progress{Phase: "summary", Stage: stage, Message: fmt.Sprintf("data selection: %d input, %d included (%d available for training, %d held out), %d skipped", summary.InputRecords, summary.IncludedRecords, available, summary.HeldOutRecords, summary.SkippedRecords)})
+	for _, group := range []struct {
+		label  string
+		counts map[string]int64
+	}{{"included licenses", summary.IncludedLicenses}, {"skipped licenses", summary.SkippedLicenses}} {
+		if len(group.counts) == 0 {
+			continue
+		}
+		licenses := make([]string, 0, len(group.counts))
+		for license := range group.counts {
+			licenses = append(licenses, license)
+		}
+		sort.Strings(licenses)
+		parts := make([]string, 0, len(licenses))
+		for _, license := range licenses {
+			parts = append(parts, fmt.Sprintf("%s=%d", license, group.counts[license]))
+		}
+		builder.report(Progress{Phase: "summary", Stage: stage, Message: group.label + ": " + strings.Join(parts, ", ")})
+	}
 }
 
 func byteCount(value int64) string {

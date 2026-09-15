@@ -255,6 +255,17 @@ func TestRecordFiltersApplyToPartitionTargetsAndTrainingStream(t *testing.T) {
 	if !reflect.DeepEqual(texts, []string{"keep", "keep unset"}) {
 		t.Fatalf("filtered training texts = %v", texts)
 	}
+	summary := partition.SelectionSummary()
+	if summary.InputRecords != 4 || summary.IncludedRecords != 2 || summary.SkippedRecords != 2 || summary.HeldOutRecords != 0 {
+		t.Fatalf("selection summary = %+v", summary)
+	}
+	if !reflect.DeepEqual(summary.IncludedLicenses, map[string]int64{"CC-BY-4.0": 2}) || !reflect.DeepEqual(summary.SkippedLicenses, map[string]int64{"CC-BY-4.0": 1, "GPL-2.0-only": 1}) {
+		t.Fatalf("selection license counts = included %v, skipped %v", summary.IncludedLicenses, summary.SkippedLicenses)
+	}
+	snapshot := partition.Preflight(strings.Repeat("a", 64), parameters, false)
+	if err := snapshot.Validate(); err != nil || !reflect.DeepEqual(snapshot.SelectionSummary, summary) {
+		t.Fatalf("preflight selection summary = %+v, err = %v", snapshot.SelectionSummary, err)
+	}
 	if targets, err := CountByteTargets(context.Background(), []Input{input}); err != nil || targets != int64(len("keep")+len("keep unset")+1) {
 		t.Fatalf("filtered byte targets = %d, err = %v", targets, err)
 	}
