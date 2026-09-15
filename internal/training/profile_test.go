@@ -554,6 +554,29 @@ func TestTrainingStepCapacityAccountsForHeldOutRecords(t *testing.T) {
 	}
 }
 
+func TestMinimumEpochsForStepsExpandsFiniteTokenBudgetStream(t *testing.T) {
+	inputs := []Input{writeTrainingShard(t, []string{strings.Repeat("a", 20), strings.Repeat("b", 20)})}
+	parameters, err := ResolveParameters(Parameters{Tokens: 48, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := NewRecordPartition(inputs, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, epochs, err := partition.WithMinimumEpochsForSteps(context.Background(), parameters.Steps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if epochs != 2 {
+		t.Fatalf("minimum epochs = %d, want 2", epochs)
+	}
+	steps, sufficient, err := partition.TrainingStepCapacity(context.Background(), parameters.Steps)
+	if err != nil || !sufficient || steps != parameters.Steps {
+		t.Fatalf("expanded capacity = %d, sufficient = %t, err = %v", steps, sufficient, err)
+	}
+}
+
 func TestStagePreflightReconstructsTheSamePartition(t *testing.T) {
 	inputs := []Input{writeTrainingShard(t, []string{"alpha record", "beta record", "gamma record", "delta record"})}
 	fraction := 0.5

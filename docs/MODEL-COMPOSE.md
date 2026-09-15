@@ -466,7 +466,7 @@ must use one representation or the other, never both.
 | --- | --- | --- | --- |
 | `profile` | no | `causal-pretrain-shuffled` | Selects versioned record ordering, corpus exposure, and held-out selection. |
 | `parallelism` | no | `auto` | TorchTitan placement: `auto`, `data-parallel`, `hybrid-sharded-data-parallel`, or `fully-sharded-data-parallel`. The resolved placement is pinned in the run BOM. |
-| `tokens` | one training budget | positive integer | Fixed pretraining target budget. WALDO rounds it up to a complete optimizer step and persists the derived step count. Cannot be combined with `epochs` or `steps`. |
+| `tokens` | one training budget | positive integer | Fixed training target budget. WALDO rounds it up to a complete optimizer step and preflights the minimum deterministic corpus-pass count needed to supply it. Cannot be combined with `epochs` or `steps`. |
 | `epochs` | one training budget | `1..1000000` | Complete deterministic passes over every selected canonical record. When `steps` is omitted, WALDO derives the exact optimizer-step count after filtering and held-out selection. |
 | `steps` | legacy/fixed-step budget | positive integer | Explicit optimizer steps and learning-rate schedule length. Retained for existing composes and exact fixed-step experiments; it may be combined with `epochs` as a repetition limit. |
 | `batch_size` | yes | positive integer | Global number of packed sequences in each optimizer step. Multi-GPU training partitions these sequences across ranks, so the value must be at least and evenly divisible by the aggregate GPU count. |
@@ -506,10 +506,12 @@ derived_steps * batch_size * sequence_length
 Records are continuously packed with an EOS token between records; document
 boundaries do not force padding to a new sequence. Epoch-driven stages scan the
 finite filtered stream and derive their exact steps before creating a run.
-Fixed-token stages derive steps without a full scan and retain a single source
-pass. Legacy stages declaring both fields verify that their epochs contain
-enough packed targets to reach the requested steps. A run fails rather than
-silently shortening its declared budget.
+Fixed-token stages derive steps before scanning, then preflight and persist the
+minimum complete deterministic source-pass count needed to reach that budget.
+Legacy stages declaring both fields verify that their epochs contain enough
+packed targets to reach the requested steps. An impossible run fails during
+preflight rather than after accelerator work begins or by silently shortening
+its declared budget.
 
 Setting any one of `evaluation_fraction`, `evaluation_max_records`, or
 `evaluation_max_bytes` to zero disables the held-out set and resolves all

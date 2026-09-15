@@ -217,6 +217,9 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 		}
 		return Observation{}, fmt.Errorf("%s worker exited while leftover rank processes held its output stream open (%s)%s%s", label, abandoned, workerSkipped(skipped.String()), workerStderr(stderr.String()))
 	}
+	if writeErr != nil && !writeStoppedByWorkerExit(writeErr) {
+		return Observation{}, fmt.Errorf("stream records to %s worker: %w%s%s", label, writeErr, workerSkipped(skipped.String()), workerStderr(stderr.String()))
+	}
 	if worker.err != nil {
 		// CommandContext closes the worker pipes when cancellation kills the
 		// process. The output reader consequently observes EOF before a complete
@@ -226,9 +229,6 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 			return Observation{}, ctxErr
 		}
 		return Observation{}, fmt.Errorf("%s worker: %w%s%s", label, worker.err, workerSkipped(skipped.String()), workerStderr(stderr.String()))
-	}
-	if writeErr != nil && !errors.Is(writeErr, io.ErrClosedPipe) {
-		return Observation{}, fmt.Errorf("stream records to %s worker: %w%s", label, writeErr, workerStderr(stderr.String()))
 	}
 	if closeErr != nil && waitErr == nil {
 		return Observation{}, fmt.Errorf("close %s worker input: %w", label, closeErr)

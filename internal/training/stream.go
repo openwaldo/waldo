@@ -617,6 +617,52 @@ func (partition RecordPartition) TrainingStepCapacity(ctx context.Context, reque
 	return steps, steps >= requested, nil
 }
 
+// WithMinimumEpochsForSteps returns the smallest deterministic pass count that
+// can supply the requested optimizer steps. Token-budget stages use this during
+// preflight so a finite corpus cannot run out after accelerators have started.
+func (partition RecordPartition) WithMinimumEpochsForSteps(ctx context.Context, requested int64) (RecordPartition, int64, error) {
+	if requested <= 0 {
+		return RecordPartition{}, 0, fmt.Errorf("requested steps must be positive")
+	}
+	const maximumEpochs = int64(1_000_000)
+	capacityAt := func(epochs int64) (int64, bool, error) {
+		partition.parameters.Epochs = epochs
+		return partition.TrainingStepCapacity(ctx, requested)
+	}
+	low, high := int64(0), max(int64(1), partition.parameters.Epochs)
+	for {
+		available, sufficient, err := capacityAt(high)
+		if err != nil {
+			return RecordPartition{}, 0, err
+		}
+		if sufficient {
+			break
+		}
+		if available == 0 {
+			return RecordPartition{}, 0, fmt.Errorf("training stream contains no usable optimizer steps")
+		}
+		low = high
+		if high == maximumEpochs {
+			return RecordPartition{}, 0, fmt.Errorf("training stream cannot supply %d optimizer steps within %d epochs", requested, maximumEpochs)
+		}
+		high = min(maximumEpochs, high*2)
+	}
+	for low+1 < high {
+		middle := low + (high-low)/2
+		_, sufficient, err := capacityAt(middle)
+		if err != nil {
+			return RecordPartition{}, 0, err
+		}
+		if sufficient {
+			high = middle
+		} else {
+			low = middle
+		}
+	}
+	partition.parameters.Epochs = high
+	return partition, high, nil
+}
+
 // TrainingSteps scans the finite epoch stream and returns its exact optimizer
 // step count after continuous packing and partial-batch flushing.
 func (partition RecordPartition) TrainingSteps(ctx context.Context) (int64, error) {

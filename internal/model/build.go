@@ -275,6 +275,18 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		}
 		preflight = partition.Preflight(preflightIdentity, resolvedParameters, capacityVerified)
 	}
+	if stage.Parameters.Tokens > 0 && !capacityVerified {
+		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("determining deterministic corpus passes for %d optimizer steps", resolvedParameters.Steps)})
+		var epochs int64
+		partition, epochs, err = partition.WithMinimumEpochsForSteps(ctx, resolvedParameters.Steps)
+		if err != nil {
+			return Inspection{}, fmt.Errorf("stage %s training capacity: %w", stage.Name, err)
+		}
+		resolvedParameters.Epochs = epochs
+		capacityVerified = true
+		preflight = partition.Preflight(preflightIdentity, resolvedParameters, true)
+		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("verified capacity across %d deterministic corpus passes", epochs)})
+	}
 	for _, corpus := range partition.ZeroEligibleCorpora() {
 		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("warning: %s has no records after stage filters and will contribute zero training tokens", corpus)})
 	}
@@ -452,6 +464,9 @@ func validateCachedPreflightParameters(stage Stage, paths []string, snapshot tra
 		if err != nil {
 			return err
 		}
+	}
+	if stage.Parameters.Tokens > 0 && snapshot.CapacityVerified {
+		expected.Epochs = snapshot.Parameters.Epochs
 	}
 	if !equivalentTrainingParameters(expected, snapshot.Parameters) {
 		return fmt.Errorf("cached optimizer parameters do not match the current stage")
