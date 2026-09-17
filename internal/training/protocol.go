@@ -238,7 +238,7 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 		return err
 	}
 	if ordinal >= targetSequences {
-		return cacheWriter.Commit()
+		return cacheWriter.Commit(ordinal)
 	}
 	if errors.Is(err, errWorkerReachedTarget) {
 		return nil
@@ -248,10 +248,15 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 			return err
 		}
 	}
-	if ordinal < targetSequences {
-		return fmt.Errorf("prepared stream produced %d of %d required sequences", ordinal, targetSequences)
+	// Epoch-derived plans round a partial final global batch up to one
+	// optimizer step. The distributed worker pads the unused slots with
+	// zero-loss sequences, so the prepared stream only needs enough real
+	// sequences to enter that final step.
+	minimumSequences := targetSequences - begin.Parameters.BatchSize + 1
+	if ordinal < minimumSequences {
+		return fmt.Errorf("prepared stream produced %d sequences; at least %d are required to complete %d steps (%d full batch slots)", ordinal, minimumSequences, begin.Parameters.Steps, targetSequences)
 	}
-	return cacheWriter.Commit()
+	return cacheWriter.Commit(ordinal)
 }
 
 func anyMask(mask []bool) bool {

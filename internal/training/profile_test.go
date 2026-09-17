@@ -972,6 +972,79 @@ func TestPreparedSequencesAreDeterministicallyPartitionedByNode(t *testing.T) {
 	}
 }
 
+func TestPreparedSequencesAllowPartialFinalGlobalBatch(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 2, BatchSize: 4, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := Record{ID: "one", Tokens: []int{10, 11, 12, 13, 14, 15, 16, 17, 18}, LossMask: make([]bool, 10), Corpus: "corpus"}
+	for index := range record.LossMask {
+		record.LossMask[index] = true
+	}
+	seen := map[int64]bool{}
+	for node := 0; node < 2; node++ {
+		var encoded bytes.Buffer
+		begin := WorkerBegin{
+			Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: node,
+			Parallelism: Parallelism{WorldSize: 4, GPUsPerNode: 2, DataPlane: DataPlaneNodeLocal},
+		}
+		if err := WriteWorkerInput(context.Background(), &encoded, begin, staticRecordSource{record}, nil); err != nil {
+			t.Fatal(err)
+		}
+		decoder := json.NewDecoder(&encoded)
+		boundaries := 0
+		ended := false
+		for {
+			var frame WorkerInputFrame
+			if err := decoder.Decode(&frame); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				t.Fatal(err)
+			}
+			switch frame.Kind {
+			case "sequence":
+				if seen[frame.Sequence.Ordinal] {
+					t.Fatalf("sequence %d assigned to more than one node", frame.Sequence.Ordinal)
+				}
+				seen[frame.Sequence.Ordinal] = true
+			case "micro_batch_end":
+				boundaries++
+			case "end":
+				ended = true
+			}
+		}
+		if boundaries != 1 {
+			t.Fatalf("node %d received %d complete global-batch boundaries, want 1", node, boundaries)
+		}
+		if !ended {
+			t.Fatalf("node %d did not receive the end frame", node)
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("prepared partitions cover %d real sequences, want 5 real sequences plus 3 worker-padded slots", len(seen))
+	}
+}
+
+func TestPreparedSequencesRejectInsufficientFinalGlobalBatch(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 2, BatchSize: 4, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := Record{ID: "one", Tokens: []int{10, 11, 12, 13, 14, 15, 16}, LossMask: make([]bool, 8), Corpus: "corpus"}
+	for index := range record.LossMask {
+		record.LossMask[index] = true
+	}
+	begin := WorkerBegin{
+		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
+		Parallelism: Parallelism{WorldSize: 4, GPUsPerNode: 2, DataPlane: DataPlaneNodeLocal},
+	}
+	err = WriteWorkerInput(context.Background(), io.Discard, begin, staticRecordSource{record}, nil)
+	if err == nil || !strings.Contains(err.Error(), "produced 4 sequences; at least 5 are required") {
+		t.Fatalf("insufficient prepared stream error = %v", err)
+	}
+}
+
 type refusingRecordSource struct{}
 
 func (refusingRecordSource) Stream(context.Context, func(Record) error) error {
@@ -1024,6 +1097,40 @@ func TestPreparedSequenceCacheReplaysVerifiedChunks(t *testing.T) {
 	}
 	if err := WriteWorkerInput(context.Background(), io.Discard, begin, refusingRecordSource{}, nil); err == nil || !strings.Contains(err.Error(), "digest differs") {
 		t.Fatalf("tampered prepared cache error = %v", err)
+	}
+}
+
+func TestPreparedSequenceCachePreservesPartialGlobalBatchBoundary(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 2, BatchSize: 8, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := make([]int, 27)
+	for index := range tokens {
+		tokens[index] = index + 10
+	}
+	record := Record{ID: "one", Tokens: tokens, LossMask: make([]bool, 28), Corpus: "corpus"}
+	for index := range record.LossMask {
+		record.LossMask[index] = true
+	}
+	begin := WorkerBegin{
+		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
+		Parallelism:            Parallelism{WorldSize: 4, GPUsPerNode: 2, DataPlane: DataPlaneNodeLocal},
+		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("c", 64),
+	}
+	var first bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &first, begin, staticRecordSource{record}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var second bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &second, begin, refusingRecordSource{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if first.String() != second.String() {
+		t.Fatalf("cached partial worker stream differs\nfirst: %s\nsecond: %s", first.String(), second.String())
+	}
+	if boundaries := strings.Count(second.String(), `"kind":"micro_batch_end"`); boundaries != 1 {
+		t.Fatalf("cached partial worker stream has %d complete boundaries, want 1", boundaries)
 	}
 }
 

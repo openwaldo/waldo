@@ -28,6 +28,7 @@ type preparedCacheManifest struct {
 	GPUsPerNode      int                  `json:"gpus_per_node"`
 	GlobalMicroBatch int64                `json:"global_micro_batch"`
 	Sequences        int64                `json:"sequences"`
+	GlobalSequences  int64                `json:"global_sequences,omitempty"`
 	Chunks           []preparedCacheChunk `json:"chunks"`
 }
 
@@ -75,7 +76,7 @@ func newPreparedCacheWriter(base, identity string, nodeRank, worldSize, GPUsPerN
 	writer.target = filepath.Join(parent, fmt.Sprintf("node-%d", nodeRank))
 	writer.temporary = temporary
 	writer.maxBytes = maxBytes
-	writer.manifest = preparedCacheManifest{Kind: "openwaldo-prepared-sequences", Schema: 1, Identity: identity, NodeRank: nodeRank, WorldSize: worldSize, GPUsPerNode: GPUsPerNode, GlobalMicroBatch: globalMicroBatch}
+	writer.manifest = preparedCacheManifest{Kind: "openwaldo-prepared-sequences", Schema: 2, Identity: identity, NodeRank: nodeRank, WorldSize: worldSize, GPUsPerNode: GPUsPerNode, GlobalMicroBatch: globalMicroBatch}
 	return writer, nil
 }
 
@@ -141,10 +142,14 @@ func (writer *preparedCacheWriter) closeChunk() error {
 	return nil
 }
 
-func (writer *preparedCacheWriter) Commit() error {
+func (writer *preparedCacheWriter) Commit(globalSequences int64) error {
 	if !writer.enabled {
 		return nil
 	}
+	if globalSequences < 1 {
+		return fmt.Errorf("prepared cache global sequence count must be positive")
+	}
+	writer.manifest.GlobalSequences = globalSequences
 	if err := writer.closeChunk(); err != nil {
 		return err
 	}
@@ -200,6 +205,7 @@ func replayPreparedSequences(base, identity string, nodeRank, worldSize, GPUsPer
 		return false, nil
 	}
 	sequences := int64(0)
+	boundaries := int64(0)
 	previousOrdinal := int64(-1)
 	localMicroBatch := globalMicroBatch / int64(worldSize/GPUsPerNode)
 	if localMicroBatch < 1 {
@@ -241,11 +247,12 @@ func replayPreparedSequences(base, identity string, nodeRank, worldSize, GPUsPer
 			}
 			sequences++
 			chunkSequences++
-			if encoder != nil && sequences%localMicroBatch == 0 {
+			if encoder != nil && sequences%localMicroBatch == 0 && boundaries < manifest.GlobalSequences/globalMicroBatch {
 				if err := encoder.Encode(WorkerInputFrame{Kind: "micro_batch_end", Schema: WorkerProtocolSchema}); err != nil {
 					_ = file.Close()
 					return false, err
 				}
+				boundaries++
 			}
 		}
 		if err := file.Close(); err != nil {
@@ -275,8 +282,14 @@ func loadPreparedCache(directory, identity string, nodeRank, worldSize, GPUsPerN
 	if decoder.Decode(&struct{}{}) != io.EOF {
 		return preparedCacheManifest{}, fmt.Errorf("unexpected content after prepared cache manifest")
 	}
-	if manifest.Kind != "openwaldo-prepared-sequences" || manifest.Schema != 1 || manifest.Identity != identity || manifest.NodeRank != nodeRank || manifest.WorldSize != worldSize || manifest.GPUsPerNode != GPUsPerNode || manifest.GlobalMicroBatch != globalMicroBatch || manifest.Sequences < 1 || len(manifest.Chunks) == 0 {
+	if manifest.Kind != "openwaldo-prepared-sequences" || manifest.Schema < 1 || manifest.Schema > 2 || manifest.Identity != identity || manifest.NodeRank != nodeRank || manifest.WorldSize != worldSize || manifest.GPUsPerNode != GPUsPerNode || manifest.GlobalMicroBatch != globalMicroBatch || manifest.Sequences < 1 || len(manifest.Chunks) == 0 {
 		return preparedCacheManifest{}, fmt.Errorf("prepared cache manifest identity differs")
+	}
+	if manifest.Schema == 1 {
+		// Schema 1 caches could only be committed for complete global batches.
+		manifest.GlobalSequences = manifest.Sequences * int64(worldSize/GPUsPerNode)
+	} else if manifest.GlobalSequences < manifest.Sequences {
+		return preparedCacheManifest{}, fmt.Errorf("prepared cache manifest has invalid global sequence count")
 	}
 	var sequences int64
 	for position, chunk := range manifest.Chunks {
