@@ -1162,12 +1162,34 @@ func pendingComposeMatchesRequest(root string, pending composeTransaction, reque
 	if reflect.DeepEqual(pending.Compose, requested) {
 		return true, nil
 	}
+	normalized, _, err := normalizePendingComposeRequest(root, pending, requested)
+	if err != nil {
+		return false, err
+	}
+	return reflect.DeepEqual(pending.Compose, normalized), nil
+}
+
+// NormalizePendingComposeRequest removes only corpora completed before the
+// pending transaction began. Stages completed by the transaction remain in
+// the request so Compose can verify and advance past them durably.
+func NormalizePendingComposeRequest(root, name string, requested Compose) (Compose, []SkippedCorpus, error) {
+	pending, err := pendingComposeTransaction(root, name)
+	if err != nil {
+		return Compose{}, nil, err
+	}
+	if pending == nil {
+		return requested, nil, nil
+	}
+	return normalizePendingComposeRequest(root, *pending, requested)
+}
+
+func normalizePendingComposeRequest(root string, pending composeTransaction, requested Compose) (Compose, []SkippedCorpus, error) {
 	inspection, err := Inspect(root, pending.Name)
 	if err != nil {
-		return false, fmt.Errorf("inspect model for pending compose comparison: %w", err)
+		return Compose{}, nil, fmt.Errorf("inspect model for pending compose normalization: %w", err)
 	}
 	if pending.StartRun < 0 || pending.StartRun > len(inspection.Model.Runs) || pending.StartRun > len(inspection.RunBOMs) {
-		return false, fmt.Errorf("model %q pending compose has invalid start run %d", pending.Name, pending.StartRun)
+		return Compose{}, nil, fmt.Errorf("model %q pending compose has invalid start run %d", pending.Name, pending.StartRun)
 	}
 	// A transaction created while extending an existing model stores the
 	// requested compose after corpora completed before that transaction were
@@ -1175,8 +1197,8 @@ func pendingComposeMatchesRequest(root string, pending composeTransaction, reque
 	// transaction must remain in its compose until the transaction finishes.
 	inspection.Model.Runs = inspection.Model.Runs[:pending.StartRun]
 	inspection.RunBOMs = inspection.RunBOMs[:pending.StartRun]
-	normalized, _ := SkipCompletedCorpora(requested, inspection)
-	return reflect.DeepEqual(pending.Compose, normalized), nil
+	normalized, skipped := SkipCompletedCorpora(requested, inspection)
+	return normalized, skipped, nil
 }
 
 func validateComposeTarget(target Inspection, compose Compose) error {

@@ -1249,14 +1249,22 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 		return err
 	}
 	var skipped []model.SkippedCorpus
+	var inspection model.Inspection
 	if exists, err := model.Exists(builder.Root, name); err != nil {
 		return err
-	} else if exists && !pending {
-		inspection, err := model.Inspect(builder.Root, name)
+	} else if exists {
+		inspection, err = model.Inspect(builder.Root, name)
 		if err != nil {
 			return err
 		}
-		compose, skipped = model.SkipCompletedCorpora(compose, inspection)
+		if pending {
+			compose, skipped, err = model.NormalizePendingComposeRequest(builder.Root, name, compose)
+			if err != nil {
+				return err
+			}
+		} else {
+			compose, skipped = model.SkipCompletedCorpora(compose, inspection)
+		}
 		for _, corpus := range skipped {
 			fmt.Fprintf(stderr, "preflight/%s          skipped %s (already completed by this model)\n", corpus.Stage, corpus.Path)
 		}

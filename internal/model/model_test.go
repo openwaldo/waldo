@@ -1540,6 +1540,16 @@ func TestPendingComposeMatchesOriginalRequestBeforeCompletedCorporaAreSkipped(t 
 	if err := builder.CheckComposeTarget("conversation", requested); err != nil {
 		t.Fatalf("original compose request did not match its filtered pending transaction: %v", err)
 	}
+	normalized, normalizedSkipped, err := NormalizePendingComposeRequest(root, "conversation", requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(normalized, filtered) || !reflect.DeepEqual(normalizedSkipped, skipped) {
+		t.Fatalf("normalized pending compose = %+v, skipped = %+v", normalized.Stages, normalizedSkipped)
+	}
+	if _, err := builder.Compose(context.Background(), "conversation", normalized, prepared); !errors.Is(err, context.Canceled) {
+		t.Fatalf("normalized pending compose did not reach resumed training: %v", err)
+	}
 	different := requested
 	different.Stages = append([]Stage(nil), requested.Stages...)
 	different.Stages[2].Parameters.LearningRate *= 2
