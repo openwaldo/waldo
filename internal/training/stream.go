@@ -525,7 +525,11 @@ func readEvaluationRecords(ctx context.Context, inputs []Input, selected []evalu
 			}
 			record := recordFromView(input, row, view)
 			if record.Conversation == nil && objective == "causal-language-modeling" {
-				tokenTargets += int64(codec.Count(view.Text))
+				count, err := countTokens(codec, view.Text)
+				if err != nil {
+					return err
+				}
+				tokenTargets += int64(count)
 				records = append(records, record)
 				return nil
 			}
@@ -1010,7 +1014,11 @@ func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, ep
 		if err := consume(record); err != nil {
 			return err
 		}
-		emitted[selected] += int64(source.codec.Count(record.Text)) + 1
+		count, err := countTokens(source.codec, record.Text)
+		if err != nil {
+			return err
+		}
+		emitted[selected] += int64(count) + 1
 		item, ok := <-streams[selected]
 		if !ok {
 			active[selected] = false

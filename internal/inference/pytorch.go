@@ -115,10 +115,18 @@ func (session *PyTorchSession) Generate(ctx context.Context, prompt string, opti
 	}
 	request := workerRequest{Kind: "generate", Schema: 1, Prompt: prompt, MaxTokens: options.MaxTokens, Temperature: options.Temperature, TopP: options.TopP, Seed: options.Seed}
 	for _, stop := range options.Stop {
-		request.StopTokenIDs = append(request.StopTokenIDs, session.codec.Encode(stop))
+		tokens, err := session.codec.EncodeChecked(stop)
+		if err != nil {
+			return Result{}, err
+		}
+		request.StopTokenIDs = append(request.StopTokenIDs, tokens)
 	}
 	if session.spec.Name != "byte" {
-		request.TokenIDs = session.codec.Encode(prompt)
+		tokens, err := session.codec.EncodeChecked(prompt)
+		if err != nil {
+			return Result{}, err
+		}
+		request.TokenIDs = tokens
 		request.Prompt = ""
 	}
 	if err := session.encoder.Encode(request); err != nil {
@@ -138,7 +146,11 @@ func (session *PyTorchSession) Generate(ctx context.Context, prompt string, opti
 		case "token":
 			var data []byte
 			if frame.TokenID != nil {
-				data = []byte(session.codec.Decode([]int{*frame.TokenID}))
+				decoded, err := session.codec.DecodeChecked([]int{*frame.TokenID})
+				if err != nil {
+					return Result{}, err
+				}
+				data = []byte(decoded)
 			} else {
 				data, err = base64.StdEncoding.DecodeString(frame.Data)
 				if err != nil {

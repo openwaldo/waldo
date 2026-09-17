@@ -184,6 +184,13 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		}
 	}
 	codec, err := training.ResolveTokenizerCodec(inspection.Model.Architecture.Tokenizer.Name)
+	if tokenizer := inspection.Model.Architecture.Tokenizer; tokenizer.HuggingFace != nil {
+		var close func()
+		codec, close, err = training.OpenHuggingFaceTokenizer(ctx, tokenizer.HuggingFace.Spec(tokenizer.Revision, inspection.Model.Architecture.VocabularySize), inspection.Model.Architecture.Transformers)
+		if err == nil {
+			defer close()
+		}
+	}
 	if err != nil {
 		return Inspection{}, fmt.Errorf("stage %s tokenizer: %w", stage.Name, err)
 	}
@@ -545,7 +552,17 @@ func (builder Builder) resumeTraining(ctx context.Context, name string, inspecti
 
 func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPath string, record *ModelRecord, pin RunPin, run RunRecord, runBOM RunBOM, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, eligibleRecords map[string]int64, architectureJSON json.RawMessage, selection training.Selection, resume *training.ResumePoint) (Inspection, error) {
 	tokenizerSpec := training.TokenizerSpec{Name: record.Architecture.Tokenizer.Name, Revision: record.Architecture.Tokenizer.Revision, VocabularySize: int(record.Architecture.VocabularySize), PadID: 0, BOSID: 1, EOSID: 2}
-	if selection.Execution.Backend.Name == training.BackendPyTorch || selection.Execution.Backend.Name == training.BackendTorchTitan || selection.Execution.Backend.Name == training.BackendMLX {
+	var tokenizerCodec training.TokenCodec
+	if tokenizer := record.Architecture.Tokenizer; tokenizer.HuggingFace != nil {
+		tokenizerSpec = tokenizer.HuggingFace.Spec(tokenizer.Revision, record.Architecture.VocabularySize)
+		var close func()
+		var err error
+		tokenizerCodec, close, err = training.OpenHuggingFaceTokenizer(ctx, tokenizerSpec, record.Architecture.Transformers)
+		if err != nil {
+			return Inspection{}, err
+		}
+		defer close()
+	} else if selection.Execution.Backend.Name == training.BackendPyTorch || selection.Execution.Backend.Name == training.BackendTorchTitan || selection.Execution.Backend.Name == training.BackendMLX || selection.Execution.Backend.Name == training.BackendTransformers {
 		var err error
 		tokenizerSpec, _, err = training.ResolveTokenizer(record.Architecture.Tokenizer.Name, record.Architecture.Tokenizer.Revision, record.Architecture.VocabularySize)
 		if err != nil {
@@ -602,7 +619,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 		RunID: pin.ID, Stage: stage.Name, Objective: stage.Objective,
 		Conversation:       runBOM.Conversation,
 		ArchitectureSHA256: record.ArchitectureSHA256,
-		Architecture:       architectureJSON, Tokenizer: tokenizerSpec, BOM: prepared.BOM, Inputs: prepared.Inputs,
+		Architecture:       architectureJSON, Tokenizer: tokenizerSpec, TokenizerCodec: tokenizerCodec, BOM: prepared.BOM, Inputs: prepared.Inputs,
 		Parameters: runBOM.Parameters, Records: records, EvaluationRecords: evaluationRecords, EvaluationSet: EvaluationSetValue(runBOM.EvaluationSet), Initialization: initializationForAttempt(runBOM.Initialization, resume), Resume: resume,
 		Parallelism:       runBOM.Execution.Parallelism,
 		ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix), ArtifactPrefix: artifactPrefix, Report: report,

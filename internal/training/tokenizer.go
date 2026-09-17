@@ -26,21 +26,54 @@ const (
 )
 
 type TokenizerSpec struct {
-	Name           string `json:"name"`
-	Revision       string `json:"revision"`
-	VocabularySize int    `json:"vocabulary_size"`
-	PadID          int    `json:"pad_id"`
-	BOSID          int    `json:"bos_id"`
-	EOSID          int    `json:"eos_id"`
+	Name           string                `json:"name"`
+	Revision       string                `json:"revision"`
+	VocabularySize int                   `json:"vocabulary_size"`
+	PadID          int                   `json:"pad_id"`
+	BOSID          int                   `json:"bos_id"`
+	EOSID          int                   `json:"eos_id"`
+	HuggingFace    *HuggingFaceTokenizer `json:"huggingface,omitempty"`
 }
 
 type TokenCodec interface {
+	DecodeChecked([]int) (string, error)
+	CountChecked(string) (int, error)
+	EncodeChecked(string) ([]int, error)
+}
+
+type localTokenCodec interface {
 	Count(string) int
 	Encode(string) []int
 	Decode([]int) string
 }
 
+// Local codecs adapt to the fallible training interface without changing their
+// native API. Interpreter failures must never become empty training records.
+type localCodecAdapter struct{ localTokenCodec }
+
+func (codec localCodecAdapter) DecodeChecked(tokens []int) (string, error) {
+	return codec.Decode(tokens), nil
+}
+
+func (codec localCodecAdapter) EncodeChecked(text string) ([]int, error) {
+	return codec.Encode(text), nil
+}
+func (codec localCodecAdapter) CountChecked(text string) (int, error) { return codec.Count(text), nil }
+
+func encodeTokens(codec TokenCodec, text string) ([]int, error) {
+	return codec.EncodeChecked(text)
+}
+
+func countTokens(codec TokenCodec, text string) (int, error) {
+	return codec.CountChecked(text)
+}
+
 type byteCodec struct{}
+
+func (codec byteCodec) DecodeChecked(tokens []int) (string, error) { return codec.Decode(tokens), nil }
+
+func (codec byteCodec) EncodeChecked(text string) ([]int, error) { return codec.Encode(text), nil }
+func (codec byteCodec) CountChecked(text string) (int, error)    { return codec.Count(text), nil }
 
 func (byteCodec) Count(text string) int { return len([]byte(text)) }
 func (byteCodec) Encode(text string) []int {
@@ -69,13 +102,13 @@ func ResolveTokenizer(name, revision string, vocabularySize uint64) (TokenizerSp
 		if err != nil {
 			return TokenizerSpec{}, nil, err
 		}
-		return TokenizerSpec{Name: name, Revision: revision, VocabularySize: TiktokenCL100KVocabulary, PadID: TiktokenCL100KPadID, BOSID: TiktokenCL100KBOSID, EOSID: TiktokenCL100KEOSID}, codec, nil
+		return TokenizerSpec{Name: name, Revision: revision, VocabularySize: TiktokenCL100KVocabulary, PadID: TiktokenCL100KPadID, BOSID: TiktokenCL100KBOSID, EOSID: TiktokenCL100KEOSID}, localCodecAdapter{codec}, nil
 	case name == "tiktoken/r50k_base" && revision == TiktokenR50KRevision && vocabularySize == TiktokenR50KVocabulary:
 		codec, err := waldoTokenizer.NewCodec(name)
 		if err != nil {
 			return TokenizerSpec{}, nil, err
 		}
-		return TokenizerSpec{Name: name, Revision: revision, VocabularySize: TiktokenR50KVocabulary, PadID: TiktokenR50KPadID, BOSID: TiktokenR50KBOSID, EOSID: TiktokenR50KEOSID}, codec, nil
+		return TokenizerSpec{Name: name, Revision: revision, VocabularySize: TiktokenR50KVocabulary, PadID: TiktokenR50KPadID, BOSID: TiktokenR50KBOSID, EOSID: TiktokenR50KEOSID}, localCodecAdapter{codec}, nil
 	default:
 		return TokenizerSpec{}, nil, fmt.Errorf("unsupported tokenizer %s@%s with vocabulary_size %d", name, revision, vocabularySize)
 	}
@@ -90,7 +123,11 @@ func ResolveTokenizerCodec(name string) (TokenCodec, error) {
 		return byteCodec{}, nil
 	}
 	if name == waldoTokenizer.Default || name == "tiktoken/r50k_base" {
-		return waldoTokenizer.NewCodec(name)
+		codec, err := waldoTokenizer.NewCodec(name)
+		if err != nil {
+			return nil, err
+		}
+		return localCodecAdapter{codec}, nil
 	}
 	return nil, fmt.Errorf("unsupported tokenizer %q", name)
 }

@@ -82,8 +82,13 @@ func (transform ConversationTransform) render(conversation record.Conversation, 
 	}
 	var tokens []int
 	var mask []bool
+	var encodeErr error
 	appendPart := func(value string, supervised bool) {
-		part := codec.Encode(value)
+		if encodeErr != nil {
+			return
+		}
+		var part []int
+		part, encodeErr = encodeTokens(codec, value)
 		tokens = append(tokens, part...)
 		for range part {
 			mask = append(mask, supervised)
@@ -111,6 +116,9 @@ func (transform ConversationTransform) render(conversation record.Conversation, 
 			appendPart(content, supervised)
 			appendPart("<|im_end|>\n", supervised)
 		}
+	}
+	if encodeErr != nil {
+		return nil, nil, encodeErr
 	}
 	if len(tokens) == 0 {
 		return nil, nil, fmt.Errorf("conversation transformation produced no tokens")
@@ -148,7 +156,10 @@ func tokenizeRecord(record Record, codec TokenCodec, objective string, transform
 	if objective == "assistant-response-modeling" {
 		return nil, nil, fmt.Errorf("assistant-response-modeling requires structured conversation records")
 	}
-	tokens := codec.Encode(record.Text)
+	tokens, err := encodeTokens(codec, record.Text)
+	if err != nil {
+		return nil, nil, err
+	}
 	mask := make([]bool, len(tokens)+1)
 	for index := range mask {
 		mask[index] = true

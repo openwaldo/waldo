@@ -11,6 +11,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -53,6 +54,8 @@ type pyTorchProbe struct {
 	Manufacturer  string `json:"manufacturer"`
 	Accelerator   string `json:"accelerator"`
 	MemoryBytes   uint64 `json:"memory_bytes"`
+	DeviceCount   int    `json:"device_count"`
+	BF16Supported bool   `json:"bf16_supported"`
 }
 
 type PyTorchResolver struct {
@@ -129,9 +132,15 @@ func (resolver PyTorchResolver) Resolve(ctx context.Context, request ResolveRequ
 const pyTorchProbeProgram = `
 import json
 import platform
+import sys
 import torch
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+requested = sys.argv[1] if len(sys.argv) > 1 else "auto"
+if requested not in ("auto", "cpu", "cuda"):
+    raise ValueError("device must be auto, cpu, or cuda")
+device = ("cuda" if torch.cuda.is_available() else "cpu") if requested == "auto" else requested
+if device == "cuda" and not torch.cuda.is_available():
+    raise ValueError("CUDA/ROCm was requested but is unavailable")
 manufacturer = ""
 accelerator = ""
 memory_bytes = 0
@@ -155,13 +164,40 @@ print(json.dumps({
     "manufacturer": manufacturer,
     "accelerator": accelerator,
     "memory_bytes": memory_bytes,
+    "device_count": torch.cuda.device_count() if device == "cuda" else 0,
+    "bf16_supported": torch.cuda.is_bf16_supported() if device == "cuda" else False,
 }))
 `
 
 func probePyTorch(ctx context.Context, python string) (pyTorchProbe, error) {
+	return probePyTorchDevice(ctx, python, "auto")
+}
+
+// PyTorchDeviceFacts is shared by native and provider-specific runtimes.
+type PyTorchDeviceFacts = pyTorchProbe
+
+func ProbeTransformersDevice(ctx context.Context, python string) (PyTorchDeviceFacts, error) {
+	device := os.Getenv("WALDO_TRANSFORMERS_DEVICE")
+	if device == "" {
+		device = "auto"
+	}
+	if device != "auto" && device != "cpu" && device != "cuda" {
+		return pyTorchProbe{}, fmt.Errorf("WALDO_TRANSFORMERS_DEVICE must be auto, cpu, or cuda")
+	}
+	facts, err := probePyTorchDevice(ctx, python, device)
+	if err != nil {
+		return facts, err
+	}
+	if facts.Device == "cuda" && facts.DeviceCount != 1 {
+		return facts, fmt.Errorf("Transformers requires one visible GPU; select it with CUDA_VISIBLE_DEVICES (or the ROCm equivalent)")
+	}
+	return facts, nil
+}
+
+func probePyTorchDevice(ctx context.Context, python, device string) (pyTorchProbe, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	command := exec.CommandContext(probeCtx, python, "-c", pyTorchProbeProgram)
+	command := exec.CommandContext(probeCtx, python, "-c", pyTorchProbeProgram, device)
 	var stderr cappedBuffer
 	command.Stderr = &stderr
 	output, err := command.Output()
