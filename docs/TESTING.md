@@ -51,6 +51,89 @@ hostfile parsing, SSH staging, routing, firewall, and inter-host NCCL.
 
 ## Live tests
 
+### Transformers experiment
+
+The stdlib Python suite tests packing/loss masks and package-tampering rejection
+without installing Transformers. The real Go lifecycle test is opt-in:
+
+```bash
+WALDO_TRANSFORMERS_PYTHON=/absolute/path/to/venv/bin/python \
+WALDO_TRANSFORMERS_WHEEL=/absolute/path/to/transformers-5.16.1-py3-none-any.whl \
+go test ./internal/model -run TestTransformersRealLifecycle -v -count=1
+```
+
+Prepare the isolated runtime as described in [MODEL-COMPOSE.md](MODEL-COMPOSE.md).
+The test uses generated local Parquet/corpus-BOM fixtures and tiny random
+Llama, Qwen2, and Qwen3 models. It exercises Trainer for two optimizer steps,
+verifies durable artifacts, and continues the Llama from saved weights with
+gradient accumulation. It performs no model downloads or external publication.
+Tests skip this path unless both variables are set.
+
+With the same runtime variables set, run the dedicated custom Qwen3 compose test:
+
+```bash
+go test ./internal/model -run 'TestTransformersQwen3Smoke$' -v -count=1
+```
+
+This loads `docs/examples/transformers-qwen3-smoke.yaml`, trains a randomly
+initialized two-layer Qwen3 using local fixtures, and verifies the saved custom
+dimensions, measured parameter count, evaluation, and artifact hashes.
+
+For the pinned standard Qwen tokenizer smoke, acquire `tokenizer.json` and
+`tokenizer_config.json` from `Qwen/Qwen3-0.6B` at commit
+`c1899de289a04d12100db370d81485cdf75e47ca`. The example compose records their
+SHA-256 hashes. With the same Python/wheel variables set:
+
+```bash
+WALDO_HF_TOKENIZER_DIR=/absolute/path/to/tokenizer-files \
+go test ./internal/model -run TestTransformersHuggingFaceTokenizerSmoke -v -count=1
+```
+
+This trains random weights for two steps on local fixtures and verifies the
+tokenizer artifacts. No model weights or datasets are downloaded by the test.
+
+To exercise CPU chat against a completed, disposable Transformers smoke model
+without modifying it, set the Python/wheel variables above and run:
+
+```bash
+WALDO_HF_CHAT_TEST_ROOT=/absolute/path/to/models \
+WALDO_HF_CHAT_TEST_MODEL=qwen3-tokenizer-smoke \
+go test ./internal/inference -run TestTransformersRealChat -v -count=1
+```
+
+The test checks streamed output and repeated deterministic generation in one
+session. Run it with both byte and pinned fast-tokenizer smoke models.
+
+The expanded family matrix covers Mistral, Gemma 2, Phi-3, OLMo 2, Mixtral,
+and text-only Qwen3.5. Each test trains a tiny random model, continues from saved
+weights with gradient accumulation, runs chat, and exports verified artifacts:
+
+```bash
+WALDO_TRANSFORMERS_DEVICE=cpu \
+go test ./internal/model -run '^TestTransformersFamilyLifecycle$' -v -count=1
+```
+
+For GPU acceptance, use a Linux host with the matching Transformers wheel and
+a working PyTorch CUDA/ROCm runtime. Keep the Python/wheel variables set and
+expose exactly one GPU. For CUDA:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 bash testing/hf-gpu.sh fp32
+CUDA_VISIBLE_DEVICES=0 bash testing/hf-gpu.sh fp16
+CUDA_VISIBLE_DEVICES=0 bash testing/hf-gpu.sh bf16
+```
+
+The script forces GPU execution and fails rather than silently using CPU. BF16
+requires supporting hardware; a rejection is not a passing BF16 test. For ROCm,
+use that runtime's device-visibility control. No model weights, datasets, or
+tokenizers are downloaded. Test-managed models and exported releases are local
+temporary files. Attach command output and GPU/runtime details to PR feedback.
+The new-family matrix honors the selected mixed precision; existing Llama and
+Qwen smoke tests also run as baseline FP32 regressions.
+CPU and mocked hardware-policy tests do not establish GPU correctness.
+
+### External services
+
 Live tests are never run by `testing/all.sh`. Their environment variables are
 deliberate write or network authorization.
 

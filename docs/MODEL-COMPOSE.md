@@ -1,5 +1,197 @@
 # Model compose guide
 
+## Schema 2 native envelope
+
+Schema 2 supports the native training engine through explicit discriminators:
+
+```yaml
+kind: waldo-model-compose
+schema: 2
+training:
+  engine: waldo-native
+architecture:
+  provider: waldo-native
+  config:
+    # All existing native architecture fields, including tokenizer, go here.
+```
+
+`base`, `interaction`, and `stages` retain schema-1 syntax and semantics.
+The native reader requires the engine, provider, and config mapping, rejects
+unknown fields, and normalizes the document to the existing schema-1 domain
+representation. Archived compose history uses that normalized form. Equivalent
+native composes retain the same architecture and training identities.
+
+The complete [native schema-2 example](examples/planned-schema2-tool-use.yaml)
+can be used with normal forecast and train commands when its managed parent is
+available. An experimental Transformers engine is described below. The rest of
+this guide describes the native representation shared by both input schemas.
+
+## Experimental Transformers engine
+
+[transformers-smoke.yaml](examples/transformers-smoke.yaml) is an executable
+two-step experiment, with no pretrained checkpoint. It selects
+`training.engine: huggingface-transformers` and a matching
+`architecture.provider`. `model_class`, `config_class`, and the nested `config`
+select the Transformers model implementation. The supported pairs are:
+
+| Model class | Config class |
+| --- | --- |
+| `LlamaForCausalLM` | `LlamaConfig` |
+| `Qwen2ForCausalLM` | `Qwen2Config` |
+| `Qwen3ForCausalLM` | `Qwen3Config` |
+| `MistralForCausalLM` | `MistralConfig` |
+| `Gemma2ForCausalLM` | `Gemma2Config` |
+| `Phi3ForCausalLM` | `Phi3Config` |
+| `Olmo2ForCausalLM` | `Olmo2Config` |
+| `MixtralForCausalLM` | `MixtralConfig` |
+| `Qwen3_5ForCausalLM` | `Qwen3_5TextConfig` |
+
+One embedded registry owns the pairs for compose validation, training, and
+inference. Classes come from the verified installed package, never remote model
+code. Qwen3.5 support is text-only, not its multimodal wrapper. Its tiny hybrid
+smoke contains both linear-attention and full-attention layers and uses the
+package's built-in fallback kernels. Optional external kernels are not required.
+
+Mixtral requires explicit `num_local_experts`, `num_experts_per_tok`, and
+`output_router_logits: true`. Its objective includes the configured
+`router_aux_loss_coef` times router balancing loss, scaled with target-weighted
+gradient accumulation. Padding is excluded from router balancing via an
+attention mask; assistant loss masking does not remove prompt context from
+attention. Held-out loss remains pure token-weighted cross entropy.
+Forecasts include all resident experts; `runtime.json` records measured total
+and expert parameters plus an explicitly defined active-parameter estimate.
+Hybrid forecasts are only dense-decoder proxies, not recurrent-state or memory
+estimates. Use measured runtime counts rather than treating forecasts as exact.
+
+The [custom Qwen3 smoke compose](examples/transformers-qwen3-smoke.yaml) uses
+two layers, hidden size 64, intermediate size 160, four attention heads, two KV
+heads, and head dimension 16. It runs two CPU optimizer steps from random weights
+with the byte tokenizer. This tests architecture/config forwarding, not language
+quality or the pretrained Qwen tokenizer. Its measured size is 102,976 parameters.
+
+Retained internal composes use the normalized schema-1 domain representation:
+the architecture's `transformers` object retains the pinned package, classes,
+and provider config, while parameters' `trainer` object retains the class and
+arguments. These are internal serialization fields, not the recommended input
+syntax. Author new provider composes using the schema-2 envelope above.
+
+No parameter-count field is required. Declare `vocab_size`, `hidden_size`,
+`intermediate_size`, `num_hidden_layers`, `num_attention_heads`,
+`num_key_value_heads`, and `max_position_embeddings` in `architecture.config`.
+Other recognized configuration values are forwarded to the selected config
+class. Unknown config keys fail during runtime preflight. The forecast uses a
+rough decoder approximation, not an exact provider-specific count. The worker
+records the actual parameter count and resolved config after construction.
+
+`architecture.tokenizer` supports WALDO's `{name, revision}` byte/tiktoken
+contracts, or `name: huggingface` with an immutable 40-character Hub commit
+`revision` and a `huggingface` object. That object declares `source`
+(`owner/repository`), `files` (filename-to-SHA256 map), `pad_id`, `eos_id`, and
+optional `bos_id`. Omit `bos_id` when the tokenizer has no BOS; set the model
+config's `bos_token_id` to null. Special IDs must match the loaded tokenizer
+and model config. Model vocabulary may be padded but must contain every ID.
+
+Set `WALDO_HF_TOKENIZER_DIR` to locally acquired files. WALDO does not download
+tokenizers. Both `tokenizer.json` and `tokenizer_config.json` must be pinned;
+`special_tokens_map.json` and `chat_template.jinja` are optional pinned assets.
+Only data-only fast tokenizers load, offline, through the verified Transformers
+package; custom code and asset-path redirects are rejected. Unpinned files in
+the source directory are not loaded. Planning and training use the same encoder
+with `add_special_tokens=False`; WALDO appends one EOS per record and no BOS.
+Conversation formatting remains WALDO's, not the upstream chat template.
+See the [standard Qwen tokenizer smoke compose](examples/transformers-qwen3-tokenizer-smoke.yaml).
+Omitting `base` constructs the model from its config with random weights.
+`base.model` can initialize from a compatible verified managed-model run;
+`base.source` is not supported by this adapter.
+
+Each stage declares `trainer.class: Trainer` and `trainer.arguments`.
+`per_device_train_batch_size` and `learning_rate` are required here, not under
+`parameters`. Optional `gradient_accumulation_steps` defaults to 1; their product
+is WALDO's effective single-process batch size. The allowed passthroughs are:
+
+- `per_device_train_batch_size`, `per_device_eval_batch_size`,
+  `gradient_accumulation_steps`, `learning_rate`, `weight_decay`;
+- `adam_beta1`, `adam_beta2`, `adam_epsilon`, `optim`, `optim_args`,
+  `lr_scheduler_type`, `lr_scheduler_kwargs`, `warmup_steps`, `max_grad_norm`;
+- `bf16`, `fp16`, `gradient_checkpointing`, `gradient_checkpointing_kwargs`,
+  `use_cache`, `logging_steps`, and `full_determinism`.
+
+The installed TrainingArguments implementation validates values. `parameters`
+continues to own the token/step/epoch budget, sequence length, seed, corpus
+selection, weighted ordering, bounded shuffle, and deterministic held-out
+selection. WALDO supplies already-tokenized, packed, shifted labels to Trainer,
+including assistant-response loss masks. Native optimizer/scheduler defaults
+are not recorded as claims about a Transformers run. Requested Trainer arguments
+are in the run BOM; resolved TrainingArguments are a hashed output artifact.
+
+WALDO owns output paths, stopping rules, data loaders, topology, and publication.
+Arguments such as `output_dir`, `max_steps`, `push_to_hub`, `report_to`, and
+distributed configuration are rejected rather than silently overriding the
+compose. The experimental worker runs on CPU or one visible GPU, performs a final
+held-out evaluation, and saves final weights. Periodic evaluation/checkpoint
+scheduling and optimizer-checkpoint resume are not implemented. An interrupted
+attempt without a checkpoint restarts that stage; completed stages can supply
+verified weights to subsequent stages.
+
+### Package pin and local runtime
+
+`WALDO_TRANSFORMERS_DEVICE=auto|cpu|cuda` controls both training and inference;
+the default is `auto`. The shared WALDO PyTorch hardware probe selects an
+available CUDA/ROCm device, records its identity/memory, and executes a real
+device operation. Explicit `cuda` fails if unavailable; it never falls back to
+CPU. Select exactly one visible GPU using `CUDA_VISIBLE_DEVICES` (or ROCm's
+equivalent). Multiple visible GPUs and distributed launch are rejected. Apple
+MPS is not implemented; auto uses CPU on this Mac path.
+
+Trainer `fp16` and `bf16` options are mutually exclusive and GPU-only here.
+`fp16` scaling requires float32 model parameters. BF16 requires device support.
+Device and precision are checked again in the worker, and Trainer's actual
+device/topology must match resolution. Run evidence includes the selected
+hardware and resolved Trainer arguments. GPU execution requires operator-run
+hardware tests before claiming validation on that hardware; CPU tests are not
+evidence of GPU correctness.
+
+`training.package` requires `distribution: transformers`, an exact release
+`version`, its matching `transformers-VERSION-py3-none-any.whl` artifact name,
+and a lowercase SHA-256 hash. These pins contribute to the architecture's
+interpretation identity and the execution/run provenance. WALDO does not install
+packages automatically. Prepare an isolated environment, then set:
+
+```bash
+export WALDO_TRANSFORMERS_PYTHON=/absolute/path/to/venv/bin/python
+export WALDO_TRANSFORMERS_WHEEL=/absolute/path/to/transformers-5.16.1-py3-none-any.whl
+```
+
+The environment needs the pinned wheel installed plus compatible `torch` and
+`accelerate` dependencies. `model.backend=auto` selects this adapter from the
+compose engine; an explicit `fake`, `mlx`, or `torchtitan` preference conflicts
+and fails. The initial implementation does not use a GPU even on GPU hosts.
+The worker hashes the local wheel, checks the installed distribution version,
+compares installed package files with wheel contents, and compiles verified
+source rather than trusting bytecode caches. It repeats verification at run
+startup. This assumes a trusted local Python interpreter, not a hostile runtime.
+Dependencies are version-inventoried but are not transitively wheel-locked.
+
+Final artifacts include provider-native `model.safetensors`, resolved
+`config.json`, the WALDO `tokenizer.json` descriptor, `training_args.json`, and
+`runtime.json`. For Hugging Face tokenizers, `tokenizer.json` contains the real
+upstream tokenizer; its WALDO descriptor is `waldo_tokenizer.json`, and all
+pinned tokenizer assets are saved byte-for-byte. WALDO verifies their hashes
+through the normal lifecycle.
+Hugging Face release export supports byte and pinned fast tokenizers and carries
+the package pin, Trainer settings, and runtime evidence through the existing
+release-signing callback. `waldo model chat` supports Transformers inference
+for byte and pinned fast tokenizers through the same verified package runtime.
+Native format conversion,
+quantization, and tiktoken release packaging are explicitly unsupported.
+
+The [Qwen3.5 design example](examples/planned-transformers-qwen35-tool-use.yaml)
+remains planned because of its tokenizer/chat-template syntax; the executable
+text-only hybrid smoke is [transformers-qwen35-smoke.yaml](examples/transformers-qwen35-smoke.yaml).
+Upstream chat-template rendering, additional model/task families, arbitrary
+Trainer subclasses, distributed execution, and a fully locked dependency closure still require
+implementation; this experiment does not claim to support all of Transformers.
+
 A model compose is a strict, portable YAML or JSON document that declares a
 model architecture and one or more ordered training stages. Use one when WALDO
 must create a model, train several stages as one resumable transaction, or

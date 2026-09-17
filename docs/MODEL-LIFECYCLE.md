@@ -7,6 +7,11 @@ It never silently substitutes simulation for training.
 
 All durable formats in this document use schema 1.
 
+Schema-2 composes can also select the experimental Transformers engine.
+Its supported classes, argument ownership, package verification, artifacts, and
+current limitations are specified in [MODEL-COMPOSE.md](MODEL-COMPOSE.md).
+The native backend policy described below does not choose its model class.
+
 ## Machine configuration
 
 Logical corpus paths use one configured index checkout. Model state and the
@@ -245,6 +250,28 @@ vocabulary sizes fail during backend resolution before a run record is
 created. WALDO records the selected Python path, framework version, host,
 device, accelerator identity, and accelerator memory when applicable in the
 run BOM.
+
+### Transformers chat
+
+For complete real runs of the supported Transformers architectures, `model chat` uses
+a dedicated CPU/single-GPU worker. Set `WALDO_TRANSFORMERS_PYTHON` and
+`WALDO_TRANSFORMERS_WHEEL` to the training runtime and exactly pinned wheel.
+The worker reuses training's wheel/source verification and loads only verified
+run artifacts. Pinned fast tokenizers load from saved run files; the original
+`WALDO_HF_TOKENIZER_DIR` is not needed. Byte tokenizers are also supported;
+tiktoken-based Transformers chat is not yet supported.
+
+Sampling supports temperature, top-p, seeds, EOS, streaming, and interaction
+stop strings. Undecodable padded vocabulary rows are excluded. Prompt encoding
+adds no automatic BOS/EOS; an empty prompt requires a declared BOS. Context is
+a sliding window with no KV cache. Generation uses float32 on CPU and the
+configured parameter dtype on GPU; it does not change stored weights.
+`WALDO_TRANSFORMERS_DEVICE=auto|cpu|cuda` uses the same verified hardware
+selection as training. Cancellation terminates the session worker.
+
+The existing WALDO interaction contract formats prompts, matching training's
+conversation format. Upstream Hugging Face chat templates are not applied.
+This does not make a pretraining smoke model instruction-following.
 
 ## Model compose
 

@@ -85,6 +85,9 @@ type releaseArtifact struct {
 }
 
 func ExportHuggingFace(ctx context.Context, inspection model.Inspection, destination string, options Options) (string, error) {
+	if inspection.Model.Architecture.Transformers != nil {
+		return exportTransformers(ctx, inspection, destination, options)
+	}
 	return exportLlamaPackage(ctx, inspection, destination, options, "huggingface")
 }
 

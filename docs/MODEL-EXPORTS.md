@@ -497,3 +497,20 @@ The architectural rationale is recorded in
 are documented in [the model lifecycle guide](MODEL-LIFECYCLE.md), and the
 regulatory mapping is documented in
 [the EU GPAI disclosure guide](EU-GPAI-DISCLOSURE.md).
+
+## Experimental Transformers releases
+
+Models trained with the schema-2 Transformers engine export to Hugging Face
+without rewriting provider-native tensor names or model configuration. The
+current release path supports the WALDO byte tokenizer or pinned Hugging Face
+fast-tokenizer assets and rejects quantization. Fast-tokenizer files are copied
+byte-for-byte and checked against both run evidence and compose hashes. Their
+WALDO framing descriptor is `waldo_tokenizer.json`; `tokenizer.json` remains the
+upstream tokenizer. Upstream chat templates are retained as source evidence,
+not claimed to match WALDO's training conversation format.
+It includes the complete training-run BOM, requested/resolved Trainer settings,
+package pin, and runtime evidence in the hashed release inventory before the
+normal signing callback. Transitive dependencies are not hash-locked.
+MLX/GGUF/Ollama conversion is unsupported for these models. Managed models can
+use `waldo model chat` through the dedicated Transformers runtime.
+See [MODEL-COMPOSE.md](MODEL-COMPOSE.md) for the experimental engine contract.

@@ -1,0 +1,75 @@
+# Native schema-2 example, mirroring composes/holding/tool-use.yaml.
+# Requires a completed managed conversation model with matching architecture.
+#
+# Specialize the completed managed conversation model on reviewed structured
+# tool interactions without changing its architecture or relearning its
+# language and conversation foundation.
+kind: waldo-model-compose
+schema: 2
+
+training:
+  # This selects WALDO's portable training behavior. The machine-local backend
+  # remains auto, mlx, pytorch, or torchtitan policy outside the compose.
+  engine: waldo-native
+
+base:
+  model: conversation
+
+interaction:
+  template: user-assistant-v1
+  tools: true
+
+architecture:
+  provider: waldo-native
+  config:
+    family: decoder-transformer
+    context_tokens: 2048
+    vocabulary_size: 50259
+    hidden_size: 1152
+    intermediate_size: 3072
+    layers: 20
+    attention_heads: 16
+    key_value_heads: 4
+    dropout: 0.1
+    tie_embeddings: true
+    parameter_dtype: bfloat16
+    tokenizer:
+      name: tiktoken/r50k_base
+      revision: tiktoken-r50k-base
+
+stages:
+  # Tool outputs are context, not prediction targets. Keep one reviewed call
+  # syntax and mix it with ordinary assistant responses. The previous complete
+  # pass over xLAM, SmolTalk2, and OpenThoughts taught incompatible bare-array
+  # and agent-call patterns strongly enough that the model called invented
+  # tools even when no tool registry was present.
+  - name: tool-use-sft
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - {path: post-train/sft/hermes-function-calling, weight: 4}
+      - {path: post-train/sft/interaction-contract-v1, weight: 4}
+      - {path: post-train/sft/helpsteer2, weight: 2}
+    parameters:
+      profile: causal-pretrain-weighted
+      tokens: 20000000
+      batch_size: 8
+      sequence_length: 2048
+      learning_rate: 0.000004
+      seed: 45
+      weight_decay: 0.03
+      warmup_steps: 61
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 536870912
+      checkpoint_every: 152
+      evaluate_every: 152
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432

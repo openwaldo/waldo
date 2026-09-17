@@ -263,6 +263,17 @@ type countingTokenCodec struct {
 	counts int
 }
 
+func (codec *countingTokenCodec) DecodeChecked(tokens []int) (string, error) {
+	return codec.Decode(tokens), nil
+}
+
+func (codec *countingTokenCodec) CountChecked(text string) (int, error) {
+	return codec.Count(text), nil
+}
+func (codec *countingTokenCodec) EncodeChecked(text string) ([]int, error) {
+	return codec.Encode(text), nil
+}
+
 func (codec *countingTokenCodec) Count(text string) int {
 	codec.counts++
 	return len([]byte(text))
