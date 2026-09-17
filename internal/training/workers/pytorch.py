@@ -403,6 +403,9 @@ class Trainer:
         self.target_steps = self.parameters["steps"]
         self.step_number = 0
         self.replay_micro_batches = 0
+        self.replay_total_micro_batches = 0
+        self.replay_sync_micro_batches = 0
+        self.replay_report_micro_batches = 0
         self.consumed_tokens = 0
         self.token_buffer = []
         self.loss_buffer = []
@@ -672,6 +675,27 @@ class Trainer:
             self.replay_micro_batches -= 1
             self.batch = []
             self.last_step_finished = time.perf_counter()
+            replayed = self.replay_total_micro_batches - self.replay_micro_batches
+            if self.distributed and (
+                replayed % self.replay_sync_micro_batches == 0 or self.replay_micro_batches == 0
+            ):
+                # Node-local preparation can progress at different rates. Keep
+                # ranks close enough during checkpoint fast-forwarding that a
+                # faster node cannot enter the first live gradient collective
+                # and trip NCCL's watchdog while another node is still replaying.
+                torch.distributed.barrier()
+            if IS_PRIMARY and (
+                replayed % self.replay_report_micro_batches == 0 or self.replay_micro_batches == 0
+            ):
+                replayed_steps = replayed // self.gradient_accumulation_steps
+                target_steps = self.replay_total_micro_batches // self.gradient_accumulation_steps
+                emit(
+                    "event",
+                    event={
+                        "kind": "log",
+                        "message": f"checkpoint replay {replayed_steps}/{target_steps} optimizer steps synchronized across all ranks",
+                    },
+                )
             return
         step_started = time.perf_counter()
         self.data_wait_seconds += max(0.0, step_started - self.last_step_finished)
@@ -989,6 +1013,10 @@ class Trainer:
         else:
             self.consumed_by_corpus = state.get("consumption", {})
         self.replay_micro_batches = self.resume["step"] * self.gradient_accumulation_steps
+        self.replay_total_micro_batches = self.replay_micro_batches
+        self.replay_sync_micro_batches = 256 * self.gradient_accumulation_steps
+        report_steps = max(256, ((self.resume["step"] + 19) // 20 + 255) // 256 * 256)
+        self.replay_report_micro_batches = report_steps * self.gradient_accumulation_steps
         self.checkpoints = [self.resume["checkpoint"]]
 
     def evaluate_model(self, model, mixed_precision):

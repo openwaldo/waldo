@@ -89,6 +89,20 @@ func TestPyTorchWorkerAccumulatesTokenNormalizedGradients(t *testing.T) {
 	}
 }
 
+func TestTorchTitanWorkerSynchronizesCheckpointReplayAcrossNodes(t *testing.T) {
+	source := string(pyTorchWorker)
+	for _, expected := range []string{
+		`self.replay_sync_micro_batches = 256 * self.gradient_accumulation_steps`,
+		`replayed % self.replay_sync_micro_batches == 0 or self.replay_micro_batches == 0`,
+		`torch.distributed.barrier()`,
+		`checkpoint replay {replayed_steps}/{target_steps} optimizer steps synchronized across all ranks`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("TorchTitan worker omits synchronized checkpoint replay behavior %q", expected)
+		}
+	}
+}
+
 func TestTorchTitanWorkerCompletesPartialFinalGlobalBatch(t *testing.T) {
 	source := string(pyTorchWorker)
 	for _, expected := range []string{
