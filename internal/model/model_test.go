@@ -1496,6 +1496,58 @@ func TestComposeResumesWhenAppendingToExistingModel(t *testing.T) {
 	}
 }
 
+func TestPendingComposeMatchesOriginalRequestBeforeCompletedCorporaAreSkipped(t *testing.T) {
+	root := t.TempDir()
+	first := validCompose()
+	first.Stages[0].Corpora = NewCorpusSelections([]string{"corpus-a"})
+	firstStage := preparedFixture(t, first.Stages[0])
+	firstStage.BOM.Paths = []string{"corpus-a"}
+	ids := 0
+	builder := Builder{Root: root, NewID: func() (string, error) {
+		ids++
+		return fmt.Sprintf("resume%04d", ids), nil
+	}, Resolver: training.FakeResolver()}
+	if _, err := builder.Compose(context.Background(), "conversation", first, []PreparedStage{firstStage}); err != nil {
+		t.Fatal(err)
+	}
+
+	requested := first
+	requested.Stages = []Stage{first.Stages[0], testStage("midtrain"), testStage("post-train")}
+	requested.Stages[1].Corpora = NewCorpusSelections([]string{"corpus-b"})
+	requested.Stages[2].Corpora = NewCorpusSelections([]string{"corpus-c"})
+	inspection, err := Inspect(root, "conversation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	filtered, skipped := SkipCompletedCorpora(requested, inspection)
+	if len(filtered.Stages) != 2 || len(skipped) != 1 || skipped[0].Path != "corpus-a" {
+		t.Fatalf("filtered compose = %+v, skipped = %+v", filtered.Stages, skipped)
+	}
+	prepared := make([]PreparedStage, 0, len(filtered.Stages))
+	for _, stage := range filtered.Stages {
+		item := preparedFixture(t, stage)
+		item.BOM.Paths = CorpusPaths(stage.Corpora)
+		prepared = append(prepared, item)
+	}
+	builder.Resolver = training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backendFunc(func(context.Context, training.Request) (training.Observation, error) {
+			return training.Observation{}, context.Canceled
+		})), nil
+	})
+	if _, err := builder.Compose(context.Background(), "conversation", filtered, prepared); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted append = %v", err)
+	}
+	if err := builder.CheckComposeTarget("conversation", requested); err != nil {
+		t.Fatalf("original compose request did not match its filtered pending transaction: %v", err)
+	}
+	different := requested
+	different.Stages = append([]Stage(nil), requested.Stages...)
+	different.Stages[2].Parameters.LearningRate *= 2
+	if err := builder.CheckComposeTarget("conversation", different); err == nil || !strings.Contains(err.Error(), "different inputs") {
+		t.Fatalf("changed original compose matched pending transaction: %v", err)
+	}
+}
+
 func TestComposeHistoryOrdersDistinctRecipes(t *testing.T) {
 	modelPath := t.TempDir()
 	first := validCompose()

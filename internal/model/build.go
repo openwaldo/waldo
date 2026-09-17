@@ -1127,7 +1127,11 @@ func (builder Builder) CheckComposeTarget(name string, compose Compose) error {
 		return err
 	}
 	if pending != nil {
-		if !reflect.DeepEqual(pending.Compose, compose) {
+		matches, err := pendingComposeMatchesRequest(builder.Root, *pending, compose)
+		if err != nil {
+			return err
+		}
+		if !matches {
 			return fmt.Errorf("model %q has an unfinished compose with different inputs; repeat the exact command to resume it", name)
 		}
 		return nil
@@ -1152,6 +1156,27 @@ func (builder Builder) CheckComposeTarget(name string, compose Compose) error {
 		return validateComposeCompatibility(target, compose)
 	}
 	return validateComposeTarget(target, compose)
+}
+
+func pendingComposeMatchesRequest(root string, pending composeTransaction, requested Compose) (bool, error) {
+	if reflect.DeepEqual(pending.Compose, requested) {
+		return true, nil
+	}
+	inspection, err := Inspect(root, pending.Name)
+	if err != nil {
+		return false, fmt.Errorf("inspect model for pending compose comparison: %w", err)
+	}
+	if pending.StartRun < 0 || pending.StartRun > len(inspection.Model.Runs) || pending.StartRun > len(inspection.RunBOMs) {
+		return false, fmt.Errorf("model %q pending compose has invalid start run %d", pending.Name, pending.StartRun)
+	}
+	// A transaction created while extending an existing model stores the
+	// requested compose after corpora completed before that transaction were
+	// removed. Recreate exactly that boundary; runs completed by the pending
+	// transaction must remain in its compose until the transaction finishes.
+	inspection.Model.Runs = inspection.Model.Runs[:pending.StartRun]
+	inspection.RunBOMs = inspection.RunBOMs[:pending.StartRun]
+	normalized, _ := SkipCompletedCorpora(requested, inspection)
+	return reflect.DeepEqual(pending.Compose, normalized), nil
 }
 
 func validateComposeTarget(target Inspection, compose Compose) error {
