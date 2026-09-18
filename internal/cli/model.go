@@ -1157,13 +1157,17 @@ func secondaryNodeLocalRequest(commandContext Context, plan model.MultiNodePlan,
 	if err != nil {
 		return training.Request{}, err
 	}
+	resume, err := secondaryResume(plan)
+	if err != nil {
+		return training.Request{}, err
+	}
 	return training.Request{
 		RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
 		Conversation:       plan.Conversation,
 		ArchitectureSHA256: plan.ArchitectureSHA256, Architecture: plan.Architecture,
 		Parameters: plan.Parameters, BOM: plan.CorpusBOM, Inputs: inputs, Records: records, EvaluationRecords: partition.EvaluationRecords(),
 		Parallelism:   plan.Parallelism,
-		EvaluationSet: model.EvaluationSetValue(plan.EvaluationSet), Initialization: initialization,
+		EvaluationSet: model.EvaluationSetValue(plan.EvaluationSet), Initialization: initialization, Resume: resume,
 		Tokenizer:         tokenizerSpec,
 		ArtifactDirectory: scratch, ArtifactPrefix: "artifacts",
 		PreparedCacheDirectory: filepath.Join(cache.Scratch(), "prepared"),

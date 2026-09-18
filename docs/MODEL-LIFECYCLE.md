@@ -146,8 +146,10 @@ Real backends commit checkpoint directories containing model weights,
 optimizer state, runtime random state, and state metadata before reporting the
 checkpoint to WALDO. Repeating the exact `model train` command after Ctrl-C
 resumes the same run ID and immutable run BOM. WALDO verifies every checkpoint
-member, restores the pinned backend revision, replays the deterministic input
-stream without optimization to the saved step, and continues. `RUN.json`
+member, restores the pinned backend revision, positions the deterministic input
+stream at the saved step, and continues. Backends that cannot seek replay the
+prefix without optimization; the multi-node node-local stream skips that
+already-trained prefix before worker handoff. `RUN.json`
 records each attempt. A changed corpus, epoch count, profile, backend, or
 execution environment is a new run rather than an unsafe resume.
 
@@ -392,7 +394,8 @@ model, marks an abandoned running attempt interrupted, and resumes the same
 stage and run from its newest verified checkpoint. Different inputs are refused
 while that transaction is unfinished. Completed-path skipping is disabled for
 an unfinished transaction so its checkpoint selection remains exact. A failed
-stage is cleared; interrupted work is retained.
+attempt with a complete verified checkpoint is retained and resumable; a failed
+attempt without one remains terminal and is restarted as a new run.
 
 ## Durable layout
 

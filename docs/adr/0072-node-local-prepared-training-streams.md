@@ -21,7 +21,9 @@ to ranks on the same node. A bounded record queue overlaps canonical decoding
 and tokenization with worker-protocol encoding. CUDA workers stage each local
 micro-batch in pinned host memory and use non-blocking device transfers.
 Sequence ordinals deterministically assign each sequence to exactly one global
-rank and are reconstructed from the beginning when resuming.
+rank. On resume, each node restores the same checkpoint and its WALDO
+coordinator starts the prepared stream at the checkpoint's sequence boundary;
+already-trained sequences are neither sent to workers nor optimized again.
 
 The hostfile launcher passes the primary's absolute cache root, scratch root,
 byte limit, and configured mirrors to every remote coordinator. Launcher plans

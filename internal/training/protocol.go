@@ -150,8 +150,16 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 	if worldSize < 2 || GPUsPerNode < 1 || worldSize%GPUsPerNode != 0 || begin.DataNodeRank < 0 || begin.DataNodeRank >= worldSize/GPUsPerNode {
 		return fmt.Errorf("invalid node-local prepared-data topology")
 	}
+	resumeSequences := int64(0)
+	if begin.Resume != nil {
+		var overflow bool
+		resumeSequences, overflow = multiplyInt64(begin.Resume.Step, begin.Parameters.BatchSize)
+		if overflow {
+			return fmt.Errorf("prepared resume position overflows int64")
+		}
+	}
 	if begin.PreparedCacheDirectory != "" && begin.PreparedIdentity != "" {
-		replayed, err := replayPreparedSequences(begin.PreparedCacheDirectory, begin.PreparedIdentity, begin.DataNodeRank, worldSize, GPUsPerNode, begin.Parameters.BatchSize/begin.Parameters.GradientAccumulation, begin.PreparedCacheMaxBytes, encoder)
+		replayed, err := replayPreparedSequences(begin.PreparedCacheDirectory, begin.PreparedIdentity, begin.DataNodeRank, worldSize, GPUsPerNode, begin.Parameters.BatchSize/begin.Parameters.GradientAccumulation, begin.PreparedCacheMaxBytes, resumeSequences, encoder)
 		if err != nil {
 			return err
 		}
@@ -191,12 +199,14 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 			if err := cacheWriter.Append(sequence); err != nil {
 				return err
 			}
-			if err := encoder.Encode(WorkerInputFrame{Kind: "sequence", Schema: WorkerProtocolSchema, Sequence: &sequence}); err != nil {
-				return err
+			if ordinal >= resumeSequences {
+				if err := encoder.Encode(WorkerInputFrame{Kind: "sequence", Schema: WorkerProtocolSchema, Sequence: &sequence}); err != nil {
+					return err
+				}
 			}
 		}
 		ordinal++
-		if ordinal%globalMicroBatch == 0 {
+		if ordinal > resumeSequences && ordinal%globalMicroBatch == 0 {
 			if err := encoder.Encode(WorkerInputFrame{Kind: "micro_batch_end", Schema: WorkerProtocolSchema}); err != nil {
 				return err
 			}

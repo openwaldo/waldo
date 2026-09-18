@@ -67,6 +67,15 @@ func newPreparedCacheWriter(base, identity string, nodeRank, worldSize, GPUsPerN
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return nil, err
 	}
+	stale, err := filepath.Glob(filepath.Join(parent, fmt.Sprintf(".node-%d-*", nodeRank)))
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range stale {
+		if err := os.RemoveAll(path); err != nil {
+			return nil, fmt.Errorf("remove interrupted prepared cache %s: %w", path, err)
+		}
+	}
 	temporary, err := os.MkdirTemp(parent, fmt.Sprintf(".node-%d-*", nodeRank))
 	if err != nil {
 		return nil, err
@@ -185,7 +194,7 @@ func (writer *preparedCacheWriter) Abort() {
 	}
 }
 
-func replayPreparedSequences(base, identity string, nodeRank, worldSize, GPUsPerNode int, globalMicroBatch, maxBytes int64, encoder *json.Encoder) (bool, error) {
+func replayPreparedSequences(base, identity string, nodeRank, worldSize, GPUsPerNode int, globalMicroBatch, maxBytes, resumeSequences int64, encoder *json.Encoder) (bool, error) {
 	directory := filepath.Join(base, identity, fmt.Sprintf("node-%d", nodeRank))
 	manifest, err := loadPreparedCache(directory, identity, nodeRank, worldSize, GPUsPerNode, globalMicroBatch)
 	if os.IsNotExist(err) {
@@ -205,7 +214,12 @@ func replayPreparedSequences(base, identity string, nodeRank, worldSize, GPUsPer
 		return false, nil
 	}
 	sequences := int64(0)
+	emitted := int64(0)
 	boundaries := int64(0)
+	boundaryLimit := manifest.GlobalSequences/globalMicroBatch - resumeSequences/globalMicroBatch
+	if boundaryLimit < 0 {
+		return false, fmt.Errorf("prepared cache resume position exceeds stream")
+	}
 	previousOrdinal := int64(-1)
 	localMicroBatch := globalMicroBatch / int64(worldSize/GPUsPerNode)
 	if localMicroBatch < 1 {
@@ -239,21 +253,22 @@ func replayPreparedSequences(base, identity string, nodeRank, worldSize, GPUsPer
 				}
 			}
 			previousOrdinal = sequence.Ordinal
-			if encoder != nil {
+			if encoder != nil && sequence.Ordinal >= resumeSequences {
 				if err := encoder.Encode(WorkerInputFrame{Kind: "sequence", Schema: WorkerProtocolSchema, Sequence: &sequence}); err != nil {
 					_ = file.Close()
 					return false, err
 				}
+				emitted++
+				if emitted%localMicroBatch == 0 && boundaries < boundaryLimit {
+					if err := encoder.Encode(WorkerInputFrame{Kind: "micro_batch_end", Schema: WorkerProtocolSchema}); err != nil {
+						_ = file.Close()
+						return false, err
+					}
+					boundaries++
+				}
 			}
 			sequences++
 			chunkSequences++
-			if encoder != nil && sequences%localMicroBatch == 0 && boundaries < manifest.GlobalSequences/globalMicroBatch {
-				if err := encoder.Encode(WorkerInputFrame{Kind: "micro_batch_end", Schema: WorkerProtocolSchema}); err != nil {
-					_ = file.Close()
-					return false, err
-				}
-				boundaries++
-			}
 		}
 		if err := file.Close(); err != nil {
 			return false, err

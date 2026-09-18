@@ -3,14 +3,17 @@
 # Copyright (c) 2026 Gregory M. Kurtzer
 # SPDX-License-Identifier: Apache-2.0
 
+import datetime
 import hashlib
 import inspect
 import json
 import math
 import os
 import shutil
+import socket
 import struct
 import sys
+import tempfile
 import time
 import traceback
 
@@ -45,6 +48,16 @@ def artifact(path, logical_path):
             digest.update(block)
             size += len(block)
     return {"path": logical_path, "sha256": digest.hexdigest(), "bytes": size}
+
+
+def rendezvous_barrier(run_id, phase, rank, world_size):
+    """Synchronize slow control-plane work without consuming an NCCL collective."""
+    store = torch.distributed.distributed_c10d._get_default_store()
+    prefix = f"waldo-control/{run_id}/{phase}"
+    own_key = f"{prefix}/{rank}"
+    keys = [f"{prefix}/{peer}" for peer in range(world_size)]
+    store.set(own_key, "ready")
+    store.wait(keys, datetime.timedelta(hours=6))
 
 
 def write_json(path, value):
@@ -404,7 +417,6 @@ class Trainer:
         self.step_number = 0
         self.replay_micro_batches = 0
         self.replay_total_micro_batches = 0
-        self.replay_sync_micro_batches = 0
         self.replay_report_micro_batches = 0
         self.consumed_tokens = 0
         self.token_buffer = []
@@ -531,6 +543,43 @@ class Trainer:
             self.scaler = torch.amp.GradScaler("cuda", enabled=scaler_enabled)
         if self.resume is not None:
             self.restore_checkpoint()
+            if self.distributed:
+                # Checkpoint restoration includes loading and repartitioning a
+                # potentially multi-gigabyte optimizer state. One node can
+                # finish substantially earlier than another. Do not let a
+                # faster node enter stream replay while another node is still
+                # restoring; its first replay barrier would otherwise be
+                # mistaken for a failed training collective.
+                print(
+                    f"rank {self.rank}/{self.world_size} restored checkpoint step {self.resume['step']}; waiting for all ranks",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                emit(
+                    "event",
+                    event={
+                        "kind": "log",
+                        "message": f"rank 0 restored checkpoint step {self.resume['step']}; waiting for {self.world_size - 1} other ranks",
+                    },
+                )
+                # Optimizer restoration itself uses NCCL state-dict
+                # collectives. Flush that work on the training process group
+                # before switching to the control plane for stream replay.
+                torch.distributed.barrier()
+                emit(
+                    "event",
+                    event={
+                        "kind": "log",
+                        "message": (
+                            f"checkpoint step {self.resume['step']} restored on all {self.world_size} ranks; "
+                            + (
+                                "positioning each node's deterministic input stream at the checkpoint boundary"
+                                if self.parallelism.get("data_plane") == "node-local-cache"
+                                else "replaying the deterministic input stream"
+                            )
+                        ),
+                    },
+                )
         if self.device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(self.device)
         self.last_step_finished = time.perf_counter()
@@ -676,24 +725,27 @@ class Trainer:
             self.batch = []
             self.last_step_finished = time.perf_counter()
             replayed = self.replay_total_micro_batches - self.replay_micro_batches
-            if self.distributed and (
-                replayed % self.replay_sync_micro_batches == 0 or self.replay_micro_batches == 0
-            ):
-                # Node-local preparation can progress at different rates. Keep
-                # ranks close enough during checkpoint fast-forwarding that a
-                # faster node cannot enter the first live gradient collective
-                # and trip NCCL's watchdog while another node is still replaying.
-                torch.distributed.barrier()
+            if self.distributed and self.replay_micro_batches == 0:
+                # Node-local preparation can progress at very different rates.
+                # Let every rank replay independently, then use the long-lived
+                # CPU control group to synchronize before any new NCCL gradient
+                # collective. Periodic NCCL barriers can time out merely because
+                # another node is still reading or tokenizing its local stream.
+                rendezvous_barrier(self.begin["run_id"], "checkpoint-replayed", self.rank, self.world_size)
             if IS_PRIMARY and (
                 replayed % self.replay_report_micro_batches == 0 or self.replay_micro_batches == 0
             ):
                 replayed_steps = replayed // self.gradient_accumulation_steps
                 target_steps = self.replay_total_micro_batches // self.gradient_accumulation_steps
+                if self.replay_micro_batches == 0:
+                    message = f"checkpoint replay {replayed_steps}/{target_steps} optimizer steps complete and synchronized across all ranks"
+                else:
+                    message = f"checkpoint replay {replayed_steps}/{target_steps} optimizer steps complete on rank 0"
                 emit(
                     "event",
                     event={
                         "kind": "log",
-                        "message": f"checkpoint replay {replayed_steps}/{target_steps} optimizer steps synchronized across all ranks",
+                        "message": message,
                     },
                 )
             return
@@ -1013,8 +1065,11 @@ class Trainer:
         else:
             self.consumed_by_corpus = state.get("consumption", {})
         self.replay_micro_batches = self.resume["step"] * self.gradient_accumulation_steps
+        if self.parallelism.get("data_plane") == "node-local-cache":
+            # WALDO's prepared stream starts at the exact checkpoint boundary,
+            # so Python must not consume the already-trained prefix again.
+            self.replay_micro_batches = 0
         self.replay_total_micro_batches = self.replay_micro_batches
-        self.replay_sync_micro_batches = 256 * self.gradient_accumulation_steps
         report_steps = max(256, ((self.resume["step"] + 19) // 20 + 255) // 256 * 256)
         self.replay_report_micro_batches = report_steps * self.gradient_accumulation_steps
         self.checkpoints = [self.resume["checkpoint"]]
@@ -1225,7 +1280,24 @@ class Trainer:
         )
 
 
-def stream_lines(distributed):
+def receive_exact(connection, size):
+    value = bytearray()
+    while len(value) < size:
+        block = connection.recv(size - len(value))
+        if not block:
+            raise ValueError("node-local input stream ended unexpectedly")
+        value.extend(block)
+    return bytes(value)
+
+
+def node_local_stream_path(artifact_directory, node_rank):
+    identity = hashlib.sha256(
+        f"{os.path.abspath(artifact_directory)}:{node_rank}".encode("utf-8")
+    ).hexdigest()[:24]
+    return os.path.join(tempfile.gettempdir(), f"waldo-stream-{identity}.sock")
+
+
+def stream_lines(distributed, artifact_directory):
     """Yield the canonical input stream's lines on every rank.
 
     The default multi-node path gives each node one identical stream from its
@@ -1248,25 +1320,71 @@ def stream_lines(distributed):
     if len(set(sizes)) != 1:
         raise ValueError(f"local world sizes differ across nodes: {sorted(set(sizes))}")
     local_rank = int(os.environ["LOCAL_RANK"])
-    device = torch.device(f"cuda:{local_rank}")
     node_local = os.environ.get("WALDO_TORCH_DATA_PLANE") == "node-local-cache"
     source_rank = 0
-    stream_group = None
     if node_local:
-        node_count = world // local_world
         node_rank = int(os.environ.get("GROUP_RANK", str(rank // local_world)))
-        groups = []
-        for node in range(node_count):
-            ranks = list(range(node * local_world, (node + 1) * local_world))
-            groups.append(torch.distributed.new_group(ranks=ranks))
-        stream_group = groups[node_rank]
         source_rank = node_rank * local_world
+        socket_path = node_local_stream_path(artifact_directory, node_rank)
+        if rank == source_rank:
+            try:
+                os.unlink(socket_path)
+            except FileNotFoundError:
+                pass
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(socket_path)
+            os.chmod(socket_path, 0o600)
+            server.listen(local_world - 1)
+            siblings = [server.accept()[0] for _ in range(local_world - 1)]
+            try:
+                while True:
+                    line = sys.stdin.readline()
+                    encoded = line.encode("utf-8") if line else b""
+                    header = struct.pack("!q", len(encoded) if line else -1)
+                    for connection in siblings:
+                        connection.sendall(header)
+                        if encoded:
+                            connection.sendall(encoded)
+                    if not line:
+                        return
+                    yield line
+            finally:
+                for connection in siblings:
+                    connection.close()
+                server.close()
+                try:
+                    os.unlink(socket_path)
+                except FileNotFoundError:
+                    pass
+        else:
+            connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            deadline = time.monotonic() + 60
+            while True:
+                try:
+                    connection.connect(socket_path)
+                    break
+                except (FileNotFoundError, ConnectionRefusedError):
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("timed out joining node-local input stream")
+                    time.sleep(0.05)
+            try:
+                while True:
+                    byte_count = struct.unpack("!q", receive_exact(connection, 8))[0]
+                    if byte_count < 0:
+                        return
+                    yield receive_exact(connection, byte_count).decode("utf-8")
+            finally:
+                connection.close()
+        return
+    device = torch.device(f"cuda:{local_rank}")
     while True:
-        values = [sys.stdin.readline() if rank == source_rank else None]
-        torch.distributed.broadcast_object_list(values, src=source_rank, group=stream_group, device=device)
-        if not values[0]:
+        line = sys.stdin.readline() if rank == source_rank else ""
+        values = [line if rank == source_rank else None]
+        torch.distributed.broadcast_object_list(values, src=source_rank, device=device)
+        line = values[0]
+        if not line:
             return
-        yield values[0]
+        yield line
 
 
 def run():
@@ -1286,7 +1404,7 @@ def run():
     os.makedirs(artifact_directory, exist_ok=True)
     trainer = None
     ended = False
-    for line in stream_lines(distributed):
+    for line in stream_lines(distributed, artifact_directory):
         frame = json.loads(line)
         if frame.get("schema") != PROTOCOL_SCHEMA:
             raise ValueError(f"unsupported worker input schema {frame.get('schema')}")

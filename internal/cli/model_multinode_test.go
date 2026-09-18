@@ -272,6 +272,13 @@ func TestSecondaryTrainingRequestFromPlan(t *testing.T) {
 		if request.Resume == nil || request.Resume.Step != 1 || !reflect.DeepEqual(request.Resume.Paths, []string{path}) {
 			t.Fatalf("secondary resume = %+v", request.Resume)
 		}
+		request, err = secondaryTrainingRequest(Context{Execution: context.Background()}, plan, t.TempDir(), cache, t.TempDir(), io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if request.Resume == nil || request.Resume.Step != 1 || !reflect.DeepEqual(request.Resume.Paths, []string{path}) {
+			t.Fatalf("node-local secondary resume = %+v", request.Resume)
+		}
 	})
 
 	t.Run("unsupported tokenizer fails closed", func(t *testing.T) {

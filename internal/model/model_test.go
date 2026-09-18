@@ -579,7 +579,7 @@ func TestResumeReplacesEvaluationAtCheckpointStep(t *testing.T) {
 	}
 }
 
-func TestOnlyRecognizedCheckpointBackedFailuresAreResumable(t *testing.T) {
+func TestAnyVerifiedCheckpointBackedFailureIsResumable(t *testing.T) {
 	requested := training.Parameters{Steps: 10, BatchSize: 1, SequenceLength: 10, LearningRate: 0.001, Seed: 1}
 	parameters, err := training.ResolveParameters(requested)
 	if err != nil {
@@ -609,8 +609,8 @@ func TestOnlyRecognizedCheckpointBackedFailuresAreResumable(t *testing.T) {
 		t.Fatalf("recoverable compose start = %d, %v", start, ok)
 	}
 	run.Error = "trainer exited"
-	if resumableRunState(run, parameters) {
-		t.Fatal("ordinary failed run became resumable")
+	if !resumableRunState(run, parameters) {
+		t.Fatal("final checkpoint after an arbitrary backend failure is not resumable")
 	}
 	run.Error = "invalid backend observation: corpus consumption accounts for 11 corpora and 400015360 of 400015360 token targets"
 	if !resumableRunState(run, parameters) {
@@ -627,19 +627,32 @@ func TestOnlyRecognizedCheckpointBackedFailuresAreResumable(t *testing.T) {
 		t.Fatal("partial checkpoint after worker input exhaustion is not resumable")
 	}
 	run.Error = "trainer exited"
-	if resumableRunState(run, parameters) {
-		t.Fatal("ordinary partial-checkpoint failure became resumable")
+	if !resumableRunState(run, parameters) {
+		t.Fatal("partial checkpoint after an arbitrary backend failure is not resumable")
 	}
 	run.Error = "TorchTitan worker: worker input ended without begin/end framing"
 	run.Progress.Checkpoints[0].Step = parameters.Steps
 	run.Progress.Checkpoints[0].Tokens = parameters.PlannedTokenCapacity
-	if resumableRunState(run, parameters) {
-		t.Fatal("input exhaustion at a final checkpoint became a partial resume")
+	if !resumableRunState(run, parameters) {
+		t.Fatal("final checkpoint after input exhaustion is not resumable")
 	}
 	run.Error = "TorchTitan worker: saved artifact held-out loss 4.030349 does not match live loss 3.856039 within tolerance 0.038560"
 	run.Progress.Checkpoints[0].Step--
+	if !resumableRunState(run, parameters) {
+		t.Fatal("partial checkpoint after artifact evaluation failure is not resumable")
+	}
+	run.Progress.Checkpoints[0].Step = 0
 	if resumableRunState(run, parameters) {
-		t.Fatal("partial-checkpoint corpus accounting failure became resumable")
+		t.Fatal("zero-step checkpoint became resumable")
+	}
+	run.Progress.Checkpoints[0].Step = parameters.Steps + 1
+	if resumableRunState(run, parameters) {
+		t.Fatal("checkpoint beyond the planned steps became resumable")
+	}
+	run.Progress.Checkpoints[0].Step = 1
+	run.Progress.Checkpoints[0].Tokens = parameters.PlannedTokenCapacity + 1
+	if resumableRunState(run, parameters) {
+		t.Fatal("checkpoint beyond the planned token capacity became resumable")
 	}
 }
 
@@ -999,6 +1012,13 @@ func TestTrainRepairsFixedTokenCapacityAndResumesFailedCheckpoint(t *testing.T) 
 	failed, err := Inspect(root, "capacity")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if failed.Runs[0].State != RunInterrupted || failed.Runs[0].Attempts[0].State != RunFailed || failed.Model.Runs[0].Resume == nil {
+		t.Fatalf("checkpoint-backed failure was not retained as restartable: run %+v, pin %+v", failed.Runs[0], failed.Model.Runs[0])
+	}
+	resumeCompose := Compose{Architecture: testArchitecture(), Stages: []Stage{stage}}
+	if err := validateComposeTarget(failed, resumeCompose); err != nil {
+		t.Fatalf("checkpoint-backed interrupted run was rejected before compose recovery: %v", err)
 	}
 	if failed.RunBOMs[0].Parameters.Epochs <= 1 {
 		t.Fatalf("test fixture did not require multiple epochs: %+v", failed.RunBOMs[0].Parameters)

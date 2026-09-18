@@ -92,14 +92,23 @@ func TestPyTorchWorkerAccumulatesTokenNormalizedGradients(t *testing.T) {
 func TestTorchTitanWorkerSynchronizesCheckpointReplayAcrossNodes(t *testing.T) {
 	source := string(pyTorchWorker)
 	for _, expected := range []string{
-		`self.replay_sync_micro_batches = 256 * self.gradient_accumulation_steps`,
-		`replayed % self.replay_sync_micro_batches == 0 or self.replay_micro_batches == 0`,
+		`restored checkpoint step {self.resume['step']}; waiting for all ranks`,
+		`rank 0 restored checkpoint step {self.resume['step']}; waiting for {self.world_size - 1} other ranks`,
+		`positioning each node's deterministic input stream at the checkpoint boundary`,
+		`else "replaying the deterministic input stream"`,
+		`torch.distributed.distributed_c10d._get_default_store()`,
+		`store.wait(keys, datetime.timedelta(hours=6))`,
 		`torch.distributed.barrier()`,
-		`checkpoint replay {replayed_steps}/{target_steps} optimizer steps synchronized across all ranks`,
+		`rendezvous_barrier(self.begin["run_id"], "checkpoint-replayed", self.rank, self.world_size)`,
+		`checkpoint replay {replayed_steps}/{target_steps} optimizer steps complete and synchronized across all ranks`,
+		`checkpoint replay {replayed_steps}/{target_steps} optimizer steps complete on rank 0`,
 	} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("TorchTitan worker omits synchronized checkpoint replay behavior %q", expected)
 		}
+	}
+	if strings.Contains(source, "replay_sync_micro_batches") {
+		t.Fatal("TorchTitan worker still inserts periodic training-network barriers during checkpoint replay")
 	}
 }
 
@@ -121,13 +130,14 @@ func TestTorchTitanWorkerCompletesPartialFinalGlobalBatch(t *testing.T) {
 	}
 }
 
-func TestTorchTitanWorkerKeepsNodeLocalDataOffTrainingNetwork(t *testing.T) {
+func TestTorchTitanWorkerUsesNodeLocalIPCForData(t *testing.T) {
 	source := string(pyTorchWorker)
 	for _, expected := range []string{
 		`WALDO_TORCH_DATA_PLANE`,
-		`torch.distributed.new_group(ranks=ranks)`,
 		`source_rank = node_rank * local_world`,
-		`group=stream_group`,
+		`socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)`,
+		`connection.sendall(header)`,
+		`receive_exact(connection, byte_count)`,
 	} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("TorchTitan worker omits node-local stream behavior %q", expected)

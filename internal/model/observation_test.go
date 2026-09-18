@@ -75,3 +75,29 @@ func TestValidateBackendObservationVerifiesBoundsAndArtifacts(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckArtifactFileDefersContentHashing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runtime.pt")
+	data := []byte("checkpoint-state")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(data)
+	artifact := training.Artifact{Path: "artifacts/checkpoints/step/runtime.pt", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}
+	if err := CheckArtifactFile(path, artifact); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("tampered-state!!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckArtifactFile(path, artifact); err != nil {
+		t.Fatalf("structural check unexpectedly hashed content: %v", err)
+	}
+	if err := VerifyArtifactFile(path, artifact); err == nil || !strings.Contains(err.Error(), "SHA-256") {
+		t.Fatalf("full verification did not reject tampered content: %v", err)
+	}
+	artifact.SHA256 = "invalid"
+	if err := CheckArtifactFile(path, artifact); err == nil || !strings.Contains(err.Error(), "invalid SHA-256 metadata") {
+		t.Fatalf("invalid digest metadata error = %v", err)
+	}
+}

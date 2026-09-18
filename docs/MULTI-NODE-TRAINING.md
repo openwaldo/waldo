@@ -288,8 +288,16 @@ rank 0; a rank-0 failure terminates the remote workers. Repeating the exact
 newest verified checkpoint. Before launching GPUs, rank 0 verifies the
 checkpoint and stages its model, optimizer, RNG, and consumption state at the
 same path on every host. The resumed workers validate the saved world size and
-parallelism before restoring it. WALDO removes this temporary staging copy when
-the launcher session ends; the durable checkpoint remains under `model.root`.
+parallelism before restoring it. Each node's deterministic prepared-data stream
+starts at the checkpoint boundary, so committed optimizer steps are not read or
+trained again. WALDO removes this temporary staging copy when the launcher
+session ends; the durable checkpoint remains under `model.root`.
+
+A backend or bookkeeping failure after a complete checkpoint is treated as an
+interrupted attempt for recovery purposes. The attempt and its error remain in
+the run history, while repeating the exact command resumes from the checkpoint.
+A failure before the first complete checkpoint has no recoverable state and
+must start a new run.
 
 Checkpoint staging uses `lookaside.scratch`. Configure it on a filesystem with
 enough free space for one checkpoint, especially when `/tmp` is small:

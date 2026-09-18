@@ -1077,9 +1077,19 @@ func TestPreparedSequenceCacheReplaysVerifiedChunks(t *testing.T) {
 		Parallelism:            Parallelism{WorldSize: 2, GPUsPerNode: 1, DataPlane: DataPlaneNodeLocal},
 		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("a", 64),
 	}
+	stale := filepath.Join(begin.PreparedCacheDirectory, begin.PreparedIdentity, ".node-0-interrupted")
+	if err := os.MkdirAll(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "partial"), []byte("incomplete"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var first bytes.Buffer
 	if err := WriteWorkerInput(context.Background(), &first, begin, staticRecordSource{record}, nil); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("interrupted cache still exists: %v", err)
 	}
 	var second bytes.Buffer
 	if err := WriteWorkerInput(context.Background(), &second, begin, refusingRecordSource{}, nil); err != nil {
@@ -1097,6 +1107,55 @@ func TestPreparedSequenceCacheReplaysVerifiedChunks(t *testing.T) {
 	}
 	if err := WriteWorkerInput(context.Background(), io.Discard, begin, refusingRecordSource{}, nil); err == nil || !strings.Contains(err.Error(), "digest differs") {
 		t.Fatalf("tampered prepared cache error = %v", err)
+	}
+}
+
+func TestPreparedSequenceResumeStartsAfterCheckpointBoundary(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 3, BatchSize: 4, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := make([]int, 24)
+	for index := range tokens {
+		tokens[index] = index + 10
+	}
+	record := Record{ID: "one", Tokens: tokens, LossMask: make([]bool, len(tokens)+1), Corpus: "corpus"}
+	for index := range record.LossMask {
+		record.LossMask[index] = true
+	}
+	begin := WorkerBegin{
+		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
+		Parallelism:            Parallelism{WorldSize: 4, GPUsPerNode: 2, DataPlane: DataPlaneNodeLocal},
+		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("d", 64),
+	}
+	if err := WriteWorkerInput(context.Background(), io.Discard, begin, staticRecordSource{record}, nil); err != nil {
+		t.Fatal(err)
+	}
+	begin.Resume = &WorkerResume{Step: 2}
+	var output bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &output, begin, refusingRecordSource{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var ordinals []int64
+	decoder := json.NewDecoder(&output)
+	boundaries := 0
+	for {
+		var frame WorkerInputFrame
+		if err := decoder.Decode(&frame); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			t.Fatal(err)
+		}
+		if frame.Kind == "sequence" {
+			ordinals = append(ordinals, frame.Sequence.Ordinal)
+		}
+		if frame.Kind == "micro_batch_end" {
+			boundaries++
+		}
+	}
+	if !reflect.DeepEqual(ordinals, []int64{8, 9}) || boundaries != 1 {
+		t.Fatalf("resumed prepared stream ordinals=%v boundaries=%d", ordinals, boundaries)
 	}
 }
 

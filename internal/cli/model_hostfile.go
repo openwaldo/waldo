@@ -551,7 +551,7 @@ func (session *hostfileSession) workerArguments(rank int, check bool) []string {
 }
 
 func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWorker, error) {
-	command := session.remoteCommand(host, session.remoteInvocation(session.workerArguments(rank, false)))
+	command := session.remoteCommand(host, session.remoteWorkerInvocation(rank, session.workerArguments(rank, false)))
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := command.StdinPipe()
 	if err != nil {
@@ -587,6 +587,17 @@ func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWor
 func (session *hostfileSession) remoteInvocation(arguments []string) string {
 	path := strings.Join([]string{session.pythonDir, "/usr/local/bin", "/usr/bin", "/bin"}, ":")
 	return "PATH=" + shellQuote(path) + " " + joinRemoteArguments(arguments)
+}
+
+func (session *hostfileSession) workerPIDPath(rank int) string {
+	return filepath.Join(session.remoteRoot, fmt.Sprintf("worker-%d.pid", rank))
+}
+
+func (session *hostfileSession) remoteWorkerInvocation(rank int, arguments []string) string {
+	path := strings.Join([]string{session.pythonDir, "/usr/local/bin", "/usr/bin", "/bin"}, ":")
+	pidPath := shellQuote(session.workerPIDPath(rank))
+	return fmt.Sprintf("umask 077; env PATH=%s %s <&0 & child=$!; printf '%%s\\n' \"$child\" > %s; trap 'kill -TERM \"$child\" 2>/dev/null || true; wait \"$child\"; exit 143' HUP INT TERM; wait \"$child\"; status=$?; rm -f -- %s; exit \"$status\"",
+		shellQuote(path), joinRemoteArguments(arguments), pidPath, pidPath)
 }
 
 func (session *hostfileSession) copyWorkerOutput(host string, source io.Reader) {
@@ -772,6 +783,7 @@ func (session *hostfileSession) stageResume(host string, artifacts []training.Ar
 
 func (session *hostfileSession) finish(primaryErr error) error {
 	if primaryErr != nil {
+		session.stopRemoteWorkers()
 		session.cancel()
 	}
 	for _, worker := range session.workers {
@@ -793,6 +805,17 @@ func (session *hostfileSession) finish(primaryErr error) error {
 		return primaryErr
 	}
 	return nil
+}
+
+func (session *hostfileSession) stopRemoteWorkers() {
+	for _, worker := range session.workers {
+		pidPath := session.workerPIDPath(worker.rank)
+		remote := fmt.Sprintf("if test -r %s; then IFS= read -r pid < %s; case \"$pid\" in ''|*[!0-9]*) exit 1;; esac; kill -TERM \"$pid\" 2>/dev/null || true; fi",
+			shellQuote(pidPath), shellQuote(pidPath))
+		ctx, cancel := context.WithTimeout(context.Background(), hostfileWorkerExitGrace)
+		_ = session.remoteCommandContext(ctx, worker.host, remote).Run()
+		cancel()
+	}
 }
 
 func (session *hostfileSession) cleanupResumeStaging() {
@@ -837,6 +860,7 @@ func (session *hostfileSession) cleanupStaging() {
 }
 
 func (session *hostfileSession) abort() {
+	session.stopRemoteWorkers()
 	session.cancel()
 	for _, worker := range session.workers {
 		_ = worker.stdin.Close()

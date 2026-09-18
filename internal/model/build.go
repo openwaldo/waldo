@@ -553,23 +553,19 @@ func resumableRunState(run RunRecord, parameters training.ResolvedParameters) bo
 	if run.State == RunInterrupted {
 		return true
 	}
-	// Permit only recognized checkpoint-backed failures to resume. These include
-	// final bookkeeping defects and a prematurely exhausted worker input stream;
-	// ordinary failed runs remain terminal.
+	// A checkpoint is WALDO's durable recovery boundary. Once its artifacts were
+	// verified and recorded, the error that ended the attempt does not invalidate
+	// it: runtime, transport, validation, and bookkeeping failures may all be
+	// retried from that same immutable state.
 	if run.State != RunFailed || run.Progress == nil || len(run.Progress.Checkpoints) == 0 {
 		return false
 	}
-	recoverableError := strings.HasPrefix(run.Error, "persist training progress: evaluation step ") && strings.HasSuffix(run.Error, " does not advance durable progress")
-	recoverableError = recoverableError || strings.HasPrefix(run.Error, "invalid backend observation: corpus consumption accounts for ")
-	recoverableError = recoverableError || (strings.Contains(run.Error, "saved artifact held-out loss ") && strings.Contains(run.Error, " does not match live loss "))
 	checkpoint := run.Progress.Checkpoints[len(run.Progress.Checkpoints)-1]
-	if strings.Contains(run.Error, "worker input ended without begin/end framing") {
-		return checkpoint.Step > 0 && checkpoint.Step < parameters.Steps && checkpoint.Tokens > 0 && checkpoint.Tokens < parameters.PlannedTokenCapacity
-	}
-	if !recoverableError {
-		return false
-	}
-	return checkpoint.Step == parameters.Steps && checkpoint.Tokens == parameters.PlannedTokenCapacity
+	return checkpoint.Step > 0 && checkpoint.Step <= parameters.Steps && checkpoint.Tokens > 0 && checkpoint.Tokens <= parameters.PlannedTokenCapacity
+}
+
+func hasVerifiedCheckpoint(progress *training.Progress) bool {
+	return progress != nil && len(progress.Checkpoints) > 0
 }
 
 func equivalentResumeParameters(persisted, effective training.ResolvedParameters) bool {
@@ -583,8 +579,8 @@ func equivalentResumeParameters(persisted, effective training.ResolvedParameters
 	return equivalentTrainingParameters(persisted, effective)
 }
 
-// HasRecoverableCheckpointFailure identifies narrowly scoped,
-// checkpoint-backed failures that WALDO can continue safely.
+// HasRecoverableCheckpointFailure reports whether WALDO has a durable
+// checkpoint from which it can safely continue the latest run.
 func HasRecoverableCheckpointFailure(inspection Inspection) bool {
 	if len(inspection.Runs) == 0 || len(inspection.RunBOMs) != len(inspection.Runs) {
 		return false
@@ -757,11 +753,11 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 	attempt.Finished = run.Finished
 	if backendErr != nil {
 		run.State = RunFailed
-		if errors.Is(backendErr, context.Canceled) || errors.Is(backendErr, context.DeadlineExceeded) {
+		attempt.State = RunFailed
+		if errors.Is(backendErr, context.Canceled) || errors.Is(backendErr, context.DeadlineExceeded) || hasVerifiedCheckpoint(run.Progress) {
 			run.State = RunInterrupted
 		}
 		run.Error = backendErr.Error()
-		attempt.State = run.State
 		attempt.Error = run.Error
 		if err := appendTelemetry(telemetryPath, telemetryRow{Observed: now(), Started: attemptStarted, RunID: pin.ID, Stage: stage.Name, Attempt: attemptOrdinal, Event: "run", State: run.State, PlannedSteps: runBOM.Parameters.Steps, PlannedTokens: runBOM.Parameters.PlannedTokenCapacity, Message: run.Error}); err != nil {
 			backendErr = errors.Join(backendErr, telemetryError(telemetryPath, err))
@@ -1204,7 +1200,7 @@ func normalizePendingComposeRequest(root string, pending composeTransaction, req
 func validateComposeTarget(target Inspection, compose Compose) error {
 	if len(target.Runs) > 0 {
 		state := target.Runs[len(target.Runs)-1].State
-		if state == RunRunning || state == RunInterrupted {
+		if state == RunRunning || state == RunInterrupted && !HasRecoverableCheckpointFailure(target) {
 			return fmt.Errorf("model %q has an unfinished %s run; resume that training before starting another compose", target.Model.Name, state)
 		}
 	}

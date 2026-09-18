@@ -439,7 +439,7 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 					if artifact.Path == "" || filepath.IsAbs(filepath.FromSlash(artifact.Path)) || clean != artifact.Path || !strings.HasPrefix(clean, "artifacts/checkpoints/") {
 						return Inspection{}, fmt.Errorf("run %s checkpoint artifact path %q is invalid", pin.ID, artifact.Path)
 					}
-					if err := VerifyArtifactFile(filepath.Join(runDirectory, filepath.FromSlash(artifact.Path)), artifact); err != nil {
+					if err := CheckArtifactFile(filepath.Join(runDirectory, filepath.FromSlash(artifact.Path)), artifact); err != nil {
 						return Inspection{}, fmt.Errorf("run %s checkpoint: %w", pin.ID, err)
 					}
 				}

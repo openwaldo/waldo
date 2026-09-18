@@ -12,6 +12,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -470,6 +471,46 @@ func TestHostfileRemoteInvocationSelectsRankZeroPythonDirectory(t *testing.T) {
 	invocation := session.remoteInvocation([]string{"/tmp/waldo", "model", "train-worker"})
 	if !strings.HasPrefix(invocation, "PATH='/opt/waldo-python/bin:/usr/local/bin:/usr/bin:/bin' ") {
 		t.Fatalf("remote invocation = %q", invocation)
+	}
+}
+
+func TestHostfileRemoteWorkerInvocationPublishesPIDAndForwardsTermination(t *testing.T) {
+	session := hostfileSession{pythonDir: "/opt/waldo-python/bin", remoteRoot: "/tmp/waldo/session"}
+	invocation := session.remoteWorkerInvocation(2, []string{"/tmp/waldo", "model", "train-worker"})
+	for _, expected := range []string{
+		`env PATH='/opt/waldo-python/bin:/usr/local/bin:/usr/bin:/bin' '/tmp/waldo' 'model' 'train-worker' <&0 & child=$!`,
+		`printf '%s\n' "$child" > '/tmp/waldo/session/worker-2.pid'`,
+		`trap 'kill -TERM "$child" 2>/dev/null || true; wait "$child"; exit 143' HUP INT TERM`,
+		`rm -f -- '/tmp/waldo/session/worker-2.pid'`,
+	} {
+		if !strings.Contains(invocation, expected) {
+			t.Fatalf("remote worker invocation %q omits %q", invocation, expected)
+		}
+	}
+}
+
+func TestHostfileRemoteWorkerInvocationPreservesPlanStdin(t *testing.T) {
+	directory := t.TempDir()
+	helper := filepath.Join(directory, "worker")
+	result := filepath.Join(directory, "result")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nIFS= read -r line\nprintf '%s\\n' \"$line\" > \"$1\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	session := hostfileSession{pythonDir: "/usr/bin", remoteRoot: directory}
+	command := exec.Command("sh", "-c", session.remoteWorkerInvocation(1, []string{helper, result}))
+	command.Stdin = strings.NewReader("stage-plan\n")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("remote worker invocation: %v: %s", err, output)
+	}
+	data, err := os.ReadFile(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "stage-plan\n" {
+		t.Fatalf("worker stdin = %q, want stage plan", data)
+	}
+	if _, err := os.Stat(session.workerPIDPath(1)); !os.IsNotExist(err) {
+		t.Fatalf("worker PID file remains after normal exit: %v", err)
 	}
 }
 

@@ -80,6 +80,9 @@ func validateBackendObservation(runDirectory string, planned PlannedStage, obser
 }
 
 func VerifyArtifactFile(path string, artifact training.Artifact) error {
+	if err := CheckArtifactFile(path, artifact); err != nil {
+		return err
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("artifact %s: %w", artifact.Path, err)
@@ -99,6 +102,31 @@ func VerifyArtifactFile(path string, artifact training.Artifact) error {
 	digest := hex.EncodeToString(hasher.Sum(nil))
 	if digest != artifact.SHA256 {
 		return fmt.Errorf("artifact %s SHA-256 is %s, backend reported %s", artifact.Path, digest, artifact.SHA256)
+	}
+	return nil
+}
+
+// CheckArtifactFile validates artifact identity metadata and the inexpensive
+// filesystem facts needed during routine model inspection. Call
+// VerifyArtifactFile at trust boundaries and immediately before consuming a
+// checkpoint to verify its complete content digest.
+func CheckArtifactFile(path string, artifact training.Artifact) error {
+	digest, err := hex.DecodeString(artifact.SHA256)
+	if err != nil || len(digest) != sha256.Size {
+		return fmt.Errorf("artifact %s has invalid SHA-256 metadata", artifact.Path)
+	}
+	if artifact.Bytes < 0 {
+		return fmt.Errorf("artifact %s has invalid byte size %d", artifact.Path, artifact.Bytes)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("artifact %s: %w", artifact.Path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("artifact %s is not a regular file", artifact.Path)
+	}
+	if info.Size() != artifact.Bytes {
+		return fmt.Errorf("artifact %s size is %d, backend reported %d", artifact.Path, info.Size(), artifact.Bytes)
 	}
 	return nil
 }
