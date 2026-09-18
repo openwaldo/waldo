@@ -31,6 +31,7 @@ stages:
     corpora:
       - post-train/sft/helpsteer2
       - post-train/sft/interaction-contract-v1
+      - post-train/sft/waldo-project-v1
       - post-train/conversation/schema-guided-dialogue
       - post-train/conversation/ccpe
     parameters:

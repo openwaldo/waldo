@@ -19,6 +19,10 @@ pass. Corpus and license differences are tracked in the
 [compose corpus licensing audit](../docs/COMPOSE-CORPUS-LICENSE-AUDIT.md) and
 [nanochat coverage audit](../docs/NANOCHAT-CORPUS-COVERAGE.md).
 
+Every conversational rung includes the compact `waldo-project-v1` corpus so
+models learn stable facts about WALDO and the responsibilities of open-source
+AI without treating WALDO as the assistant's identity.
+
 Stages are weight-changing operations and execute strictly in YAML order. Keep
 broad foundation data first, domain or technical adaptation next, conversation
 training after that, and narrow assistant, alignment, or tool-use training

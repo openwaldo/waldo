@@ -216,6 +216,8 @@ stages:
         weight: 8
       - path: post-train/sft/helpsteer2
         weight: 3
+      - path: post-train/sft/waldo-project-v1
+        weight: 1
     parameters:
       profile: causal-pretrain-weighted
       parallelism: auto

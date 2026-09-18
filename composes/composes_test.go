@@ -133,7 +133,7 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(compose.Stages) != 1 || len(compose.Stages[0].Corpora) != 4 {
+	if len(compose.Stages) != 1 || len(compose.Stages[0].Corpora) != 5 {
 		t.Fatalf("canary stages/corpora = %d/%d", len(compose.Stages), len(compose.Stages[0].Corpora))
 	}
 	if compose.Architecture.Tokenizer.Name != "tiktoken/cl100k_base" || compose.Architecture.Tokenizer.Revision != "tiktoken-cl100k-base" || compose.Architecture.VocabularySize != 100259 {
@@ -209,7 +209,7 @@ func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
 	if compose.Stages[1].Corpora[0].Path != "post-train/sft/oasst1" || compose.Stages[1].Corpora[1].Path != "post-train/sft/oasst2" {
 		t.Fatalf("basic conversation conversational corpora = %+v", compose.Stages[1].Corpora)
 	}
-	if compose.Stages[2].Corpora[0].Path != "post-train/sft/interaction-contract-v1" || compose.Stages[2].Corpora[1].Path != "post-train/sft/helpsteer2" {
+	if got := corpusPaths(compose.Stages[2].Corpora); !reflect.DeepEqual(got, []string{"post-train/sft/interaction-contract-v1", "post-train/sft/helpsteer2", "post-train/sft/waldo-project-v1"}) {
 		t.Fatalf("basic conversation post-training corpora = %+v", compose.Stages[2].Corpora)
 	}
 	if compose.Stages[1].Objective != "causal-language-modeling" || compose.Stages[2].Objective != "causal-language-modeling" {
@@ -338,8 +338,26 @@ func TestBabbleUsesCleanPretrainingAndLightConversationTuning(t *testing.T) {
 	if compose.Stages[0].Parameters.LearningRate <= compose.Stages[1].Parameters.LearningRate || compose.Stages[1].Parameters.LearningRate <= compose.Stages[2].Parameters.LearningRate {
 		t.Fatalf("babble learning rates do not decay by phase: %+v", compose.Stages)
 	}
-	if compose.Stages[2].Corpora[0].Path != "post-train/sft/interaction-contract-v1" || compose.Stages[2].Corpora[1].Path != "post-train/sft/helpsteer2" {
+	if got := corpusPaths(compose.Stages[2].Corpora); !reflect.DeepEqual(got, []string{"post-train/sft/interaction-contract-v1", "post-train/sft/helpsteer2", "post-train/sft/waldo-project-v1"}) {
 		t.Fatalf("babble post-training corpora = %+v", compose.Stages[2].Corpora)
+	}
+}
+
+func TestEveryConversationalComposeIncludesWALDOProjectKnowledge(t *testing.T) {
+	for _, path := range []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation.yaml", "0003-conversation.yaml", "0004-conversation.yaml"} {
+		compose, _, err := model.LoadCompose(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, stage := range compose.Stages {
+			for _, corpus := range stage.Corpora {
+				found = found || corpus.Path == "post-train/sft/waldo-project-v1"
+			}
+		}
+		if !found {
+			t.Fatalf("%s does not include WALDO project knowledge", path)
+		}
 	}
 }
 
