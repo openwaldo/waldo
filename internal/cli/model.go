@@ -2294,9 +2294,7 @@ func modelMaterializeProgressPrinter(output io.Writer) func(corpus.MaterializePr
 	return func(event corpus.MaterializeProgress) {
 		if !terminal {
 			if event.Phase == "complete" {
-				fmt.Fprintf(output, "  materialized %s/%s  %s/%s  %s\n",
-					humanInteger(int64(event.Current)), humanInteger(int64(event.Total)),
-					humanBytes(event.Bytes), humanBytes(event.TotalBytes), event.Shard.SHA256[:12])
+				fmt.Fprintln(output, formatMaterializeProgress(event))
 			}
 			return
 		}
@@ -2305,26 +2303,30 @@ func modelMaterializeProgressPrinter(output io.Writer) func(corpus.MaterializePr
 			return
 		}
 		lastUpdate = now
-		const width = 24
-		filled := 0
-		if event.TotalBytes > 0 {
-			filled = int(event.Bytes * width / event.TotalBytes)
-			if filled > width {
-				filled = width
-			}
-		}
-		phase := event.Phase
-		if phase == "complete" {
-			phase = "verified"
-		}
-		fmt.Fprintf(output, "\r\x1b[K  materialize [%-24s] %3d%%  %s/%s  %s/%s  %-8s %s",
-			strings.Repeat("=", filled), percentage(event.Bytes, event.TotalBytes),
-			humanInteger(int64(event.Current)), humanInteger(int64(event.Total)),
-			humanBytes(event.Bytes), humanBytes(event.TotalBytes), phase, event.Shard.SHA256[:12])
+		fmt.Fprintf(output, "\r\x1b[K%s", formatMaterializeProgress(event))
 		if event.Phase == "complete" && event.Current == event.Total {
 			fmt.Fprintln(output)
 		}
 	}
+}
+
+func formatMaterializeProgress(event corpus.MaterializeProgress) string {
+	const width = 24
+	filled := 0
+	if event.TotalBytes > 0 {
+		filled = int(event.Bytes * width / event.TotalBytes)
+		if filled > width {
+			filled = width
+		}
+	}
+	phase := event.Phase
+	if phase == "complete" {
+		phase = "verified"
+	}
+	return fmt.Sprintf("  materialize [%-24s] %3d%%  %s/%s  %s/%s  %-8s %s",
+		strings.Repeat("=", filled), percentage(event.Bytes, event.TotalBytes),
+		humanInteger(int64(event.Current)), humanInteger(int64(event.Total)),
+		humanBytes(event.Bytes), humanBytes(event.TotalBytes), phase, event.Shard.SHA256[:12])
 }
 
 func percentage(current, total int64) int64 {

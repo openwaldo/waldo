@@ -131,7 +131,10 @@ func TestModelMaterializeProgressReportsEveryCompletedShardToLogs(t *testing.T) 
 			Shard: corpus.ShardPin{SHA256: strings.Repeat(string(rune('a'+position-1)), 64)},
 		})
 	}
-	if strings.Count(output.String(), "materialized") != 3 || !strings.Contains(output.String(), "30 B/30 B") {
+	if strings.Count(output.String(), "materialize [") != 3 ||
+		!strings.Contains(output.String(), " 66%") ||
+		!strings.Contains(output.String(), "100%") ||
+		!strings.Contains(output.String(), "30 B/30 B") {
 		t.Fatalf("progress output = %q", output.String())
 	}
 }
