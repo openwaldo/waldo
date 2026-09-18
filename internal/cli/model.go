@@ -938,7 +938,14 @@ func runSecondaryStreamPlansWithRunner(commandContext Context, cluster training.
 	for {
 		var plan model.MultiNodePlan
 		if err := decoder.Decode(&plan); err != nil {
-			if errors.Is(err, io.EOF) && lastRunID != "" {
+			if errors.Is(err, io.EOF) {
+				if lastRunID == "" {
+					// The primary can discover after cluster preflight that every
+					// selected corpus was already completed. Closing the stream
+					// before publishing a stage is a successful no-op, not a
+					// truncated training transaction.
+					return nil
+				}
 				return fmt.Errorf("launcher plan stream ended before the final stage")
 			}
 			return fmt.Errorf("read launcher training plan: %w", err)

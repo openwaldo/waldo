@@ -220,6 +220,47 @@ func TestRunSecondaryStreamPlansNeedsNoCorpusData(t *testing.T) {
 	}
 }
 
+func TestRunSecondaryStreamPlansAcceptsNoWork(t *testing.T) {
+	runner := func(context.Context, training.Cluster, training.Request) error {
+		t.Fatal("secondary runner was called for an empty launcher plan stream")
+		return nil
+	}
+	cluster := training.Cluster{Nodes: 2, NodeRank: 1, Rendezvous: "train-0:29500", RendezvousID: "test"}
+	var stdout bytes.Buffer
+	if err := runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), nil, strings.NewReader(""), nil, runner, &stdout, io.Discard); err != nil {
+		t.Fatalf("empty launcher plan stream: %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("empty launcher plan stream emitted control output %q", stdout.String())
+	}
+}
+
+func TestRunSecondaryStreamPlansRejectsTruncatedStages(t *testing.T) {
+	parameters, err := training.ResolveParameters(training.Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := model.MultiNodePlan{
+		Kind: model.MultiNodePlanKind, Schema: model.MultiNodePlanSchema,
+		RunID: "run-1", Stage: "pretrain", StageOrdinal: 1, StageCount: 2,
+		Nodes: 2, Objective: "causal-language-modeling",
+		ArchitectureSHA256: strings.Repeat("b", 64),
+		Architecture:       json.RawMessage(`{"family":"decoder-transformer","vocabulary_size":259,"tokenizer":{"name":"byte","revision":"builtin-byte-schema-1"}}`),
+		Parameters:         parameters,
+		EvaluationSet:      &training.EvaluationSet{Selection: "lowest-sha256-v1", SHA256: strings.Repeat("a", 64)},
+	}
+	var stream bytes.Buffer
+	if err := json.NewEncoder(&stream).Encode(plan); err != nil {
+		t.Fatal(err)
+	}
+	runner := func(context.Context, training.Cluster, training.Request) error { return nil }
+	cluster := training.Cluster{Nodes: 2, NodeRank: 1, Rendezvous: "train-0:29500", RendezvousID: "test"}
+	err = runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), nil, &stream, nil, runner, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "launcher plan stream ended before the final stage") {
+		t.Fatalf("truncated launcher plan error = %v", err)
+	}
+}
+
 func TestRunSecondaryStreamPlansDoesNotAcknowledgeFailedReadiness(t *testing.T) {
 	parameters, err := training.ResolveParameters(training.Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001})
 	if err != nil {
