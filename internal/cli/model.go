@@ -1231,6 +1231,78 @@ func runModelComposeTraining(context Context, name, path string, cluster trainin
 	return runModelComposeTrainingWithHandoff(context, name, path, cluster, nil, stdout, stderr)
 }
 
+// runCompletedComposeNoop resolves only enough local model state to prove that
+// an exact compose has already completed. Hostfile training calls this before
+// probing or staging remote hosts so a verified no-op has no cluster side
+// effects. Any pending or runnable compose continues through the normal path.
+func runCompletedComposeNoop(context Context, args []string, stdout, stderr io.Writer) (bool, error) {
+	composePath, err := trainingComposeInput(args[1:])
+	if err != nil || composePath == "" {
+		return false, err
+	}
+	compose, composePath, err := model.LoadCompose(composePath)
+	if err != nil {
+		return false, err
+	}
+	builder, err := configuredModelBuilder(context, io.Discard)
+	if err != nil {
+		return false, err
+	}
+	compose, err = builder.ResolveCompose(context.Execution, compose, true)
+	if err != nil {
+		return false, err
+	}
+	name := args[0]
+	if err := builder.CheckComposeTarget(name, compose); err != nil {
+		return false, err
+	}
+	pending, err := model.HasPendingCompose(builder.Root, name)
+	if err != nil || pending {
+		return false, err
+	}
+	exists, err := model.Exists(builder.Root, name)
+	if err != nil || !exists {
+		return false, err
+	}
+	inspection, err := model.Inspect(builder.Root, name)
+	if err != nil {
+		return false, err
+	}
+	filtered, skipped := model.SkipCompletedCorpora(compose, inspection)
+	if len(filtered.Stages) != 0 {
+		return false, nil
+	}
+	return finishCompletedComposeNoop(context, name, composePath, compose, inspection, skipped, stdout, stderr)
+}
+
+func finishCompletedComposeNoop(context Context, name, composePath string, requested model.Compose, inspection model.Inspection, skipped []model.SkippedCorpus, stdout, stderr io.Writer) (bool, error) {
+	for _, selected := range skipped {
+		fmt.Fprintf(stderr, "preflight/%s          skipped %s (already completed by this model)\n", selected.Stage, selected.Path)
+	}
+	completed, err := model.ComposeCompleted(requested, inspection)
+	if err != nil {
+		return false, err
+	}
+	if !completed {
+		return false, fmt.Errorf("model %q previously trained every selected corpus path, but its completed run BOMs do not match compose %q; WALDO will not treat changed stages, filters, order, or training parameters as completed — use a new model name for this compose", name, composePath)
+	}
+	if err := model.VerifyCurrentModelArtifacts(inspection); err != nil {
+		return false, fmt.Errorf("verify completed model artifacts: %w", err)
+	}
+	if err := model.PersistCompletedCompose(inspection.Path, requested, filepath.Base(composePath)); err != nil {
+		return false, fmt.Errorf("persist verified completed compose: %w", err)
+	}
+	if context.JSON {
+		return true, writeJSON(stdout, struct {
+			Compose string                `json:"compose"`
+			Result  model.Inspection      `json:"result"`
+			Skipped []model.SkippedCorpus `json:"skipped"`
+		}{Compose: composePath, Result: inspection, Skipped: skipped})
+	}
+	fmt.Fprintf(stdout, "model %s unchanged; verified all %d stages of compose %s were already completed\n", name, len(requested.Stages), composePath)
+	return true, nil
+}
+
 func runModelComposeTrainingWithHandoff(context Context, name, path string, cluster training.Cluster, handoff *model.MultiNodeHandoff, stdout, stderr io.Writer) error {
 	compose, composePath, err := model.LoadCompose(path)
 	if err != nil {
@@ -1247,6 +1319,7 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 	if err != nil {
 		return err
 	}
+	requestedCompose := compose
 	for _, stage := range compose.Stages {
 		if err := validateDistributedBatchSize("stage "+stage.Name, stage.Parameters.BatchSize, stage.Parameters.GradientAccumulation, cluster.WorldSize); err != nil {
 			return err
@@ -1280,15 +1353,8 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 			fmt.Fprintf(stderr, "preflight/%s          skipped %s (already completed by this model)\n", corpus.Stage, corpus.Path)
 		}
 		if len(compose.Stages) == 0 {
-			if context.JSON {
-				return writeJSON(stdout, struct {
-					Compose string                `json:"compose"`
-					Result  model.Inspection      `json:"result"`
-					Skipped []model.SkippedCorpus `json:"skipped"`
-				}{Compose: composePath, Result: inspection, Skipped: skipped})
-			}
-			fmt.Fprintf(stdout, "model %s unchanged; all selected corpora were already completed\n", name)
-			return nil
+			_, err := finishCompletedComposeNoop(context, name, composePath, requestedCompose, inspection, skipped, stdout, io.Discard)
+			return err
 		}
 	}
 	builder.ComposeName = filepath.Base(composePath)

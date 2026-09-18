@@ -60,6 +60,12 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 	if err != nil {
 		return err
 	}
+	if complete, err := runCompletedComposeNoop(commandContext, args, stdout, stderr); err != nil {
+		return err
+	} else if complete {
+		fmt.Fprintln(stderr, "multi-host            complete; no training stages required")
+		return nil
+	}
 	if hostfile.Wrapper == "" {
 		hostfile.Wrapper, err = loadFuzzballSSHWrapper()
 		if err != nil {

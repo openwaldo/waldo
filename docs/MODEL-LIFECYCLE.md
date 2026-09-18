@@ -376,11 +376,22 @@ WALDO resolves and hash-verifies every stage and creates the active model at
 architecture and tokenizer hash must exactly match the compose; a mismatch is
 refused with guidance to use a new model name. WALDO removes corpus paths
 already present in that model's completed run BOMs, then appends stages for
-the remaining paths without replacing the model. If no paths remain, the
-model is unchanged. This is path-level reuse, not record- or shard-level delta
-detection. Durable transaction metadata beneath
+the remaining paths without replacing the model. If no paths remain, WALDO
+does not infer completion from path history alone: the final successful run
+lineage must also match every requested stage, including its order, filter,
+conversation transform, corpus selection, and resolved training parameters.
+The current published model artifacts are hash-verified as part of this check.
+Only then is the model unchanged; otherwise WALDO refuses to
+silently treat the changed compose as complete and directs the operator to use
+a new model name. Corpus reuse itself remains path-level, not record- or
+shard-level delta detection. Durable transaction metadata beneath
 `<model.root>/.waldo-compose` pins the compose, every corpus BOM, the model ID,
 and the starting run ordinal.
+
+For `--hostfile` runs, WALDO performs this local completion check before
+probing or staging secondary hosts. A verified no-op therefore has no remote
+side effects.
+
 Passing `--audit` audits every materialized stage before the transaction starts.
 Interactive terminals receive byte-level materialization progress; redirected
 logs receive one completion line for every shard. The optional audit is shown

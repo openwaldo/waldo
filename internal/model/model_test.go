@@ -846,6 +846,29 @@ func TestExportRejectsCorruptModelArtifact(t *testing.T) {
 	}
 }
 
+func TestVerifyCurrentModelArtifactsRejectsCorruptPublishedWeights(t *testing.T) {
+	root := t.TempDir()
+	builder := Builder{Root: root, NewID: func() (string, error) { return "run0001", nil }, Resolver: training.FakeResolver()}
+	if _, err := builder.Initialize("smoke", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	trained, err := builder.Train(context.Background(), "smoke", preparedFixture(t, testStage("pretrain")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyCurrentModelArtifacts(trained); err != nil {
+		t.Fatalf("verify current artifacts: %v", err)
+	}
+	pin := trained.Model.Runs[0]
+	artifact := filepath.Join(trained.Path, "runs", runDirectoryName(pin), filepath.FromSlash(pin.Artifacts[0].Path))
+	if err := os.WriteFile(artifact, []byte("corrupt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyCurrentModelArtifacts(trained); err == nil || (!strings.Contains(err.Error(), "SHA-256") && !strings.Contains(err.Error(), "size is")) {
+		t.Fatalf("corrupt current artifact error = %v", err)
+	}
+}
+
 func TestTrainRejectsResolverMismatchBeforeAddingRun(t *testing.T) {
 	root := t.TempDir()
 	builder := Builder{Root: root}
