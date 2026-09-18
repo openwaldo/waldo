@@ -1,7 +1,8 @@
-# Conversation level 3: restore the complete 12B-token conversation baseline.
-# This keeps the 0002 architecture and curriculum while restoring its earlier
-# training exposure. It is a private research compose pending record-level
-# rights work for Gutenberg, federal rulemaking, PLOS, and HelpSteer2.
+# Conversation level 3: corrected 12B-token conversation baseline.
+# This preserves the 0002 architecture, foundation exposure, and corpus order,
+# while applying assistant-only loss and bounded one-pass conversation tuning.
+# It is a private research compose pending record-level rights work for
+# Gutenberg, federal rulemaking, PLOS, and HelpSteer2.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -64,7 +65,7 @@ stages:
 
   - name: conversational-midtrain
     type: fine-tuning
-    objective: causal-language-modeling
+    objective: assistant-response-modeling
     conversation:
       template: user-assistant-v1
       supervised_roles: [assistant]
@@ -85,14 +86,14 @@ stages:
     parameters:
       profile: causal-pretrain-weighted
       parallelism: auto
-      epochs: 3
+      epochs: 1
       batch_size: 8
       gradient_accumulation_steps: 1
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
       sequence_length: 2048
-      learning_rate: 0.00004
+      learning_rate: 0.00002
       optimizer: adamw
       schedule: cosine
       seed: 43
@@ -107,7 +108,7 @@ stages:
 
   - name: post-train
     type: fine-tuning
-    objective: causal-language-modeling
+    objective: assistant-response-modeling
     conversation:
       template: user-assistant-v1
       supervised_roles: [assistant]
@@ -124,19 +125,19 @@ stages:
     parameters:
       profile: causal-pretrain-weighted
       parallelism: auto
-      epochs: 3
+      epochs: 1
       batch_size: 8
       gradient_accumulation_steps: 1
       compute_precision: bfloat16
       activation_checkpointing: true
       compile: true
       sequence_length: 2048
-      learning_rate: 0.000015
+      learning_rate: 0.000008
       optimizer: adamw
       schedule: cosine
       seed: 44
       weight_decay: 0.05
-      warmup_steps: 96
+      warmup_steps: 32
       shuffle_buffer_records: 16384
       shuffle_buffer_bytes: 268435456
       checkpoint_every: 160

@@ -123,7 +123,7 @@ Corpus requirements:
 
 WALDO requirements:
 
-- Causal conversation modeling is retained so the restored run changes only training exposure.
+- Causal conversation modeling is retained in 0002 as the historical comparison point.
 - Add fixed conversation tests.
 - Replay foundation regression tests.
 
@@ -131,7 +131,7 @@ WALDO requirements:
 
 | Field | Plan |
 | --- | --- |
-| Status | Restored 12B-token comparison baseline; train as `conversation2` |
+| Status | Corrected 12B-token comparison baseline; train as `conversation2` |
 | Builds from | Fresh random initialization; same architecture and corpus sequence as 0002 |
 | Model type | Dense monolithic foundation plus conversation SFT; approximately 337M parameters |
 | Recommended hardware | 1x 8-GPU NVIDIA H100 SXM system |
@@ -147,12 +147,13 @@ Success criteria:
 Corpus requirements:
 
 - The exact 0002 corpus selection and weights.
-- 12B pretraining tokens followed by three epochs of each conversation stage.
+- 12B pretraining tokens followed by one bounded pass over each conversation stage.
 
 WALDO requirements:
 
 - Train under a fresh model name; do not append pretraining after 0002 post-training.
-- Preserve causal conversation modeling for this controlled restoration.
+- Apply assistant-only response loss during both conversation stages.
+- Use lower conversation-stage learning rates and one pass to limit the held-out-loss regression observed in the initial 0003 run.
 - Add fixed side-by-side generation and held-out evaluations.
 
 ## Conversation level 4 (`0004-conversation.yaml`)

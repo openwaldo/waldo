@@ -227,7 +227,7 @@ func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
 	}
 }
 
-func TestConversationThreeRestoresCompleteBaselineExposure(t *testing.T) {
+func TestConversationThreeCorrectsCompleteBaselineExposure(t *testing.T) {
 	short, _, err := model.LoadCompose("0002-conversation.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -240,12 +240,18 @@ func TestConversationThreeRestoresCompleteBaselineExposure(t *testing.T) {
 		t.Fatalf("restored conversation contract differs from 0002")
 	}
 	for index := range compose.Stages {
-		if compose.Stages[index].Name != short.Stages[index].Name || compose.Stages[index].Objective != short.Stages[index].Objective || !reflect.DeepEqual(compose.Stages[index].Corpora, short.Stages[index].Corpora) {
+		if compose.Stages[index].Name != short.Stages[index].Name || !reflect.DeepEqual(compose.Stages[index].Corpora, short.Stages[index].Corpora) {
 			t.Fatalf("restored conversation stage %d changed its curriculum", index)
 		}
 	}
-	if compose.Stages[0].Parameters.Tokens != 11999969280 || compose.Stages[1].Parameters.Epochs != 3 || compose.Stages[2].Parameters.Epochs != 3 {
+	if compose.Stages[0].Objective != "causal-language-modeling" || compose.Stages[1].Objective != "assistant-response-modeling" || compose.Stages[2].Objective != "assistant-response-modeling" {
+		t.Fatalf("corrected conversation objectives = %q / %q / %q", compose.Stages[0].Objective, compose.Stages[1].Objective, compose.Stages[2].Objective)
+	}
+	if compose.Stages[0].Parameters.Tokens != 11999969280 || compose.Stages[1].Parameters.Epochs != 1 || compose.Stages[2].Parameters.Epochs != 1 {
 		t.Fatalf("restored conversation budgets = %+v / %+v / %+v", compose.Stages[0].Parameters, compose.Stages[1].Parameters, compose.Stages[2].Parameters)
+	}
+	if compose.Stages[1].Parameters.LearningRate != 0.00002 || compose.Stages[2].Parameters.LearningRate != 0.000008 {
+		t.Fatalf("corrected conversation learning rates = %g / %g", compose.Stages[1].Parameters.LearningRate, compose.Stages[2].Parameters.LearningRate)
 	}
 	forecast, err := model.ForecastCompose(compose)
 	if err != nil {
