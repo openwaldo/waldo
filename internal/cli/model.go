@@ -1972,10 +1972,31 @@ func configuredModelBuilderForCluster(commandContext Context, progress io.Writer
 	if err != nil {
 		return model.Builder{}, err
 	}
+	type terminalWriter interface{ Fd() uintptr }
+	progressTerminal := false
+	if writer, ok := progress.(terminalWriter); ok {
+		progressTerminal = term.IsTerminal(int(writer.Fd()))
+	}
+	barActive := false
 	builder := model.Builder{Root: root, Progress: func(event model.Progress) {
 		if commandContext.JSON {
 			_ = json.NewEncoder(progress).Encode(event)
 		} else {
+			if event.Bar != nil && progressTerminal {
+				fmt.Fprintf(progress, "\r\x1b[K%s", formatModelProgressBar(*event.Bar))
+				barActive = !event.Bar.Complete
+				if event.Bar.Complete {
+					fmt.Fprintln(progress)
+				}
+				if commandContext.Progress != nil {
+					commandContext.Progress(event)
+				}
+				return
+			}
+			if barActive {
+				fmt.Fprintln(progress)
+				barActive = false
+			}
 			label := event.Phase
 			if event.Stage != "" {
 				label += "/" + event.Stage
@@ -2009,6 +2030,20 @@ func configuredModelBuilderForCluster(commandContext Context, progress io.Writer
 		builder.MultiNode = model.MultiNodeHandoff{RendezvousID: cluster.RendezvousID, Nodes: cluster.Nodes, StageOrdinal: 1, StageCount: 1}
 	}
 	return builder, nil
+}
+
+func formatModelProgressBar(bar model.ProgressBar) string {
+	const width = 24
+	filled := 0
+	if bar.Total > 0 {
+		filled = int(float64(bar.Current) * width / float64(bar.Total))
+		if filled > width {
+			filled = width
+		}
+	}
+	return fmt.Sprintf("  %-8s [%-24s] %3d%%  %s/%s sequences  %s",
+		bar.Label, strings.Repeat("=", filled), percentage(bar.Current, bar.Total),
+		humanInteger(bar.Current), humanInteger(bar.Total), bar.Detail)
 }
 
 func configuredModelBuilder(commandContext Context, progress io.Writer) (model.Builder, error) {

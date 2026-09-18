@@ -1117,8 +1117,8 @@ func TestTrainDerivesAndPersistsEpochSteps(t *testing.T) {
 
 func TestTrainReportsTokenBudgetCapacityProgress(t *testing.T) {
 	root := t.TempDir()
-	var messages []string
-	builder := Builder{Root: root, Resolver: training.FakeResolver(), Progress: func(event Progress) { messages = append(messages, event.Message) }}
+	var events []Progress
+	builder := Builder{Root: root, Resolver: training.FakeResolver(), Progress: func(event Progress) { events = append(events, event) }}
 	if _, err := builder.Initialize("token-model", testArchitecture()); err != nil {
 		t.Fatal(err)
 	}
@@ -1128,13 +1128,16 @@ func TestTrainReportsTokenBudgetCapacityProgress(t *testing.T) {
 	if _, err := builder.Train(context.Background(), "token-model", preparedFixture(t, stage)); err != nil {
 		t.Fatal(err)
 	}
-	var started, completed bool
-	for _, message := range messages {
-		started = started || strings.Contains(message, "capacity check 1: testing up to")
-		completed = completed || strings.Contains(message, "reached all") && strings.Contains(message, "required training sequences")
+	var filtering, packing, calculating, started, completed bool
+	for _, event := range events {
+		filtering = filtering || strings.Contains(event.Message, "1/3 applying corpus filters and excluding held-out records")
+		packing = packing || strings.Contains(event.Message, "2/3 tokenizing and packing records into fixed-length sequences")
+		calculating = calculating || strings.Contains(event.Message, "3/3 calculating the minimum corpus passes")
+		started = started || event.Bar != nil && event.Bar.Current == 0 && event.Bar.Total > 0
+		completed = completed || event.Bar != nil && event.Bar.Complete && event.Bar.Current == event.Bar.Total
 	}
-	if !started || !completed {
-		t.Fatalf("capacity progress messages = %v", messages)
+	if !filtering || !packing || !calculating || !started || !completed {
+		t.Fatalf("capacity progress events = %+v", events)
 	}
 }
 

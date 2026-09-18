@@ -107,6 +107,20 @@ func TestModelProgressMessageIncludesStableETA(t *testing.T) {
 	}
 }
 
+func TestFormatModelProgressBar(t *testing.T) {
+	got := formatModelProgressBar(model.ProgressBar{
+		Label:   "pack",
+		Current: 25,
+		Total:   100,
+		Detail:  "200 record visits; up to 2 corpus passes",
+	})
+	for _, want := range []string{"pack", "25%", "25/100 sequences", "200 record visits", "up to 2 corpus passes"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("progress bar %q does not contain %q", got, want)
+		}
+	}
+}
+
 func TestModelMaterializeProgressReportsEveryCompletedShardToLogs(t *testing.T) {
 	var output bytes.Buffer
 	report := modelMaterializeProgressPrinter(&output)
