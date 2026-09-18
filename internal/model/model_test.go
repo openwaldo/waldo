@@ -1412,6 +1412,68 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 	}
 }
 
+func TestComposeRetainsDurableTransactionAfterCheckpointBackedFailure(t *testing.T) {
+	root := t.TempDir()
+	compose := validCompose()
+	stage := preparedFixture(t, compose.Stages[0])
+	attempts := 0
+	backend := backendFunc(func(_ context.Context, request training.Request) (training.Observation, error) {
+		attempts++
+		if attempts == 1 {
+			path := filepath.Join(request.ArtifactDirectory, "checkpoints", "step-00000001", "state.json")
+			data := []byte("{\"kind\":\"waldo-test-checkpoint\",\"schema\":1,\"step\":1}\n")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return training.Observation{}, err
+			}
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				return training.Observation{}, err
+			}
+			digest := sha256.Sum256(data)
+			checkpoint := training.Checkpoint{Step: 1, Tokens: 64, Artifacts: []training.Artifact{{Path: "artifacts/checkpoints/step-00000001/state.json", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}}}
+			request.Report(training.Event{Kind: "checkpoint", Message: "test checkpoint", Step: 1, Tokens: 64, Checkpoint: &checkpoint})
+			return training.Observation{}, errors.New("synthetic worker failure after checkpoint")
+		}
+		if request.Resume == nil || request.Resume.Step != 1 {
+			return training.Observation{}, fmt.Errorf("missing checkpoint resume: %+v", request.Resume)
+		}
+		data := []byte("resumed compose weights")
+		path := filepath.Join(request.ArtifactDirectory, "model.safetensors")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return training.Observation{}, err
+		}
+		digest := sha256.Sum256(data)
+		loss := 0.5
+		return training.Observation{
+			Steps: 2, ConsumedTokens: 128, FinalLoss: &loss,
+			Evaluations: []training.Evaluation{{Step: 2, Tokens: 128, Metrics: map[string]float64{"heldout_loss": 0.75}}},
+			Artifacts:   []training.Artifact{{Path: "artifacts/model.safetensors", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}},
+		}, nil
+	})
+	builder := Builder{Root: root, ComposeName: "conversation.yaml", NewID: func() (string, error) { return "compose0001", nil }, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backend), nil
+	})}
+	if _, err := builder.Compose(context.Background(), "conversation", compose, []PreparedStage{stage}); err == nil || !strings.Contains(err.Error(), "synthetic worker failure") {
+		t.Fatalf("first Compose error = %v", err)
+	}
+	if pending, err := HasPendingCompose(root, "conversation"); err != nil || !pending {
+		t.Fatalf("checkpoint-backed failure did not retain transaction: pending=%v err=%v", pending, err)
+	}
+	interrupted, err := Inspect(root, "conversation")
+	if err != nil || interrupted.Runs[0].State != RunInterrupted || interrupted.Runs[0].Attempts[0].State != RunFailed {
+		t.Fatalf("checkpoint-backed compose state = %+v, err=%v", interrupted.Runs, err)
+	}
+	completed, err := builder.Compose(context.Background(), "conversation", compose, []PreparedStage{stage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || len(completed.Runs) != 1 || completed.Runs[0].State != RunComplete || len(completed.Runs[0].Attempts) != 2 {
+		t.Fatalf("resumed compose: attempts=%d runs=%+v", attempts, completed.Runs)
+	}
+	if pending, err := HasPendingCompose(root, "conversation"); err != nil || pending {
+		t.Fatalf("completed compose retained transaction: pending=%v err=%v", pending, err)
+	}
+}
+
 func TestComposeRecoversRunningRunAfterTransactionPersistenceFailure(t *testing.T) {
 	root := t.TempDir()
 	compose := validCompose()

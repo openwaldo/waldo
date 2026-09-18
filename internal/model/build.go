@@ -1572,7 +1572,12 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 			releaseErr = builder.StageReleaser(stage)
 		}
 		if trainErr != nil {
-			if errors.Is(trainErr, context.Canceled) || errors.Is(trainErr, context.DeadlineExceeded) {
+			retain := errors.Is(trainErr, context.Canceled) || errors.Is(trainErr, context.DeadlineExceeded)
+			if !retain {
+				latest, inspectErr := Inspect(builder.Root, name)
+				retain = inspectErr == nil && HasRecoverableCheckpointFailure(latest)
+			}
+			if retain {
 				builder.report(Progress{Phase: "compose", Message: fmt.Sprintf("retained transaction %s; repeat the exact command to resume", transactionID[:12])})
 			} else {
 				finishFailedCompose(workspace)

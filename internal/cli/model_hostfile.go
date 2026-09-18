@@ -112,7 +112,11 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 		Cleanup: func() {},
 	}
 	trainErr := runModelTrainWithCluster(commandContext, args, cluster, handoff, stdout, stderr)
-	return session.finish(trainErr)
+	finishErr := session.finish(trainErr)
+	if finishErr == nil && !session.workersStarted {
+		fmt.Fprintln(stderr, "multi-host            complete; no training stages required")
+	}
+	return finishErr
 }
 
 type trainingHostfile struct {
@@ -283,25 +287,26 @@ type hostfileStageReady struct {
 }
 
 type hostfileSession struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	hostfile      trainingHostfile
-	cluster       training.Cluster
-	binary        string
-	binarySHA256  string
-	remoteBinary  string
-	remoteRoot    string
-	resumeRoot    string
-	resumeStaged  bool
-	pythonDir     string
-	cacheRoot     string
-	cacheScratch  string
-	cacheMaxBytes int64
-	cacheMirrors  []string
-	workers       []*hostfileWorker
-	output        io.Writer
-	outputMu      sync.Mutex
-	publishMu     sync.Mutex
+	ctx            context.Context
+	cancel         context.CancelFunc
+	hostfile       trainingHostfile
+	cluster        training.Cluster
+	binary         string
+	binarySHA256   string
+	remoteBinary   string
+	remoteRoot     string
+	resumeRoot     string
+	resumeStaged   bool
+	pythonDir      string
+	cacheRoot      string
+	cacheScratch   string
+	cacheMaxBytes  int64
+	cacheMirrors   []string
+	workers        []*hostfileWorker
+	workersStarted bool
+	output         io.Writer
+	outputMu       sync.Mutex
+	publishMu      sync.Mutex
 }
 
 const hostfileWorkerExitGrace = 10 * time.Second
@@ -378,14 +383,6 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 	if err := rendezvousListener.Close(); err != nil {
 		session.abort()
 		return nil, fmt.Errorf("close rank 0 rendezvous preflight listener: %w", err)
-	}
-	for rank, host := range hostfile.Hosts[1:] {
-		worker, err := session.startWorker(host, rank+1)
-		if err != nil {
-			session.abort()
-			return nil, err
-		}
-		session.workers = append(session.workers, worker)
 	}
 	return session, nil
 }
@@ -584,6 +581,28 @@ func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWor
 	return worker, nil
 }
 
+func (session *hostfileSession) secondaryHosts() []string {
+	if len(session.hostfile.Hosts) < 2 {
+		return nil
+	}
+	return session.hostfile.Hosts[1:]
+}
+
+func (session *hostfileSession) startWorkers() error {
+	if session.workersStarted {
+		return nil
+	}
+	for rank, host := range session.secondaryHosts() {
+		worker, err := session.startWorker(host, rank+1)
+		if err != nil {
+			return err
+		}
+		session.workers = append(session.workers, worker)
+	}
+	session.workersStarted = true
+	return nil
+}
+
 func (session *hostfileSession) remoteInvocation(arguments []string) string {
 	path := strings.Join([]string{session.pythonDir, "/usr/local/bin", "/usr/bin", "/bin"}, ":")
 	return "PATH=" + shellQuote(path) + " " + joinRemoteArguments(arguments)
@@ -627,6 +646,9 @@ func (session *hostfileSession) copyWorkerStdout(worker *hostfileWorker, source 
 func (session *hostfileSession) publish(plan model.MultiNodePlan) error {
 	session.publishMu.Lock()
 	defer session.publishMu.Unlock()
+	if err := session.startWorkers(); err != nil {
+		return err
+	}
 	if err := session.prepareInitialization(&plan); err != nil {
 		return err
 	}
@@ -722,11 +744,11 @@ func (session *hostfileSession) prepareResume(runID string, resume *training.Res
 	for _, artifact := range resume.Checkpoint.Artifacts {
 		total += artifact.Bytes
 	}
-	for _, worker := range session.workers {
+	for _, host := range session.secondaryHosts() {
 		session.outputMu.Lock()
-		fmt.Fprintf(session.output, "multi-host resume     staging checkpoint step %d (%s) on %s\n", resume.Step, humanBytes(total), worker.host)
+		fmt.Fprintf(session.output, "multi-host resume     staging checkpoint step %d (%s) on %s\n", resume.Step, humanBytes(total), host)
 		session.outputMu.Unlock()
-		if err := session.stageResume(worker.host, resume.Checkpoint.Artifacts, sources, targets); err != nil {
+		if err := session.stageResume(host, resume.Checkpoint.Artifacts, sources, targets); err != nil {
 			return err
 		}
 	}
@@ -827,14 +849,14 @@ func (session *hostfileSession) cleanupResumeStaging() {
 		fmt.Fprintf(session.output, "warning: clean local multi-host checkpoint staging: %v\n", err)
 		session.outputMu.Unlock()
 	}
-	for _, worker := range session.workers {
+	for _, host := range session.secondaryHosts() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		command := session.remoteCommandContext(ctx, worker.host, "rm -rf -- "+shellQuote(session.resumeRoot))
+		command := session.remoteCommandContext(ctx, host, "rm -rf -- "+shellQuote(session.resumeRoot))
 		err := command.Run()
 		cancel()
 		if err != nil {
 			session.outputMu.Lock()
-			fmt.Fprintf(session.output, "warning: clean multi-host checkpoint staging on %s: %v\n", worker.host, err)
+			fmt.Fprintf(session.output, "warning: clean multi-host checkpoint staging on %s: %v\n", host, err)
 			session.outputMu.Unlock()
 		}
 	}
@@ -846,7 +868,7 @@ func (session *hostfileSession) cleanupStaging() {
 		fmt.Fprintf(session.output, "warning: clean local multi-host launch staging: %v\n", err)
 		session.outputMu.Unlock()
 	}
-	for _, host := range session.hostfile.Hosts[1:] {
+	for _, host := range session.secondaryHosts() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		command := session.remoteCommandContext(ctx, host, "rm -rf -- "+shellQuote(session.remoteRoot))
 		err := command.Run()

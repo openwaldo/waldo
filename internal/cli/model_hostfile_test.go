@@ -379,6 +379,9 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
+	if session.workersStarted || len(session.workers) != 0 {
+		t.Fatalf("training workers started before the first stage plan: %+v", session.workers)
+	}
 	if session.cluster.WorldSize != 2 {
 		t.Fatalf("discovered world size = %d, want 2", session.cluster.WorldSize)
 	}
@@ -392,6 +395,9 @@ esac
 		Nodes: 2, EvaluationSet: &evaluation,
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if !session.workersStarted || len(session.workers) != 1 {
+		t.Fatalf("first stage plan did not start one secondary worker: %+v", session.workers)
 	}
 	if err := session.publish(model.MultiNodePlan{
 		Kind: model.MultiNodePlanKind, Schema: model.MultiNodePlanSchema,
@@ -419,6 +425,55 @@ esac
 	}
 }
 
+func TestHostfileSessionNoWorkDoesNotStartTrainingWorkers(t *testing.T) {
+	bin := t.TempDir()
+	ssh := filepath.Join(bin, "ssh")
+	marker := filepath.Join(t.TempDir(), "worker-started")
+	script := `#!/bin/sh
+case "$*" in
+  *--check*)
+    printf '%s\n' '{"python":"python3","python_version":"3.12","torch_version":"2.8","torchtitan_version":"0.2","accelerators":[{"manufacturer":"NVIDIA","model":"H200","memory_bytes":150323855360}]}'
+    ;;
+  *--plan-stdin*)
+    : > '` + marker + `'
+    cat >/dev/null
+    ;;
+  *) cat >/dev/null ;;
+esac
+`
+	if err := os.WriteFile(ssh, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	capabilities := training.TorchTitanHost{
+		Python: "python3", PythonVersion: "3.12", TorchVersion: "2.8", TorchTitanVersion: "0.2",
+		Accelerators: []training.Accelerator{{Manufacturer: "NVIDIA", Model: "H200", MemoryBytes: 140 << 30}},
+	}
+	previous := inspectHostfileTorchTitan
+	inspectHostfileTorchTitan = func(context.Context) (training.TorchTitanHost, error) { return capabilities, nil }
+	t.Cleanup(func() { inspectHostfileTorchTitan = previous })
+	previousListener := listenHostfileRendezvous
+	listenHostfileRendezvous = func(string) (io.Closer, error) { return io.NopCloser(strings.NewReader("")), nil }
+	t.Cleanup(func() { listenHostfileRendezvous = previousListener })
+	cache, err := lookaside.NewCache(t.TempDir(), nil, lookaside.WithPersistentStorage(t.TempDir(), 1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := startHostfileSession(context.Background(), trainingHostfile{Hosts: []string{"train-0", "train-1"}}, training.Cluster{Nodes: 2, Rendezvous: "127.0.0.1:0", RendezvousID: "no-work"}, cache, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.finish(nil); err != nil {
+		t.Fatal(err)
+	}
+	if session.workersStarted || len(session.workers) != 0 {
+		t.Fatalf("no-work session started training workers: %+v", session.workers)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("remote training worker was invoked for no work: %v", err)
+	}
+}
+
 func TestHostfilePublishRejectsWrongStageAcknowledgement(t *testing.T) {
 	previousListener := listenHostfileRendezvous
 	listenHostfileRendezvous = func(string) (io.Closer, error) { return io.NopCloser(strings.NewReader("")), nil }
@@ -431,7 +486,7 @@ func TestHostfilePublishRejectsWrongStageAcknowledgement(t *testing.T) {
 		ready: make(chan hostfileStageReady, 1), done: make(chan struct{}),
 	}
 	worker.ready <- hostfileStageReady{Kind: hostfileStageReadyKind, Schema: 1, RunID: "wrong-run", Stage: "post-train", StageOrdinal: 2, StageCount: 3}
-	session := hostfileSession{ctx: context.Background(), cluster: training.Cluster{Rendezvous: "127.0.0.1:0"}, workers: []*hostfileWorker{worker}}
+	session := hostfileSession{ctx: context.Background(), cluster: training.Cluster{Rendezvous: "127.0.0.1:0"}, workers: []*hostfileWorker{worker}, workersStarted: true}
 	err := session.publish(model.MultiNodePlan{RunID: "run-2", Stage: "post-train", StageOrdinal: 2, StageCount: 3})
 	_ = inputWriter.Close()
 	if err == nil || !strings.Contains(err.Error(), "train-1 acknowledged unexpected stage plan") || !strings.Contains(err.Error(), "wrong-run") {
@@ -453,11 +508,51 @@ func TestHostfilePublishTimesOutNamingHostAndStage(t *testing.T) {
 	previous := hostfileStageReadyTimeout
 	hostfileStageReadyTimeout = 10 * time.Millisecond
 	t.Cleanup(func() { hostfileStageReadyTimeout = previous })
-	session := hostfileSession{ctx: context.Background(), cluster: training.Cluster{Rendezvous: "127.0.0.1:0"}, workers: []*hostfileWorker{worker}}
+	session := hostfileSession{ctx: context.Background(), cluster: training.Cluster{Rendezvous: "127.0.0.1:0"}, workers: []*hostfileWorker{worker}, workersStarted: true}
 	err := session.publish(model.MultiNodePlan{RunID: "run-3", StageOrdinal: 3, StageCount: 5})
 	_ = inputWriter.Close()
 	if err == nil || !strings.Contains(err.Error(), "train-2 did not acknowledge stage 3/5") || !strings.Contains(err.Error(), "10ms") {
 		t.Fatalf("readiness timeout error = %v", err)
+	}
+}
+
+func TestHostfileFinishPreservesPrimaryAndSecondaryFailureSemantics(t *testing.T) {
+	primaryFailure := errors.New("primary failed")
+	secondaryFailure := errors.New("secondary failed")
+	for _, test := range []struct {
+		name       string
+		primaryErr error
+		workerErr  error
+		want       string
+	}{
+		{name: "success"},
+		{name: "secondary failure", workerErr: secondaryFailure, want: "secondary training workers failed: train-1: secondary failed"},
+		{name: "primary failure", primaryErr: primaryFailure, want: "primary failed"},
+		{name: "primary failure remains authoritative", primaryErr: primaryFailure, workerErr: secondaryFailure, want: "primary failed"},
+		{name: "secondary failure that canceled primary", primaryErr: context.Canceled, workerErr: secondaryFailure, want: "secondary training workers failed: train-1: secondary failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			done := make(chan struct{})
+			close(done)
+			reader, writer := io.Pipe()
+			defer reader.Close()
+			worker := &hostfileWorker{host: "train-1", stdin: writer, done: done, err: test.workerErr}
+			session := hostfileSession{
+				ctx: context.Background(), cancel: func() {}, output: io.Discard,
+				hostfile: trainingHostfile{Hosts: []string{"train-0", "train-1"}, Wrapper: "/usr/bin/true"},
+				workers:  []*hostfileWorker{worker}, workersStarted: true,
+			}
+			err := session.finish(test.primaryErr)
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("finish error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("finish error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

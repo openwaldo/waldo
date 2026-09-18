@@ -280,6 +280,11 @@ a host, network, or launcher failure that occurs during a long earlier stage
 without waiting for TorchTitan's rendezvous timeout. The error names the host
 that did not acknowledge.
 
+Host capability checks happen before compose resolution, but WALDO does not
+start secondary training workers until it publishes the first runnable stage.
+If every selected corpus was already completed, the command reports the model
+unchanged, launches no training workers, and exits successfully on every host.
+
 ## Failure behavior
 
 This implementation is deliberately non-elastic. A secondary failure cancels
