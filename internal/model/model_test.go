@@ -1130,8 +1130,8 @@ func TestTrainReportsTokenBudgetCapacityProgress(t *testing.T) {
 	}
 	var started, completed bool
 	for _, message := range messages {
-		started = started || strings.Contains(message, "capacity trial 1 testing")
-		completed = completed || strings.Contains(message, "training sequences: sufficient")
+		started = started || strings.Contains(message, "capacity check 1: testing up to")
+		completed = completed || strings.Contains(message, "reached all") && strings.Contains(message, "required training sequences")
 	}
 	if !started || !completed {
 		t.Fatalf("capacity progress messages = %v", messages)

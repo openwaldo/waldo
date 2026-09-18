@@ -276,7 +276,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		preflight = partition.Preflight(preflightIdentity, resolvedParameters, capacityVerified)
 	}
 	if stage.Parameters.Tokens > 0 && !capacityVerified {
-		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("determining deterministic corpus passes for %d optimizer steps", resolvedParameters.Steps)})
+		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("checking filtered corpus capacity for %d optimizer steps (global batch %d, sequence length %d tokens)", resolvedParameters.Steps, resolvedParameters.BatchSize, resolvedParameters.SequenceLength)})
 		var epochs int64
 		clock := builder.clock()
 		var lastReport time.Time
@@ -287,21 +287,21 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 			}
 			if event.Records == 0 && !event.Complete {
 				lastReport = clock()
-				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("capacity trial %d testing %d corpus %s", event.Trial, event.Epochs, passes)})
+				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("capacity check %d: testing up to %d complete filtered-corpus %s; %d steps × global batch %d = %d required %d-token sequences", event.Trial, event.Epochs, passes, resolvedParameters.Steps, resolvedParameters.BatchSize, event.RequiredSequences, resolvedParameters.SequenceLength)})
 				return
 			}
 			if event.Complete {
-				result := "insufficient; expanding search"
 				if event.Sufficient {
-					result = "sufficient"
+					builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("capacity check %d: reached all %d required training sequences within %d corpus %s after %d record visits", event.Trial, event.RequiredSequences, event.Epochs, passes, event.Records)})
+				} else {
+					builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("capacity check %d: %d corpus %s packed only %d/%d required training sequences after %d record visits; retrying with more passes", event.Trial, event.Epochs, passes, event.Sequences, event.RequiredSequences, event.Records)})
 				}
-				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("capacity trial %d scanned %d records and produced %d/%d training sequences: %s", event.Trial, event.Records, event.Sequences, event.RequiredSequences, result)})
 				return
 			}
 			now := clock()
 			if lastReport.IsZero() || now.Sub(lastReport) >= 5*time.Second {
 				lastReport = now
-				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("capacity trial %d scanning %d corpus %s: %d records, %d/%d training sequences", event.Trial, event.Epochs, passes, event.Records, event.Sequences, event.RequiredSequences)})
+				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("capacity check %d: %d record visits scanned, %d/%d required %d-token sequences packed", event.Trial, event.Records, event.Sequences, event.RequiredSequences, resolvedParameters.SequenceLength)})
 			}
 		})
 		if err != nil {
@@ -310,7 +310,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		resolvedParameters.Epochs = epochs
 		capacityVerified = true
 		preflight = partition.Preflight(preflightIdentity, resolvedParameters, true)
-		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("verified capacity across %d deterministic corpus passes", epochs)})
+		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("training plan allows up to %d deterministic corpus passes to supply %d optimizer steps", epochs, resolvedParameters.Steps)})
 	}
 	for _, corpus := range partition.ZeroEligibleCorpora() {
 		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("warning: %s has no records after stage filters and will contribute zero training tokens", corpus)})
