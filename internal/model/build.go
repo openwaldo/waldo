@@ -278,7 +278,32 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if stage.Parameters.Tokens > 0 && !capacityVerified {
 		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("determining deterministic corpus passes for %d optimizer steps", resolvedParameters.Steps)})
 		var epochs int64
-		partition, epochs, err = partition.WithMinimumEpochsForSteps(ctx, resolvedParameters.Steps)
+		clock := builder.clock()
+		var lastReport time.Time
+		partition, epochs, err = partition.WithMinimumEpochsForStepsProgress(ctx, resolvedParameters.Steps, func(event training.CapacityProgress) {
+			passes := "passes"
+			if event.Epochs == 1 {
+				passes = "pass"
+			}
+			if event.Records == 0 && !event.Complete {
+				lastReport = clock()
+				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("capacity trial %d testing %d corpus %s", event.Trial, event.Epochs, passes)})
+				return
+			}
+			if event.Complete {
+				result := "insufficient; expanding search"
+				if event.Sufficient {
+					result = "sufficient"
+				}
+				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("capacity trial %d scanned %d records and produced %d/%d training sequences: %s", event.Trial, event.Records, event.Sequences, event.RequiredSequences, result)})
+				return
+			}
+			now := clock()
+			if lastReport.IsZero() || now.Sub(lastReport) >= 5*time.Second {
+				lastReport = now
+				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("capacity trial %d scanning %d corpus %s: %d records, %d/%d training sequences", event.Trial, event.Epochs, passes, event.Records, event.Sequences, event.RequiredSequences)})
+			}
+		})
 		if err != nil {
 			return Inspection{}, fmt.Errorf("stage %s training capacity: %w", stage.Name, err)
 		}

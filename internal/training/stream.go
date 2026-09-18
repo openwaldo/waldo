@@ -261,6 +261,18 @@ type PartitionProgress struct {
 	TotalBytes   int64
 }
 
+// CapacityProgress reports deterministic training-stream scans used to prove
+// that a token-budget stage can supply its requested optimizer steps.
+type CapacityProgress struct {
+	Trial             int
+	Epochs            int64
+	Records           int64
+	Sequences         int64
+	RequiredSequences int64
+	Complete          bool
+	Sufficient        bool
+}
+
 type evaluationCandidate struct {
 	key       string
 	corpus    string
@@ -660,6 +672,10 @@ func (partition RecordPartition) TrainingByteTargets(ctx context.Context) (int64
 // requested optimizer steps. It stops as soon as the request is satisfiable;
 // an exhausted stream returns its exact smaller capacity.
 func (partition RecordPartition) TrainingStepCapacity(ctx context.Context, requested int64) (int64, bool, error) {
+	return partition.trainingStepCapacityWithProgress(ctx, requested, nil)
+}
+
+func (partition RecordPartition) trainingStepCapacityWithProgress(ctx context.Context, requested int64, progress func(records, sequences int64)) (int64, bool, error) {
 	if requested <= 0 || partition.parameters.BatchSize <= 0 || partition.parameters.SequenceLength <= 0 {
 		return 0, false, fmt.Errorf("requested steps, batch size, and sequence length must be positive")
 	}
@@ -667,7 +683,7 @@ func (partition RecordPartition) TrainingStepCapacity(ctx context.Context, reque
 	if overflow {
 		return 0, false, fmt.Errorf("requested training sequence count overflows int64")
 	}
-	sequences, sufficient, err := partition.trainingSequenceCapacity(ctx, requiredSequences)
+	sequences, sufficient, err := partition.trainingSequenceCapacityWithProgress(ctx, requiredSequences, progress)
 	if err != nil {
 		return 0, false, err
 	}
@@ -685,13 +701,38 @@ func (partition RecordPartition) TrainingStepCapacity(ctx context.Context, reque
 // can supply the requested optimizer steps. Token-budget stages use this during
 // preflight so a finite corpus cannot run out after accelerators have started.
 func (partition RecordPartition) WithMinimumEpochsForSteps(ctx context.Context, requested int64) (RecordPartition, int64, error) {
+	return partition.WithMinimumEpochsForStepsProgress(ctx, requested, nil)
+}
+
+// WithMinimumEpochsForStepsProgress is WithMinimumEpochsForSteps with bounded
+// scan progress suitable for user-facing preflight status.
+func (partition RecordPartition) WithMinimumEpochsForStepsProgress(ctx context.Context, requested int64, progress func(CapacityProgress)) (RecordPartition, int64, error) {
 	if requested <= 0 {
 		return RecordPartition{}, 0, fmt.Errorf("requested steps must be positive")
 	}
+	requiredSequences, overflow := multiplyInt64(requested, partition.parameters.BatchSize)
+	if overflow {
+		return RecordPartition{}, 0, fmt.Errorf("requested training sequence count overflows int64")
+	}
 	const maximumEpochs = int64(1_000_000)
+	trial := 0
 	capacityAt := func(epochs int64) (int64, bool, error) {
+		trial++
 		partition.parameters.Epochs = epochs
-		return partition.TrainingStepCapacity(ctx, requested)
+		if progress != nil {
+			progress(CapacityProgress{Trial: trial, Epochs: epochs, RequiredSequences: requiredSequences})
+		}
+		var records, sequences int64
+		available, sufficient, err := partition.trainingStepCapacityWithProgress(ctx, requested, func(scanned, produced int64) {
+			records, sequences = scanned, produced
+			if progress != nil {
+				progress(CapacityProgress{Trial: trial, Epochs: epochs, Records: records, Sequences: sequences, RequiredSequences: requiredSequences})
+			}
+		})
+		if progress != nil && err == nil {
+			progress(CapacityProgress{Trial: trial, Epochs: epochs, Records: records, Sequences: sequences, RequiredSequences: requiredSequences, Complete: true, Sufficient: sufficient})
+		}
+		return available, sufficient, err
 	}
 	low, high := int64(0), max(int64(1), partition.parameters.Epochs)
 	for {
@@ -745,13 +786,17 @@ func (partition RecordPartition) TrainingSteps(ctx context.Context) (int64, erro
 }
 
 func (partition RecordPartition) trainingSequenceCapacity(ctx context.Context, requiredSequences int64) (int64, bool, error) {
+	return partition.trainingSequenceCapacityWithProgress(ctx, requiredSequences, nil)
+}
+
+func (partition RecordPartition) trainingSequenceCapacityWithProgress(ctx context.Context, requiredSequences int64, progress func(records, sequences int64)) (int64, bool, error) {
 	source, err := partition.TrainingRecords()
 	if err != nil {
 		return 0, false, err
 	}
 	var buffered int
 	var masks []bool
-	var sequences int64
+	var records, sequences int64
 	reached := errors.New("requested training step capacity reached")
 	addSequence := func(targets []bool) error {
 		if slices.Contains(targets, true) {
@@ -763,6 +808,7 @@ func (partition RecordPartition) trainingSequenceCapacity(ctx context.Context, r
 		return nil
 	}
 	err = source.Stream(ctx, func(record Record) error {
+		records++
 		tokens, recordMask, err := tokenizeRecord(record, partition.codec, partition.objective, partition.conversation)
 		if err != nil {
 			return err
@@ -778,9 +824,15 @@ func (partition RecordPartition) trainingSequenceCapacity(ctx context.Context, r
 			buffered -= int(partition.parameters.SequenceLength)
 			masks = masks[int(partition.parameters.SequenceLength):]
 		}
+		if progress != nil && (records == 1 || records%10_000 == 0) {
+			progress(records, sequences)
+		}
 		return nil
 	})
 	if errors.Is(err, reached) {
+		if progress != nil {
+			progress(records, sequences)
+		}
 		return sequences, true, nil
 	}
 	if err != nil {
@@ -788,8 +840,14 @@ func (partition RecordPartition) trainingSequenceCapacity(ctx context.Context, r
 	}
 	if buffered > 1 {
 		if err := addSequence(masks[1:]); errors.Is(err, reached) {
+			if progress != nil {
+				progress(records, sequences)
+			}
 			return sequences, true, nil
 		}
+	}
+	if progress != nil {
+		progress(records, sequences)
 	}
 	return sequences, false, nil
 }

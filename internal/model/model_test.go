@@ -1115,6 +1115,29 @@ func TestTrainDerivesAndPersistsEpochSteps(t *testing.T) {
 	}
 }
 
+func TestTrainReportsTokenBudgetCapacityProgress(t *testing.T) {
+	root := t.TempDir()
+	var messages []string
+	builder := Builder{Root: root, Resolver: training.FakeResolver(), Progress: func(event Progress) { messages = append(messages, event.Message) }}
+	if _, err := builder.Initialize("token-model", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	stage := testStage("pretrain")
+	stage.Parameters.Steps = 0
+	stage.Parameters.Tokens = 1024
+	if _, err := builder.Train(context.Background(), "token-model", preparedFixture(t, stage)); err != nil {
+		t.Fatal(err)
+	}
+	var started, completed bool
+	for _, message := range messages {
+		started = started || strings.Contains(message, "capacity trial 1 testing")
+		completed = completed || strings.Contains(message, "training sequences: sufficient")
+	}
+	if !started || !completed {
+		t.Fatalf("capacity progress messages = %v", messages)
+	}
+}
+
 func TestRecordSelectionSummaryProgress(t *testing.T) {
 	var messages []string
 	builder := Builder{Progress: func(event Progress) { messages = append(messages, event.Message) }}

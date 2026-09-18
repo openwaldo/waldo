@@ -588,6 +588,35 @@ func TestMinimumEpochsForStepsExpandsFiniteTokenBudgetStream(t *testing.T) {
 	}
 }
 
+func TestMinimumEpochsForStepsReportsCapacityProgress(t *testing.T) {
+	inputs := []Input{writeTrainingShard(t, []string{strings.Repeat("a", 20), strings.Repeat("b", 20)})}
+	parameters, err := ResolveParameters(Parameters{Tokens: 48, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := NewRecordPartition(inputs, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []CapacityProgress
+	_, epochs, err := partition.WithMinimumEpochsForStepsProgress(context.Background(), parameters.Steps, func(event CapacityProgress) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if epochs != 2 || len(events) < 4 {
+		t.Fatalf("epochs = %d, progress = %+v", epochs, events)
+	}
+	if events[0].Trial != 1 || events[0].Epochs != 1 || events[0].Records != 0 || events[0].RequiredSequences != parameters.Steps*parameters.BatchSize {
+		t.Fatalf("first progress = %+v", events[0])
+	}
+	last := events[len(events)-1]
+	if !last.Complete || !last.Sufficient || last.Epochs != 2 || last.Records == 0 || last.Sequences != last.RequiredSequences {
+		t.Fatalf("final progress = %+v", last)
+	}
+}
+
 func TestStagePreflightReconstructsTheSamePartition(t *testing.T) {
 	inputs := []Input{writeTrainingShard(t, []string{"alpha record", "beta record", "gamma record", "delta record"})}
 	fraction := 0.5
