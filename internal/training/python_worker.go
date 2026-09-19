@@ -282,8 +282,10 @@ func workerBeginFromRequest(request Request) WorkerBegin {
 	if request.Resume != nil {
 		begin.Resume = &WorkerResume{
 			Step: request.Resume.Step, Tokens: request.Resume.Tokens,
-			Checkpoint: request.Resume.Checkpoint,
-			Paths:      append([]string(nil), request.Resume.Paths...),
+			Checkpoint:  request.Resume.Checkpoint,
+			Checkpoints: append([]Checkpoint(nil), request.Resume.Checkpoints...),
+			Evaluations: append([]Evaluation(nil), request.Resume.Evaluations...),
+			Paths:       append([]string(nil), request.Resume.Paths...),
 		}
 	}
 	return begin

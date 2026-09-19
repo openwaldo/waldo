@@ -153,6 +153,15 @@ already-trained prefix before worker handoff. `RUN.json`
 records each attempt. A changed corpus, epoch count, profile, backend, or
 execution environment is a new run rather than an unsafe resume.
 
+When held-out evaluation is configured, WALDO publishes the evaluated
+checkpoint with the lowest finite `heldout_loss`, not necessarily the last
+optimizer step. A backend durably checkpoints each new best candidate, reloads
+the selected checkpoint into the terminal artifact, and evaluates that saved
+artifact again before completion. `RUN.json` records the selected step, token
+count, metric, and value. Summaries distinguish the last optimizer-step metric
+from the selected and reloaded artifact metrics. The full requested training
+budget still runs; this selection rule is not early stopping.
+
 One compatibility exception repairs a WALDO-derived value rather than a user
 change. If an older fixed-token run exhausted its input because WALDO pinned too
 few deterministic source passes, a verified checkpoint may resume with only

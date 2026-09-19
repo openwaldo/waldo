@@ -550,8 +550,18 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 						best = loss
 					}
 				}
-				fmt.Fprintf(stdout, "  EVALUATION:  held-out loss initial %.4f, best %.4f, final %.4f", initial, best, finalMetrics["heldout_loss"])
-				if artifactLoss, ok := finalMetrics["artifact_heldout_loss"]; ok {
+				fmt.Fprintf(stdout, "  EVALUATION:  held-out loss initial %.4f, best %.4f, last step %.4f", initial, best, finalMetrics["heldout_loss"])
+				artifactMetrics := finalMetrics
+				if selected := observation.SelectedCheckpoint; selected != nil {
+					fmt.Fprintf(stdout, "; selected step %s at %.4f", humanInteger(selected.Step), selected.Value)
+					for _, evaluation := range observation.Evaluations {
+						if evaluation.Step == selected.Step {
+							artifactMetrics = evaluation.Metrics
+							break
+						}
+					}
+				}
+				if artifactLoss, ok := artifactMetrics["artifact_heldout_loss"]; ok {
 					fmt.Fprintf(stdout, "; reloaded artifact %.4f", artifactLoss)
 				}
 				fmt.Fprintln(stdout)

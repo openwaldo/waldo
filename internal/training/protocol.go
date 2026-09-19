@@ -65,10 +65,12 @@ type WorkerInitialization struct {
 }
 
 type WorkerResume struct {
-	Step       int64      `json:"step"`
-	Tokens     int64      `json:"tokens"`
-	Checkpoint Checkpoint `json:"checkpoint"`
-	Paths      []string   `json:"paths"`
+	Step        int64        `json:"step"`
+	Tokens      int64        `json:"tokens"`
+	Checkpoint  Checkpoint   `json:"checkpoint"`
+	Checkpoints []Checkpoint `json:"checkpoints,omitempty"`
+	Evaluations []Evaluation `json:"evaluations,omitempty"`
+	Paths       []string     `json:"paths"`
 }
 
 type WorkerInputFrame struct {

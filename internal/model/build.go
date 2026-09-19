@@ -654,9 +654,13 @@ func (builder Builder) resumeTraining(ctx context.Context, name string, inspecti
 	var resume *training.ResumePoint
 	if pin.Resume != nil {
 		resume = cloneResumePoint(pin.Resume)
+		if run.Progress != nil {
+			resume.Checkpoints = append([]training.Checkpoint(nil), run.Progress.Checkpoints...)
+			resume.Evaluations = append([]training.Evaluation(nil), run.Progress.Evaluations...)
+		}
 	} else if run.Progress != nil && len(run.Progress.Checkpoints) > 0 {
 		checkpoint := run.Progress.Checkpoints[len(run.Progress.Checkpoints)-1]
-		resume = &training.ResumePoint{Step: checkpoint.Step, Tokens: checkpoint.Tokens, Checkpoint: checkpoint}
+		resume = &training.ResumePoint{Step: checkpoint.Step, Tokens: checkpoint.Tokens, Checkpoint: checkpoint, Checkpoints: append([]training.Checkpoint(nil), run.Progress.Checkpoints...), Evaluations: append([]training.Evaluation(nil), run.Progress.Evaluations...)}
 	}
 	if resume != nil {
 		runDirectory := filepath.Join(inspection.Path, "runs", runDirectoryName(pin))
@@ -790,9 +794,20 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 					}
 				}
 				if backendErr == nil && selection.Execution.Backend.Name == training.BackendPyTorch {
-					metrics := observation.Evaluations[len(observation.Evaluations)-1].Metrics
-					if _, ok := metrics["artifact_heldout_loss"]; !ok {
-						backendErr = fmt.Errorf("invalid backend observation: final PyTorch evaluation does not verify the persisted model artifact")
+					if observation.SelectedCheckpoint == nil {
+						backendErr = fmt.Errorf("invalid backend observation: PyTorch did not identify the checkpoint used for the persisted model artifact")
+					} else {
+						verified := false
+						for _, evaluation := range observation.Evaluations {
+							if evaluation.Step != observation.SelectedCheckpoint.Step {
+								continue
+							}
+							_, verified = evaluation.Metrics["artifact_heldout_loss"]
+							break
+						}
+						if !verified {
+							backendErr = fmt.Errorf("invalid backend observation: selected PyTorch checkpoint does not verify the persisted model artifact")
+						}
 					}
 				}
 			}
@@ -952,6 +967,14 @@ func cloneResumePoint(value *training.ResumePoint) *training.ResumePoint {
 	}
 	clone := *value
 	clone.Checkpoint.Artifacts = append([]training.Artifact(nil), value.Checkpoint.Artifacts...)
+	clone.Checkpoints = append([]training.Checkpoint(nil), value.Checkpoints...)
+	for index := range clone.Checkpoints {
+		clone.Checkpoints[index].Artifacts = append([]training.Artifact(nil), value.Checkpoints[index].Artifacts...)
+	}
+	clone.Evaluations = append([]training.Evaluation(nil), value.Evaluations...)
+	for index := range clone.Evaluations {
+		clone.Evaluations[index].Metrics = cloneMetrics(clone.Evaluations[index].Metrics)
+	}
 	clone.Paths = append([]string(nil), value.Paths...)
 	return &clone
 }
@@ -997,7 +1020,11 @@ func persistTrainingEvent(modelPath, runDirectory string, record *ModelRecord, p
 			}
 		}
 		run.Progress.Checkpoints = append(run.Progress.Checkpoints, checkpoint)
-		resume := &training.ResumePoint{Step: checkpoint.Step, Tokens: checkpoint.Tokens, Checkpoint: checkpoint}
+		resume := &training.ResumePoint{
+			Step: checkpoint.Step, Tokens: checkpoint.Tokens, Checkpoint: checkpoint,
+			Checkpoints: append([]training.Checkpoint(nil), run.Progress.Checkpoints...),
+			Evaluations: append([]training.Evaluation(nil), run.Progress.Evaluations...),
+		}
 		for index := range record.Runs {
 			if record.Runs[index].ID == pin.ID {
 				record.Runs[index].Resume = resume
@@ -1014,6 +1041,12 @@ func persistTrainingEvent(modelPath, runDirectory string, record *ModelRecord, p
 		}
 		if !changed {
 			return nil
+		}
+		for index := range record.Runs {
+			if record.Runs[index].ID == pin.ID && record.Runs[index].Resume != nil {
+				record.Runs[index].Resume.Evaluations = append([]training.Evaluation(nil), run.Progress.Evaluations...)
+				break
+			}
 		}
 	}
 	return persistRunAndPin(modelPath, runDirectory, record, pin, *run, now)
@@ -1054,15 +1087,21 @@ func mergeProgress(progress *training.Progress, observation training.Observation
 		}
 	}
 	evaluations := append([]training.Evaluation(nil), progress.Evaluations...)
-	for _, evaluation := range observation.Evaluations {
-		if len(evaluations) > 0 && evaluation.Step == evaluations[len(evaluations)-1].Step {
-			// The completion observation may enrich the already-durable event at
-			// the same step with post-save artifact verification metrics.
-			evaluations[len(evaluations)-1] = evaluation
-		} else if len(evaluations) == 0 || evaluation.Step > evaluations[len(evaluations)-1].Step {
-			evaluations = append(evaluations, evaluation)
-		}
+	evaluationIndexes := make(map[int64]int, len(evaluations))
+	for index, evaluation := range evaluations {
+		evaluationIndexes[evaluation.Step] = index
 	}
+	for _, evaluation := range observation.Evaluations {
+		if index, ok := evaluationIndexes[evaluation.Step]; ok {
+			// The completion observation may enrich any already-durable event,
+			// including an earlier selected checkpoint, with artifact metrics.
+			evaluations[index] = evaluation
+			continue
+		}
+		evaluationIndexes[evaluation.Step] = len(evaluations)
+		evaluations = append(evaluations, evaluation)
+	}
+	sort.Slice(evaluations, func(i, j int) bool { return evaluations[i].Step < evaluations[j].Step })
 	observation.Checkpoints = checkpoints
 	observation.Evaluations = evaluations
 	return observation

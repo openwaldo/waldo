@@ -49,7 +49,7 @@ lookaside="$work/lookaside"
 staging="$work/staging"
 models="$work/models"
 source_root="$work/source"
-input="$source_root/raw/training.txt"
+input="$source_root/raw/training.jsonl"
 compose="$work/model.yaml"
 provider="$work/provider.json"
 huggingface_export="$work/huggingface-export"
@@ -62,20 +62,25 @@ export WALDO_CONFIG="$work/config.json"
 echo "testing: real MLX model lifecycle with $mlx_python"
 (cd "$repo_root" && GOCACHE="$work/go-cache" go build -o "$binary" ./cmd/waldo)
 mkdir -p "$source_root/raw"
-printf 'OpenWALDO trains real weights through MLX.\nThis tiny record exists only to validate the complete backend.\nGradient accumulation must preserve the logical optimizer batch while using smaller forward passes.\n' > "$input"
+cat > "$input" <<'EOF'
+{"text":"OpenWALDO trains real weights through MLX. This record validates the complete backend."}
+{"text":"Gradient accumulation preserves the logical optimizer batch while using smaller forward passes."}
+{"text":"Held-out evaluation measures deterministic records that optimizer updates never consume."}
+{"text":"A completed stage publishes the best evaluated checkpoint and verifies its serialized artifact."}
+EOF
 file_bytes=$(wc -c < "$input" | tr -d ' ')
 if command -v sha256sum >/dev/null 2>&1; then
   file_sha=$(sha256sum "$input" | awk '{print $1}')
-  tree_sha=$(printf '%s\t%s\t%s\n' "$file_sha" "$file_bytes" training.txt | sha256sum | awk '{print $1}')
+  tree_sha=$(printf '%s\t%s\t%s\n' "$file_sha" "$file_bytes" training.jsonl | sha256sum | awk '{print $1}')
 else
   file_sha=$(shasum -a 256 "$input" | awk '{print $1}')
-  tree_sha=$(printf '%s\t%s\t%s\n' "$file_sha" "$file_bytes" training.txt | shasum -a 256 | awk '{print $1}')
+  tree_sha=$(printf '%s\t%s\t%s\n' "$file_sha" "$file_bytes" training.jsonl | shasum -a 256 | awk '{print $1}')
 fi
 cat > "$source_root/manifest.json" <<EOF
 {
   "kind":"waldo-source-directory","schema":1,"retrieved_at":"2026-09-13T00:00:00Z",
   "corpus":{"id":"mlx-e2e","title":"MLX-E2E-Corpus","description":"Disposable real MLX training input."},
-  "sources":[{"id":"mlx-e2e","path":"","license":"CC0-1.0","source":{"name":"mlx","version":"fixture-1","url":"https://example.invalid/mlx-e2e","category":"public-dataset","license_evidence":{"declaration":"CC0-1.0"}},"input":{"format":"text"},"artifacts":[]}],
+  "sources":[{"id":"mlx-e2e","path":"","license":"CC0-1.0","source":{"name":"mlx","version":"fixture-1","url":"https://example.invalid/mlx-e2e","category":"public-dataset","license_evidence":{"declaration":"CC0-1.0"}},"input":{"format":"jsonl","type":"record-map","fields":{"text":["text"]}},"artifacts":[]}],
   "fetcher":{"name":"mlx-e2e"},
   "raw":{"path":"raw","file_count":1,"byte_count":$file_bytes,"tree_sha256":"$tree_sha"}
 }
@@ -151,6 +156,8 @@ printf '%s\n' "$output" | grep -q 'backend       mlx@'"$revision"''
 summary=$("$binary" --json model summary mlx-smoke)
 printf '%s\n' "$summary" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*false'
 printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"mlx"'
+printf '%s\n' "$summary" | grep -Eq '"selected_checkpoint"[[:space:]]*:[[:space:]]*\{'
+printf '%s\n' "$summary" | grep -Eq '"artifact_heldout_loss"[[:space:]]*:'
 telemetry=$(find "$models/mlx-smoke/runs" -type f -name TELEMETRY.csv -print | sort | head -1)
 [ -n "$telemetry" ] || { echo "MLX run did not persist telemetry" >&2; exit 1; }
 awk -F, '

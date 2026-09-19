@@ -76,6 +76,22 @@ func validateBackendObservation(runDirectory string, planned PlannedStage, obser
 			}
 		}
 	}
+	if selected := observation.SelectedCheckpoint; selected != nil {
+		if selected.Step <= 0 || selected.Step > observation.Steps || selected.Tokens < 0 || selected.Tokens > observation.ConsumedTokens || selected.Metric != "heldout_loss" || selected.Value < 0 || math.IsNaN(selected.Value) || math.IsInf(selected.Value, 0) {
+			return fmt.Errorf("selected checkpoint metadata is invalid")
+		}
+		checkpointFound, evaluationFound := false, false
+		for _, checkpoint := range observation.Checkpoints {
+			checkpointFound = checkpointFound || checkpoint.Step == selected.Step && checkpoint.Tokens == selected.Tokens
+		}
+		for _, evaluation := range observation.Evaluations {
+			value, ok := evaluation.Metrics[selected.Metric]
+			evaluationFound = evaluationFound || evaluation.Step == selected.Step && evaluation.Tokens == selected.Tokens && ok && value == selected.Value
+		}
+		if !checkpointFound || !evaluationFound {
+			return fmt.Errorf("selected checkpoint does not match a persisted checkpoint and evaluation")
+		}
+	}
 	return nil
 }
 

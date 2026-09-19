@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const PyTorchRevision = "builtin-pytorch-worker-schema-1-r11"
+const PyTorchRevision = "builtin-pytorch-worker-schema-1-r12"
 
 //go:embed workers/pytorch.py
 var pyTorchWorker []byte

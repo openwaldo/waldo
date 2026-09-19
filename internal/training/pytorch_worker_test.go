@@ -47,6 +47,21 @@ func TestPyTorchWorkerMakesPersistedArtifactEvaluationAuthoritative(t *testing.T
 	}
 }
 
+func TestPyTorchWorkerPublishesBestEvaluatedCheckpoint(t *testing.T) {
+	source := string(pyTorchWorker)
+	for _, expected := range []string{
+		`selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"])`,
+		`load_safetensors(selected_path)`,
+		`"selected_checkpoint": selection`,
+		`selected checkpoint step {selected_evaluation['step']}`,
+		`not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints)`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("PyTorch worker omits best-checkpoint publication behavior %q", expected)
+		}
+	}
+}
+
 func TestTorchTitanWorkerPartitionsGlobalBatchAcrossRanks(t *testing.T) {
 	source := string(pyTorchWorker)
 	for _, expected := range []string{

@@ -384,10 +384,12 @@ type Request struct {
 // interrupted run. Every artifact is content-addressed and remains relative
 // to the run directory; Path is populated only for the backend handoff.
 type ResumePoint struct {
-	Step       int64      `json:"step"`
-	Tokens     int64      `json:"tokens"`
-	Checkpoint Checkpoint `json:"checkpoint"`
-	Paths      []string   `json:"-"`
+	Step        int64        `json:"step"`
+	Tokens      int64        `json:"tokens"`
+	Checkpoint  Checkpoint   `json:"checkpoint"`
+	Checkpoints []Checkpoint `json:"checkpoints,omitempty"`
+	Evaluations []Evaluation `json:"evaluations,omitempty"`
+	Paths       []string     `json:"-"`
 }
 
 // Progress is durable, non-terminal evidence emitted while a backend runs.
@@ -429,14 +431,24 @@ type Artifact struct {
 }
 
 type Observation struct {
-	Simulated      bool                `json:"simulated"`
-	Steps          int64               `json:"steps"`
-	ConsumedTokens int64               `json:"consumed_tokens"`
-	FinalLoss      *float64            `json:"final_loss,omitempty"`
-	Checkpoints    []Checkpoint        `json:"checkpoints,omitempty"`
-	Evaluations    []Evaluation        `json:"evaluations,omitempty"`
-	Artifacts      []Artifact          `json:"artifacts"`
-	Consumption    []CorpusConsumption `json:"consumption,omitempty"`
+	Simulated          bool                 `json:"simulated"`
+	Steps              int64                `json:"steps"`
+	ConsumedTokens     int64                `json:"consumed_tokens"`
+	FinalLoss          *float64             `json:"final_loss,omitempty"`
+	Checkpoints        []Checkpoint         `json:"checkpoints,omitempty"`
+	Evaluations        []Evaluation         `json:"evaluations,omitempty"`
+	SelectedCheckpoint *CheckpointSelection `json:"selected_checkpoint,omitempty"`
+	Artifacts          []Artifact           `json:"artifacts"`
+	Consumption        []CorpusConsumption  `json:"consumption,omitempty"`
+}
+
+// CheckpointSelection identifies the evaluated checkpoint published as the
+// completed stage artifact instead of the merely last optimizer step.
+type CheckpointSelection struct {
+	Step   int64   `json:"step"`
+	Tokens int64   `json:"tokens"`
+	Metric string  `json:"metric"`
+	Value  float64 `json:"value"`
 }
 
 // CorpusConsumption is exact next-token target usage attributed by the

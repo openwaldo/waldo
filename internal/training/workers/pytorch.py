@@ -24,8 +24,8 @@ from torch.utils.checkpoint import checkpoint
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r11"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r22"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r12"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r23"
 IS_PRIMARY = True
 
 
@@ -895,28 +895,31 @@ class Trainer:
         else:
             tensors = self.model.state_dict()
         if IS_PRIMARY:
-            tensors = {
-                name: value.to(dtype=self.parameter_dtype) if value.is_floating_point() else value
-                for name, value in tensors.items()
-            }
-            backend = "torchtitan" if self.distributed else "pytorch"
-            revision = TORCHTITAN_REVISION if self.distributed else WORKER_REVISION
-            save_safetensors(
-                path,
-                tensors,
-                {
-                    "format": "openwaldo",
-                    "kind": kind,
-                    "schema": "1",
-                    "backend": backend,
-                    "backend_revision": revision,
-                    "architecture_sha256": self.begin["architecture_sha256"],
-                    "run_id": self.begin["run_id"],
-                    "step": str(step),
-                },
-            )
+            self.save_weight_tensors(path, tensors, kind, step)
         if self.distributed:
             torch.distributed.barrier()
+
+    def save_weight_tensors(self, path, tensors, kind, step):
+        tensors = {
+            name: value.to(dtype=self.parameter_dtype) if value.is_floating_point() else value
+            for name, value in tensors.items()
+        }
+        backend = "torchtitan" if self.distributed else "pytorch"
+        revision = TORCHTITAN_REVISION if self.distributed else WORKER_REVISION
+        save_safetensors(
+            path,
+            tensors,
+            {
+                "format": "openwaldo",
+                "kind": kind,
+                "schema": "1",
+                "backend": backend,
+                "backend_revision": revision,
+                "architecture_sha256": self.begin["architecture_sha256"],
+                "run_id": self.begin["run_id"],
+                "step": str(step),
+            },
+        )
 
     def gather_consumption(self):
         local = dict(self.consumed_by_corpus)
@@ -1072,7 +1075,8 @@ class Trainer:
         self.replay_total_micro_batches = self.replay_micro_batches
         report_steps = max(256, ((self.resume["step"] + 19) // 20 + 255) // 256 * 256)
         self.replay_report_micro_batches = report_steps * self.gradient_accumulation_steps
-        self.checkpoints = [self.resume["checkpoint"]]
+        self.checkpoints = list(self.resume.get("checkpoints") or [self.resume["checkpoint"]])
+        self.evaluations = list(self.resume.get("evaluations") or [])
 
     def evaluate_model(self, model, mixed_precision):
         model.eval()
@@ -1100,6 +1104,9 @@ class Trainer:
             "metrics": {"heldout_loss": loss_value, "heldout_perplexity": math.exp(min(loss_value, 80.0))},
         }
         self.evaluations.append(item)
+        earlier = [evaluation["metrics"]["heldout_loss"] for evaluation in self.evaluations[:-1] if evaluation["step"] > 0]
+        if self.step_number > 0 and (not earlier or loss_value < min(earlier)) and not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints):
+            self.save_checkpoint()
         emit(
             "event",
             event={
@@ -1176,7 +1183,23 @@ class Trainer:
         weights_name = "model.safetensors"
         weights_path = os.path.join(self.artifact_directory, weights_name)
         backend_name = "torchtitan" if self.distributed else "pytorch"
-        self.save_weights(weights_path, f"waldo-{backend_name}-model", self.step_number)
+        evaluated_checkpoints = {checkpoint["step"]: checkpoint for checkpoint in self.checkpoints}
+        candidates = [evaluation for evaluation in self.evaluations if evaluation["step"] in evaluated_checkpoints]
+        selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"]) if candidates else None
+        selected_checkpoint = None if selected_evaluation is None else evaluated_checkpoints[selected_evaluation["step"]]
+        if IS_PRIMARY and selected_checkpoint is not None:
+            selected_path = os.path.join(self.artifact_directory, "checkpoints", f"step-{selected_checkpoint['step']:08d}", "model.safetensors")
+            self.save_weight_tensors(
+                weights_path,
+                load_safetensors(selected_path),
+                f"waldo-{backend_name}-model",
+                selected_checkpoint["step"],
+            )
+        elif selected_checkpoint is None:
+            self.save_weights(weights_path, f"waldo-{backend_name}-model", self.step_number)
+        if self.distributed and selected_checkpoint is not None:
+            torch.distributed.barrier()
+        selection = None
         if IS_PRIMARY and self.evaluation_sequences:
             artifact_model = DecoderLM(self.architecture)
             missing, unexpected = artifact_model.load_state_dict(load_safetensors(weights_path), strict=False)
@@ -1189,17 +1212,24 @@ class Trainer:
             # until it exceeds the tolerance for every sufficiently large model.
             artifact_loss = self.evaluate_model(artifact_model, mixed_precision=True)
             del artifact_model
-            live_loss = self.evaluations[-1]["metrics"]["heldout_loss"]
+            selected_evaluation = self.evaluations[-1] if selected_evaluation is None else selected_evaluation
+            live_loss = selected_evaluation["metrics"]["heldout_loss"]
             tolerance = max(0.02, abs(live_loss) * 0.01)
             if not math.isfinite(artifact_loss):
                 raise ValueError("saved artifact held-out loss is not finite")
-            metrics = self.evaluations[-1]["metrics"]
+            metrics = selected_evaluation["metrics"]
             metrics["live_compiled_heldout_loss"] = live_loss
             metrics["heldout_loss"] = artifact_loss
             metrics["heldout_perplexity"] = math.exp(min(artifact_loss, 80.0))
             metrics["artifact_heldout_loss"] = artifact_loss
             metrics["artifact_heldout_perplexity"] = math.exp(min(artifact_loss, 80.0))
             metrics["artifact_loss_delta"] = artifact_loss - live_loss
+            selection = {
+                "step": selected_evaluation["step"],
+                "tokens": selected_evaluation["tokens"],
+                "metric": "heldout_loss",
+                "value": artifact_loss,
+            }
             if abs(artifact_loss - live_loss) > tolerance:
                 emit(
                     "event",
@@ -1217,9 +1247,9 @@ class Trainer:
                 "event",
                 event={
                     "kind": "log",
-                    "message": f"reloaded model artifact verified at held-out loss {artifact_loss:.4f}",
-                    "step": self.step_number,
-                    "tokens": self.consumed_tokens,
+                    "message": f"selected checkpoint step {selected_evaluation['step']} and verified the model artifact at held-out loss {artifact_loss:.4f}",
+                    "step": selected_evaluation["step"],
+                    "tokens": selected_evaluation["tokens"],
                 },
             )
         config_name = "config.json"
@@ -1271,6 +1301,7 @@ class Trainer:
                 "final_loss": self.final_loss,
                 "checkpoints": self.checkpoints,
                 "evaluations": self.evaluations,
+                "selected_checkpoint": selection,
                 "artifacts": outputs,
                 "consumption": [
                     {"corpus": corpus, "token_targets": targets}

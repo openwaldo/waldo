@@ -558,10 +558,16 @@ func TestTrainingRunPinsConfiguredRecordFilter(t *testing.T) {
 }
 
 func TestMergeProgressKeepsTerminalArtifactEvaluation(t *testing.T) {
-	progress := &training.Progress{Evaluations: []training.Evaluation{{Step: 10, Tokens: 100, Metrics: map[string]float64{"heldout_loss": 2}}}}
-	observation := training.Observation{Evaluations: []training.Evaluation{{Step: 10, Tokens: 100, Metrics: map[string]float64{"heldout_loss": 2, "artifact_heldout_loss": 2.001}}}}
+	progress := &training.Progress{Evaluations: []training.Evaluation{
+		{Step: 10, Tokens: 100, Metrics: map[string]float64{"heldout_loss": 2}},
+		{Step: 20, Tokens: 200, Metrics: map[string]float64{"heldout_loss": 3}},
+	}}
+	observation := training.Observation{Evaluations: []training.Evaluation{
+		{Step: 10, Tokens: 100, Metrics: map[string]float64{"heldout_loss": 2.001, "artifact_heldout_loss": 2.001}},
+		{Step: 20, Tokens: 200, Metrics: map[string]float64{"heldout_loss": 3}},
+	}}
 	merged := mergeProgress(progress, observation)
-	if len(merged.Evaluations) != 1 || merged.Evaluations[0].Metrics["artifact_heldout_loss"] != 2.001 {
+	if len(merged.Evaluations) != 2 || merged.Evaluations[0].Metrics["artifact_heldout_loss"] != 2.001 {
 		t.Fatalf("merged evaluations = %+v", merged.Evaluations)
 	}
 }

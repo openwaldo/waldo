@@ -20,7 +20,7 @@ from mlx.utils import tree_flatten, tree_map, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r12"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r13"
 
 
 def emit(kind, **payload):
@@ -587,11 +587,10 @@ class Trainer:
         self.consumed_tokens = resume["tokens"]
         self.consumed_by_corpus = state.get("consumption", {})
         self.replay_micro_batches = resume["step"] * self.gradient_accumulation_steps
-        self.checkpoints = [resume["checkpoint"]]
+        self.checkpoints = list(resume.get("checkpoints") or [resume["checkpoint"]])
+        self.evaluations = list(resume.get("evaluations") or [])
 
-    def record_evaluation(self, _training_loss):
-        if not self.evaluation_sequences:
-            return
+    def evaluate_model(self):
         self.model.eval()
         total_loss = 0.0
         total_tokens = 0.0
@@ -608,14 +607,22 @@ class Trainer:
             mx.eval(loss_sum, token_count)
             total_loss += float(loss_sum.item())
             total_tokens += float(token_count.item())
-        loss_value = total_loss / total_tokens
         self.model.train()
+        return total_loss / total_tokens
+
+    def record_evaluation(self, _training_loss):
+        if not self.evaluation_sequences:
+            return
+        loss_value = self.evaluate_model()
         item = {
             "step": self.step_number,
             "tokens": self.consumed_tokens,
             "metrics": {"heldout_loss": loss_value, "heldout_perplexity": math.exp(min(loss_value, 80.0))},
         }
         self.evaluations.append(item)
+        earlier = [evaluation["metrics"]["heldout_loss"] for evaluation in self.evaluations[:-1] if evaluation["step"] > 0]
+        if self.step_number > 0 and (not earlier or loss_value < min(earlier)) and not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints):
+            self.save_checkpoint()
         emit(
             "event",
             event={
@@ -659,7 +666,29 @@ class Trainer:
 
         weights_name = "model.safetensors"
         weights_path = os.path.join(self.artifact_directory, weights_name)
-        self.save_weights(weights_path, "waldo-mlx-model", self.step_number)
+        evaluated_checkpoints = {checkpoint["step"]: checkpoint for checkpoint in self.checkpoints}
+        candidates = [evaluation for evaluation in self.evaluations if evaluation["step"] in evaluated_checkpoints]
+        selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"]) if candidates else None
+        selected_checkpoint = None if selected_evaluation is None else evaluated_checkpoints[selected_evaluation["step"]]
+        selected_step = self.step_number
+        selection = None
+        if selected_checkpoint is not None:
+            selected_step = selected_checkpoint["step"]
+            selected_path = os.path.join(self.artifact_directory, "checkpoints", f"step-{selected_step:08d}", "model.safetensors")
+            self.model.load_weights(selected_path)
+            mx.eval(self.model.parameters())
+        self.save_weights(weights_path, "waldo-mlx-model", selected_step)
+        if selected_evaluation is not None:
+            live_loss = selected_evaluation["metrics"]["heldout_loss"]
+            artifact_loss = self.evaluate_model()
+            selected_evaluation["metrics"]["live_compiled_heldout_loss"] = live_loss
+            selected_evaluation["metrics"]["heldout_loss"] = artifact_loss
+            selected_evaluation["metrics"]["heldout_perplexity"] = math.exp(min(artifact_loss, 80.0))
+            selected_evaluation["metrics"]["artifact_heldout_loss"] = artifact_loss
+            selected_evaluation["metrics"]["artifact_heldout_perplexity"] = math.exp(min(artifact_loss, 80.0))
+            selected_evaluation["metrics"]["artifact_loss_delta"] = artifact_loss - live_loss
+            selection = {"step": selected_evaluation["step"], "tokens": selected_evaluation["tokens"], "metric": "heldout_loss", "value": artifact_loss}
+            emit("event", event={"kind": "log", "message": f"selected checkpoint step {selected_step} and verified the model artifact at held-out loss {artifact_loss:.4f}", "step": selected_evaluation["step"], "tokens": selected_evaluation["tokens"]})
         config_name = "config.json"
         config_path = os.path.join(self.artifact_directory, config_name)
         write_json(
@@ -703,6 +732,7 @@ class Trainer:
                 "final_loss": self.final_loss,
                 "checkpoints": self.checkpoints,
                 "evaluations": self.evaluations,
+                "selected_checkpoint": selection,
                 "artifacts": outputs,
                 "consumption": [
                     {"corpus": corpus, "token_targets": targets}

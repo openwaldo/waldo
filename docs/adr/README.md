@@ -75,3 +75,4 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0076: Make competitive training recipes explicit](0076-make-training-recipes-explicit.md)
 - [0077: Train tokenizers from pinned corpus samples](0077-train-tokenizers-from-pinned-corpus-samples.md)
 - [0078: Cache versioned prepared-sequence chunks per node](0078-cache-versioned-prepared-sequence-chunks.md)
+- [0079: Publish the best held-out checkpoint](0079-publish-best-heldout-checkpoint.md)
