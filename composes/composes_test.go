@@ -125,7 +125,7 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation1.yaml", "0002-conversation2.yaml", "0003-conversation.yaml"}
+	want := []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation.yaml", "0003-conversation.yaml", "0004-conversation.yaml"}
 	if !reflect.DeepEqual(files, want) {
 		t.Fatalf("reference composes = %v, want %v", files, want)
 	}
@@ -133,7 +133,7 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(compose.Stages) != 1 || len(compose.Stages[0].Corpora) != 4 {
+	if len(compose.Stages) != 1 || len(compose.Stages[0].Corpora) != 5 {
 		t.Fatalf("canary stages/corpora = %d/%d", len(compose.Stages), len(compose.Stages[0].Corpora))
 	}
 	if compose.Architecture.Tokenizer.Name != "tiktoken/cl100k_base" || compose.Architecture.Tokenizer.Revision != "tiktoken-cl100k-base" || compose.Architecture.VocabularySize != 100259 {
@@ -194,7 +194,7 @@ func corpusPaths(selections []model.CorpusSelection) []string {
 }
 
 func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
-	compose, _, err := model.LoadCompose("0002-conversation1.yaml")
+	compose, _, err := model.LoadCompose("0002-conversation.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
 	if compose.Stages[1].Corpora[0].Path != "post-train/sft/oasst1" || compose.Stages[1].Corpora[1].Path != "post-train/sft/oasst2" {
 		t.Fatalf("basic conversation conversational corpora = %+v", compose.Stages[1].Corpora)
 	}
-	if compose.Stages[2].Corpora[0].Path != "post-train/sft/interaction-contract-v1" || compose.Stages[2].Corpora[1].Path != "post-train/sft/helpsteer2" {
+	if got := corpusPaths(compose.Stages[2].Corpora); !reflect.DeepEqual(got, []string{"post-train/sft/interaction-contract-v1", "post-train/sft/helpsteer2", "post-train/sft/waldo-project-v1"}) {
 		t.Fatalf("basic conversation post-training corpora = %+v", compose.Stages[2].Corpora)
 	}
 	if compose.Stages[1].Objective != "causal-language-modeling" || compose.Stages[2].Objective != "causal-language-modeling" {
@@ -222,93 +222,90 @@ func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 11999969280 || len(forecast.EpochDerivedStages) != 2 {
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 2399961088 || len(forecast.EpochDerivedStages) != 0 {
 		t.Fatalf("basic conversation forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
 
-func TestConversationTwoExtendsConversationOneWithTechnicalKnowledge(t *testing.T) {
-	baseline, _, err := model.LoadCompose("0002-conversation1.yaml")
+func TestConversationThreeCorrectsCompleteBaselineExposure(t *testing.T) {
+	short, _, err := model.LoadCompose("0002-conversation.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	variant, _, err := model.LoadCompose("0002-conversation2.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if variant.Base != nil || variant.Architecture != baseline.Architecture || variant.Interaction != baseline.Interaction {
-		t.Fatalf("conversation2 model contract = %+v", variant)
-	}
-	if len(variant.Stages) != len(baseline.Stages)+2 || !reflect.DeepEqual(variant.Stages[0], baseline.Stages[0]) || !reflect.DeepEqual(variant.Stages[2], baseline.Stages[1]) || !reflect.DeepEqual(variant.Stages[4], baseline.Stages[2]) {
-		t.Fatalf("conversation2 does not preserve the proven conversation1 stages")
-	}
-	if got := []string{variant.Stages[0].Name, variant.Stages[1].Name, variant.Stages[2].Name, variant.Stages[3].Name, variant.Stages[4].Name}; !reflect.DeepEqual(got, []string{"pretrain", "technical-knowledge-midtrain", "conversational-midtrain", "expanded-conversation-sft", "post-train"}) {
-		t.Fatalf("conversation2 stage order = %v", got)
-	}
-	technical := variant.Stages[1]
-	if technical.Name != "technical-knowledge-midtrain" || technical.Type != "pre-training" || technical.Objective != "causal-language-modeling" {
-		t.Fatalf("conversation2 technical stage = %+v", technical)
-	}
-	wantTechnical := []string{
-		"core/synthetic/cosmopedia-v2", "core/common-pile/stackexchange", "code/copyleft/linux-core",
-		"code/permissive/linux-core", "community/linux-kernel-mailing-list", "code/stack-v2-html",
-		"code/cloud-native-core", "community/git-mailing-list", "community/python-mailing-lists",
-	}
-	if got := corpusPaths(technical.Corpora); !reflect.DeepEqual(got, wantTechnical) {
-		t.Fatalf("conversation2 technical corpora = %v, want %v", got, wantTechnical)
-	}
-	if technical.Parameters.Tokens != 3000000000 || technical.Parameters.LearningRate != 0.00002 || technical.Filter == nil || technical.Filter.Languages == nil || !reflect.DeepEqual(technical.Filter.Languages.Include, []string{"en"}) || !technical.Filter.Languages.IncludeUnset {
-		t.Fatalf("conversation2 technical budget/filter = %+v / %+v", technical.Parameters, technical.Filter)
-	}
-	stage := variant.Stages[3]
-	if stage.Name != "expanded-conversation-sft" || stage.Objective != "assistant-response-modeling" {
-		t.Fatalf("conversation2 added stage = %+v", stage)
-	}
-	wantCorpora := []string{"post-train/sft/tulu3", "post-train/sft/smol-smoltalk", "post-train/sft/ultrachat-200k"}
-	if got := corpusPaths(stage.Corpora); !reflect.DeepEqual(got, wantCorpora) {
-		t.Fatalf("conversation2 corpora = %v, want %v", got, wantCorpora)
-	}
-	forecast, err := model.ForecastCompose(variant)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 15399993344 {
-		t.Fatalf("conversation2 forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
-	}
-}
-
-func TestConversationThreeIsLargerAndKnowledgeDominant(t *testing.T) {
 	compose, _, err := model.LoadCompose("0003-conversation.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	architecture := compose.Architecture
-	if architecture.ContextTokens != 4096 || architecture.HiddenSize != 1536 || architecture.IntermediateSize != 4096 || architecture.Layers != 24 || architecture.AttentionHeads != 24 || architecture.KeyValueHeads != 8 {
-		t.Fatalf("conversation3 architecture = %+v", architecture)
+	if compose.Architecture != short.Architecture || compose.Interaction != short.Interaction || len(compose.Stages) != len(short.Stages) {
+		t.Fatalf("restored conversation contract differs from 0002")
 	}
-	if got := []string{compose.Stages[0].Name, compose.Stages[1].Name, compose.Stages[2].Name, compose.Stages[3].Name, compose.Stages[4].Name}; !reflect.DeepEqual(got, []string{"pretrain", "technical-knowledge-midtrain", "conversational-midtrain", "expanded-conversation-sft", "post-train"}) {
-		t.Fatalf("conversation3 stage order = %v", got)
-	}
-	wantFoundation := []string{"core/books/gutenberg", "core/common-pile/wikimedia", "government/regulations", "science/plos", "core/synthetic/cosmopedia-v2", "core/common-pile/stackexchange"}
-	if got := corpusPaths(compose.Stages[0].Corpora); !reflect.DeepEqual(got, wantFoundation) || compose.Stages[0].Parameters.Tokens != 18000000000 {
-		t.Fatalf("conversation3 foundation = %v / %+v", got, compose.Stages[0].Parameters)
-	}
-	wantFoundationWeights := []uint64{1, 3, 1, 3, 5, 5}
-	for index, corpus := range compose.Stages[0].Corpora {
-		if corpus.Weight == nil || *corpus.Weight != wantFoundationWeights[index] {
-			t.Fatalf("conversation3 foundation corpus %s weight = %v, want %d", corpus.Path, corpus.Weight, wantFoundationWeights[index])
+	for index := range compose.Stages {
+		if compose.Stages[index].Name != short.Stages[index].Name || !reflect.DeepEqual(compose.Stages[index].Corpora, short.Stages[index].Corpora) {
+			t.Fatalf("restored conversation stage %d changed its curriculum", index)
 		}
 	}
-	wantTechnical := []string{"code/copyleft/linux-core", "code/permissive/linux-core", "community/linux-kernel-mailing-list", "code/stack-v2-html", "code/cloud-native-core", "community/git-mailing-list", "community/python-mailing-lists"}
-	if got := corpusPaths(compose.Stages[1].Corpora); !reflect.DeepEqual(got, wantTechnical) || compose.Stages[1].Parameters.Tokens != 3000000000 {
-		t.Fatalf("conversation3 technical stage = %v / %+v", got, compose.Stages[1].Parameters)
+	if compose.Stages[0].Objective != "causal-language-modeling" || compose.Stages[1].Objective != "assistant-response-modeling" || compose.Stages[2].Objective != "assistant-response-modeling" {
+		t.Fatalf("corrected conversation objectives = %q / %q / %q", compose.Stages[0].Objective, compose.Stages[1].Objective, compose.Stages[2].Objective)
+	}
+	if compose.Stages[0].Parameters.Tokens != 11999969280 || compose.Stages[1].Parameters.Epochs != 1 || compose.Stages[2].Parameters.Epochs != 1 {
+		t.Fatalf("restored conversation budgets = %+v / %+v / %+v", compose.Stages[0].Parameters, compose.Stages[1].Parameters, compose.Stages[2].Parameters)
+	}
+	if compose.Stages[1].Parameters.LearningRate != 0.00002 || compose.Stages[2].Parameters.LearningRate != 0.000008 {
+		t.Fatalf("corrected conversation learning rates = %g / %g", compose.Stages[1].Parameters.LearningRate, compose.Stages[2].Parameters.LearningRate)
 	}
 	forecast, err := model.ForecastCompose(compose)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 681252864 || forecast.PlannedTokens != 21400092672 {
-		t.Fatalf("conversation3 forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 11999969280 || !reflect.DeepEqual(forecast.EpochDerivedStages, []string{"conversational-midtrain", "post-train"}) {
+		t.Fatalf("restored conversation forecast = %+v", forecast)
+	}
+}
+
+func TestConversationFourIsLargerAndKnowledgeDominant(t *testing.T) {
+	compose, _, err := model.LoadCompose("0004-conversation.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	architecture := compose.Architecture
+	if architecture.ContextTokens != 4096 || architecture.HiddenSize != 1536 || architecture.IntermediateSize != 4096 || architecture.Layers != 24 || architecture.AttentionHeads != 24 || architecture.KeyValueHeads != 8 || architecture.TieEmbeddings || !architecture.QKNormalization || architecture.Initialization != "depth-scaled" || architecture.Dropout != 0 {
+		t.Fatalf("conversation4 architecture = %+v", architecture)
+	}
+	if got := []string{compose.Stages[0].Name, compose.Stages[1].Name, compose.Stages[2].Name, compose.Stages[3].Name, compose.Stages[4].Name}; !reflect.DeepEqual(got, []string{"pretrain", "technical-knowledge-midtrain", "conversational-midtrain", "expanded-conversation-sft", "post-train"}) {
+		t.Fatalf("conversation4 stage order = %v", got)
+	}
+	wantFoundation := []string{"core/books/gutenberg", "core/common-pile/wikimedia", "government/regulations", "science/plos", "core/synthetic/cosmopedia-v2", "core/common-pile/stackexchange"}
+	if got := corpusPaths(compose.Stages[0].Corpora); !reflect.DeepEqual(got, wantFoundation) || compose.Stages[0].Parameters.Tokens != 5000000000 {
+		t.Fatalf("conversation4 foundation = %v / %+v", got, compose.Stages[0].Parameters)
+	}
+	wantFoundationWeights := []uint64{1, 3, 1, 3, 5, 5}
+	for index, corpus := range compose.Stages[0].Corpora {
+		if corpus.Weight == nil || *corpus.Weight != wantFoundationWeights[index] {
+			t.Fatalf("conversation4 foundation corpus %s weight = %v, want %d", corpus.Path, corpus.Weight, wantFoundationWeights[index])
+		}
+	}
+	wantTechnical := []string{"code/copyleft/linux-core", "code/permissive/linux-core", "community/linux-kernel-mailing-list", "code/stack-v2-html", "code/cloud-native-core", "community/git-mailing-list", "community/python-mailing-lists"}
+	if got := corpusPaths(compose.Stages[1].Corpora); !reflect.DeepEqual(got, wantTechnical) || compose.Stages[1].Parameters.Tokens != 1000000000 {
+		t.Fatalf("conversation4 technical stage = %v / %+v", got, compose.Stages[1].Parameters)
+	}
+	for _, stage := range compose.Stages {
+		parameters := stage.Parameters
+		if parameters.Parallelism != training.ParallelismAuto || parameters.ComputePrecision != "bfloat16" || !parameters.ActivationCheckpointing || !parameters.Compile || parameters.DistributionPolicy != "" {
+			t.Fatalf("conversation3 candidate stage %s robustness controls = %+v", stage.Name, parameters)
+		}
+		if parameters.GradientAccumulation < 2 {
+			t.Fatalf("conversation3 candidate stage %s gradient accumulation = %d", stage.Name, parameters.GradientAccumulation)
+		}
+		if parameters.Optimizer != "adamw" || parameters.Schedule != "warmup-stable-warmdown" {
+			t.Fatalf("conversation3 candidate stage %s optimizer schedule = %q/%q", stage.Name, parameters.Optimizer, parameters.Schedule)
+		}
+	}
+	forecast, err := model.ForecastCompose(compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forecast.ApproximateParameters != 758450688 || forecast.PlannedTokens != 6100025344 {
+		t.Fatalf("conversation4 forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
 
@@ -335,14 +332,50 @@ func TestBabbleUsesCleanPretrainingAndLightConversationTuning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 76416000 || forecast.PlannedTokens != 1572864000 || len(forecast.EpochDerivedStages) != 2 {
+	if forecast.ApproximateParameters != 76416000 || forecast.PlannedTokens != 599965696 || len(forecast.EpochDerivedStages) != 0 {
 		t.Fatalf("babble forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 	if compose.Stages[0].Parameters.LearningRate <= compose.Stages[1].Parameters.LearningRate || compose.Stages[1].Parameters.LearningRate <= compose.Stages[2].Parameters.LearningRate {
 		t.Fatalf("babble learning rates do not decay by phase: %+v", compose.Stages)
 	}
-	if compose.Stages[2].Corpora[0].Path != "post-train/sft/interaction-contract-v1" || compose.Stages[2].Corpora[1].Path != "post-train/sft/helpsteer2" {
+	if got := corpusPaths(compose.Stages[2].Corpora); !reflect.DeepEqual(got, []string{"post-train/sft/interaction-contract-v1", "post-train/sft/helpsteer2", "post-train/sft/waldo-project-v1"}) {
 		t.Fatalf("babble post-training corpora = %+v", compose.Stages[2].Corpora)
+	}
+}
+
+func TestEveryConversationalComposeIncludesWALDOProjectKnowledge(t *testing.T) {
+	for _, path := range []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation.yaml", "0003-conversation.yaml", "0004-conversation.yaml"} {
+		compose, _, err := model.LoadCompose(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, stage := range compose.Stages {
+			for _, corpus := range stage.Corpora {
+				found = found || corpus.Path == "post-train/sft/waldo-project-v1"
+			}
+		}
+		if !found {
+			t.Fatalf("%s does not include WALDO project knowledge", path)
+		}
+	}
+}
+
+func TestReferenceLadderPinsExecutionAndPrivateDistributionStatus(t *testing.T) {
+	for _, path := range []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation.yaml", "0003-conversation.yaml", "0004-conversation.yaml"} {
+		compose, _, err := model.LoadCompose(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, stage := range compose.Stages {
+			parameters := stage.Parameters
+			if parameters.Parallelism != training.ParallelismAuto || parameters.GradientAccumulation < 1 || parameters.ComputePrecision != "bfloat16" || parameters.Optimizer == "" || parameters.Schedule == "" {
+				t.Fatalf("%s stage %s robustness controls = %+v", path, stage.Name, parameters)
+			}
+			if parameters.DistributionPolicy != "" {
+				t.Fatalf("%s stage %s distribution policy = %q, want private/unset", path, stage.Name, parameters.DistributionPolicy)
+			}
+		}
 	}
 }
 

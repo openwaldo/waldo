@@ -48,7 +48,8 @@ index_root="$work/waldo-index"
 lookaside="$work/lookaside"
 staging="$work/staging"
 models="$work/models"
-input="$work/training.txt"
+source_root="$work/source"
+input="$source_root/raw/training.txt"
 compose="$work/model.yaml"
 provider="$work/provider.json"
 huggingface_export="$work/huggingface-export"
@@ -57,7 +58,25 @@ export WALDO_CONFIG="$work/config.json"
 
 echo "testing: real PyTorch model lifecycle with $torch_python"
 (cd "$repo_root" && GOCACHE="$work/go-cache" go build -o "$binary" ./cmd/waldo)
+mkdir -p "$source_root/raw"
 printf 'OpenWALDO trains real weights through PyTorch.\nThis tiny record validates the Linux backend.\n' > "$input"
+file_bytes=$(wc -c < "$input" | tr -d ' ')
+if command -v sha256sum >/dev/null 2>&1; then
+  file_sha=$(sha256sum "$input" | awk '{print $1}')
+  tree_sha=$(printf '%s\t%s\t%s\n' "$file_sha" "$file_bytes" training.txt | sha256sum | awk '{print $1}')
+else
+  file_sha=$(shasum -a 256 "$input" | awk '{print $1}')
+  tree_sha=$(printf '%s\t%s\t%s\n' "$file_sha" "$file_bytes" training.txt | shasum -a 256 | awk '{print $1}')
+fi
+cat > "$source_root/manifest.json" <<EOF
+{
+  "kind":"waldo-source-directory","schema":1,"retrieved_at":"2026-09-13T00:00:00Z",
+  "corpus":{"id":"pytorch-e2e","title":"PyTorch-E2E-Corpus","description":"Disposable real PyTorch training input."},
+  "sources":[{"id":"pytorch-e2e","path":"","license":"CC0-1.0","source":{"name":"pytorch","version":"fixture-1","url":"https://example.invalid/pytorch-e2e","category":"public-dataset","license_evidence":{"declaration":"CC0-1.0"}},"input":{"format":"text"},"artifacts":[]}],
+  "fetcher":{"name":"pytorch-e2e"},
+  "raw":{"path":"raw","file_count":1,"byte_count":$file_bytes,"tree_sha256":"$tree_sha"}
+}
+EOF
 
 "$binary" index init "$index_root" >/dev/null
 "$binary" config set lookaside "file://$lookaside" >/dev/null
@@ -79,13 +98,7 @@ EOF
 "$binary" config set disclosure.provider "$provider" >/dev/null
 
 destination="$index_root/core/e2e/pytorch"
-"$binary" index ingest "$input" "$destination" \
-  --title PyTorch-E2E-Corpus \
-  --description Disposable-real-PyTorch-training-input \
-  --license CC0-1.0 \
-  --source https://example.invalid/pytorch-e2e \
-  --language en \
-  --source-category public-dataset >/dev/null
+"$binary" index ingest "$source_root" "$destination" >/dev/null
 
 contribution=""
 for candidate in "$staging"/*/contribution; do

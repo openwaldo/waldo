@@ -27,9 +27,10 @@ var (
 // in a corpus BOM. A record must satisfy the global filter and its selected
 // logical corpus filter.
 type RecordFilterPolicy struct {
-	Schema  int                     `json:"schema" yaml:"schema"`
-	Global  *RecordFilter           `json:"global,omitempty" yaml:"global,omitempty"`
-	Corpora map[string]RecordFilter `json:"corpora,omitempty" yaml:"corpora,omitempty"`
+	Schema        int                     `json:"schema" yaml:"schema"`
+	Distributable bool                    `json:"distributable,omitempty" yaml:"distributable,omitempty"`
+	Global        *RecordFilter           `json:"global,omitempty" yaml:"global,omitempty"`
+	Corpora       map[string]RecordFilter `json:"corpora,omitempty" yaml:"corpora,omitempty"`
 }
 
 type RecordFilter struct {
@@ -69,7 +70,7 @@ func (policy RecordFilterPolicy) Validate(paths []string) error {
 			return fmt.Errorf("global record filter: %w", err)
 		}
 	}
-	if policy.Global == nil && len(policy.Corpora) == 0 {
+	if !policy.Distributable && policy.Global == nil && len(policy.Corpora) == 0 {
 		return fmt.Errorf("record filter policy must declare a global or corpus filter")
 	}
 	selected := make(map[string]bool, len(paths))
@@ -184,11 +185,40 @@ func (filter DateFilter) Validate() error {
 }
 
 func (policy RecordFilterPolicy) Allows(corpusPath string, record shard.RecordView) bool {
+	if policy.Distributable && !DistributableLicense(record.License) {
+		return false
+	}
 	if policy.Global != nil && !policy.Global.Allows(record) {
 		return false
 	}
 	filter, exists := policy.Corpora[corpusPath]
 	return !exists || filter.Allows(record)
+}
+
+// AllowsLicense applies only the license facets of a record policy. It is used
+// to review the possible license set before record bodies are streamed.
+func (policy RecordFilterPolicy) AllowsLicense(corpusPath, license string) bool {
+	if policy.Distributable && !DistributableLicense(license) {
+		return false
+	}
+	allows := func(filter *RecordFilter) bool {
+		if filter == nil {
+			return true
+		}
+		if filter.Exclude != nil {
+			for _, pattern := range filter.Exclude.Licenses {
+				if matched, _ := path.Match(pattern, license); matched {
+					return false
+				}
+			}
+		}
+		return filter.Licenses == nil || filter.Licenses.Allows(license)
+	}
+	if !allows(policy.Global) {
+		return false
+	}
+	filter, exists := policy.Corpora[corpusPath]
+	return !exists || allows(&filter)
 }
 
 func (filter RecordFilter) Allows(record shard.RecordView) bool {

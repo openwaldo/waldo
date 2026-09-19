@@ -7,6 +7,9 @@ package training
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +18,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/openwaldo/waldo/internal/corpus"
 )
 
 var workerExitDrain = 5 * time.Second
@@ -173,6 +178,9 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 		_ = command.Wait()
 		return Observation{}, tokenizerErr
 	}
+	if request.Parallelism.DataPlane == DataPlaneNodeLocal {
+		records = prefetchRecords(records)
+	}
 	exited := make(chan error, 1)
 	go func() {
 		exitErr := awaitProcessExit(command)
@@ -209,6 +217,9 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 		}
 		return Observation{}, fmt.Errorf("%s worker exited while leftover rank processes held its output stream open (%s)%s%s", label, abandoned, workerSkipped(skipped.String()), workerStderr(stderr.String()))
 	}
+	if writeErr != nil && !writeStoppedByWorkerExit(writeErr) {
+		return Observation{}, fmt.Errorf("stream records to %s worker: %w%s%s", label, writeErr, workerSkipped(skipped.String()), workerStderr(stderr.String()))
+	}
 	if worker.err != nil {
 		// CommandContext closes the worker pipes when cancellation kills the
 		// process. The output reader consequently observes EOF before a complete
@@ -218,9 +229,6 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 			return Observation{}, ctxErr
 		}
 		return Observation{}, fmt.Errorf("%s worker: %w%s%s", label, worker.err, workerSkipped(skipped.String()), workerStderr(stderr.String()))
-	}
-	if writeErr != nil && !errors.Is(writeErr, io.ErrClosedPipe) {
-		return Observation{}, fmt.Errorf("stream records to %s worker: %w%s", label, writeErr, workerStderr(stderr.String()))
 	}
 	if closeErr != nil && waitErr == nil {
 		return Observation{}, fmt.Errorf("close %s worker input: %w", label, closeErr)
@@ -247,8 +255,21 @@ func workerBeginFromRequest(request Request) WorkerBegin {
 		RunID: request.RunID, Stage: request.Stage, Objective: request.Objective,
 		ArchitectureSHA256: request.ArchitectureSHA256, Architecture: request.Architecture,
 		Parameters: request.Parameters, Parallelism: request.Parallelism,
-		EvaluationSet: request.EvaluationSet, Tokenizer: tokenizer,
+		EvaluationSet: request.EvaluationSet, Tokenizer: tokenizer, DataNodeRank: request.DataNodeRank,
+		PreparedCacheDirectory: request.PreparedCacheDirectory, PreparedCacheMaxBytes: request.PreparedCacheMaxBytes,
 	}
+	identity, _ := json.Marshal(struct {
+		Architecture string                `json:"architecture_sha256"`
+		Objective    string                `json:"objective"`
+		Conversation ConversationTransform `json:"conversation"`
+		Tokenizer    TokenizerSpec         `json:"tokenizer"`
+		Corpus       corpus.BOM            `json:"corpus_bom"`
+		Parameters   ResolvedParameters    `json:"parameters"`
+		Parallelism  Parallelism           `json:"parallelism"`
+		Evaluation   EvaluationSet         `json:"evaluation_set"`
+	}{request.ArchitectureSHA256, request.Objective, request.Conversation, tokenizer, request.BOM, request.Parameters, request.Parallelism, request.EvaluationSet})
+	sum := sha256.Sum256(identity)
+	begin.PreparedIdentity = hex.EncodeToString(sum[:])
 	if request.Initialization != nil {
 		begin.Initialization = &WorkerInitialization{
 			SourceType:  request.Initialization.SourceType,
@@ -261,8 +282,10 @@ func workerBeginFromRequest(request Request) WorkerBegin {
 	if request.Resume != nil {
 		begin.Resume = &WorkerResume{
 			Step: request.Resume.Step, Tokens: request.Resume.Tokens,
-			Checkpoint: request.Resume.Checkpoint,
-			Paths:      append([]string(nil), request.Resume.Paths...),
+			Checkpoint:  request.Resume.Checkpoint,
+			Checkpoints: append([]Checkpoint(nil), request.Resume.Checkpoints...),
+			Evaluations: append([]Evaluation(nil), request.Resume.Evaluations...),
+			Paths:       append([]string(nil), request.Resume.Paths...),
 		}
 	}
 	return begin
@@ -289,6 +312,15 @@ func runWorkerStreamJoin(ctx context.Context, label string, command *exec.Cmd, r
 		return Observation{}, fmt.Errorf("create %s artifact directory: %w", label, err)
 	}
 	var output cappedBuffer
+	var stdin io.WriteCloser
+	var err error
+	if request.Records != nil {
+		request.Tokenizer = defaultedTokenizer(request.Tokenizer)
+		stdin, err = command.StdinPipe()
+		if err != nil {
+			return Observation{}, err
+		}
+	}
 	command.Stdout = &output
 	command.Stderr = &output
 	command.WaitDelay = workerExitDrain
@@ -298,8 +330,31 @@ func runWorkerStreamJoin(ctx context.Context, label string, command *exec.Cmd, r
 	if err := command.Start(); err != nil {
 		return Observation{}, fmt.Errorf("start %s secondary node: %w", label, err)
 	}
+	writeResult := make(chan error, 1)
+	if stdin != nil {
+		go func() {
+			records, evaluations, tokenizeErr := tokenizedWorkerSources(request)
+			if tokenizeErr != nil {
+				_ = stdin.Close()
+				writeResult <- tokenizeErr
+				return
+			}
+			writeErr := WriteWorkerInput(ctx, stdin, workerBeginFromRequest(request), records, evaluations)
+			closeErr := stdin.Close()
+			if writeErr == nil && !errors.Is(closeErr, os.ErrClosed) {
+				writeErr = closeErr
+			}
+			writeResult <- writeErr
+		}()
+	}
 	defer func() { go func() { _ = command.Wait() }() }()
 	waitErr := awaitProcessExit(command)
+	if stdin != nil {
+		if writeErr := <-writeResult; writeErr != nil && !errors.Is(writeErr, io.ErrClosedPipe) {
+			terminateWorkerGroup(command)
+			return Observation{}, fmt.Errorf("stream node-local records to %s secondary node: %w%s", label, writeErr, workerStderr(output.String()))
+		}
+	}
 	if waitErr != nil {
 		terminateWorkerGroup(command)
 		if ctxErr := ctx.Err(); ctxErr != nil {

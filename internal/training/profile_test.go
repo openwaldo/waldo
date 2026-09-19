@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -253,6 +254,17 @@ func TestRecordFiltersApplyToPartitionTargetsAndTrainingStream(t *testing.T) {
 	sort.Strings(texts)
 	if !reflect.DeepEqual(texts, []string{"keep", "keep unset"}) {
 		t.Fatalf("filtered training texts = %v", texts)
+	}
+	summary := partition.SelectionSummary()
+	if summary.InputRecords != 4 || summary.IncludedRecords != 2 || summary.SkippedRecords != 2 || summary.HeldOutRecords != 0 {
+		t.Fatalf("selection summary = %+v", summary)
+	}
+	if !reflect.DeepEqual(summary.IncludedLicenses, map[string]int64{"CC-BY-4.0": 2}) || !reflect.DeepEqual(summary.SkippedLicenses, map[string]int64{"CC-BY-4.0": 1, "GPL-2.0-only": 1}) {
+		t.Fatalf("selection license counts = included %v, skipped %v", summary.IncludedLicenses, summary.SkippedLicenses)
+	}
+	snapshot := partition.Preflight(strings.Repeat("a", 64), parameters, false)
+	if err := snapshot.Validate(); err != nil || !reflect.DeepEqual(snapshot.SelectionSummary, summary) {
+		t.Fatalf("preflight selection summary = %+v, err = %v", snapshot.SelectionSummary, err)
 	}
 	if targets, err := CountByteTargets(context.Background(), []Input{input}); err != nil || targets != int64(len("keep")+len("keep unset")+1) {
 		t.Fatalf("filtered byte targets = %d, err = %v", targets, err)
@@ -553,6 +565,58 @@ func TestTrainingStepCapacityAccountsForHeldOutRecords(t *testing.T) {
 	}
 }
 
+func TestMinimumEpochsForStepsExpandsFiniteTokenBudgetStream(t *testing.T) {
+	inputs := []Input{writeTrainingShard(t, []string{strings.Repeat("a", 20), strings.Repeat("b", 20)})}
+	parameters, err := ResolveParameters(Parameters{Tokens: 48, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := NewRecordPartition(inputs, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, epochs, err := partition.WithMinimumEpochsForSteps(context.Background(), parameters.Steps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if epochs != 2 {
+		t.Fatalf("minimum epochs = %d, want 2", epochs)
+	}
+	steps, sufficient, err := partition.TrainingStepCapacity(context.Background(), parameters.Steps)
+	if err != nil || !sufficient || steps != parameters.Steps {
+		t.Fatalf("expanded capacity = %d, sufficient = %t, err = %v", steps, sufficient, err)
+	}
+}
+
+func TestMinimumEpochsForStepsReportsCapacityProgress(t *testing.T) {
+	inputs := []Input{writeTrainingShard(t, []string{strings.Repeat("a", 20), strings.Repeat("b", 20)})}
+	parameters, err := ResolveParameters(Parameters{Tokens: 48, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := NewRecordPartition(inputs, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []CapacityProgress
+	_, epochs, err := partition.WithMinimumEpochsForStepsProgress(context.Background(), parameters.Steps, func(event CapacityProgress) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if epochs != 2 || len(events) < 4 {
+		t.Fatalf("epochs = %d, progress = %+v", epochs, events)
+	}
+	if events[0].Trial != 1 || events[0].Epochs != 1 || events[0].Records != 0 || events[0].RequiredSequences != parameters.Steps*parameters.BatchSize {
+		t.Fatalf("first progress = %+v", events[0])
+	}
+	last := events[len(events)-1]
+	if !last.Complete || !last.Sufficient || last.Epochs != 2 || last.Records == 0 || last.Sequences != last.RequiredSequences {
+		t.Fatalf("final progress = %+v", last)
+	}
+}
+
 func TestStagePreflightReconstructsTheSamePartition(t *testing.T) {
 	inputs := []Input{writeTrainingShard(t, []string{"alpha record", "beta record", "gamma record", "delta record"})}
 	fraction := 0.5
@@ -781,6 +845,400 @@ func TestWorkerInputStopsTrainingRecordsAfterTargetSignal(t *testing.T) {
 	}
 	if !strings.Contains(encoded.String(), `"kind":"end"`) {
 		t.Fatalf("worker stream did not terminate cleanly: %s", encoded.String())
+	}
+}
+
+func TestResolveParametersPinsGradientAccumulation(t *testing.T) {
+	resolved, err := ResolveParameters(Parameters{Steps: 2, BatchSize: 8, GradientAccumulation: 4, SequenceLength: 16, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.GradientAccumulation != 4 || resolved.PlannedTokenCapacity != 256 {
+		t.Fatalf("resolved accumulation = %+v", resolved)
+	}
+	defaults, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001})
+	if err != nil || defaults.GradientAccumulation != 1 {
+		t.Fatalf("default accumulation = %+v, err=%v", defaults, err)
+	}
+	for _, accumulation := range []int64{-1, 3, 9} {
+		_, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 8, GradientAccumulation: accumulation, SequenceLength: 8, LearningRate: 0.001})
+		if err == nil {
+			t.Fatalf("accepted accumulation %d for batch 8", accumulation)
+		}
+	}
+}
+
+func TestResolveParametersPinsExecutionControls(t *testing.T) {
+	resolved, err := ResolveParameters(Parameters{
+		Steps: 2, BatchSize: 2, SequenceLength: 16, LearningRate: 0.001,
+		ComputePrecision: "bfloat16", ActivationCheckpointing: true, Compile: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.ComputePrecision != "bfloat16" || !resolved.ActivationCheckpointing || !resolved.Compile {
+		t.Fatalf("execution controls = %+v", resolved)
+	}
+	defaults, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001})
+	if err != nil || defaults.ComputePrecision != "auto" {
+		t.Fatalf("default execution controls = %+v, err=%v", defaults, err)
+	}
+	if _, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, ComputePrecision: "fp8"}); err == nil {
+		t.Fatal("accepted unsupported compute precision")
+	}
+}
+
+func TestResolveParametersPinsDistributionPolicy(t *testing.T) {
+	resolved, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, DistributionPolicy: "distributable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.DistributionPolicy != "distributable" {
+		t.Fatalf("distribution policy = %q", resolved.DistributionPolicy)
+	}
+	if _, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, DistributionPolicy: "trust-me"}); err == nil {
+		t.Fatal("accepted unsupported distribution policy")
+	}
+}
+
+func TestResolveParametersPinsOptimizerAndWarmdownSchedule(t *testing.T) {
+	warmdown := int64(40)
+	minimum := 0.0
+	resolved, err := ResolveParameters(Parameters{
+		Steps: 100, BatchSize: 8, SequenceLength: 128, LearningRate: 0.001,
+		Optimizer: "muon-adamw", Schedule: "warmup-stable-warmdown",
+		WarmdownSteps: &warmdown, MinimumRateRatio: &minimum,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Optimizer.Name != "muon-adamw" || resolved.Schedule.Name != "warmup-stable-warmdown" || resolved.Schedule.WarmdownSteps != 40 || resolved.Schedule.MinimumRateRatio != 0 {
+		t.Fatalf("resolved recipe = %+v / %+v", resolved.Optimizer, resolved.Schedule)
+	}
+	for _, parameters := range []Parameters{
+		{Steps: 10, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Optimizer: "unknown"},
+		{Steps: 10, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Schedule: "unknown"},
+		{Steps: 10, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Schedule: "warmup-stable-warmdown", WarmupSteps: testInt64Pointer(6), WarmdownSteps: testInt64Pointer(5)},
+	} {
+		if _, err := ResolveParameters(parameters); err == nil {
+			t.Fatalf("invalid recipe accepted: %+v", parameters)
+		}
+	}
+}
+
+func testInt64Pointer(value int64) *int64 { return &value }
+
+func TestValidateBatchTopologyUsesPhysicalMicroBatch(t *testing.T) {
+	parameters := ResolvedParameters{BatchSize: 64, GradientAccumulation: 4}
+	if err := ValidateBatchTopology(parameters, 8); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateBatchTopology(parameters, 32); err == nil {
+		t.Fatal("accepted a world size larger than the global micro-batch")
+	}
+	parameters.GradientAccumulation = 8
+	if err := ValidateBatchTopology(parameters, 8); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateBatchTopology(parameters, 4); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPreparedSequencesAreDeterministicallyPartitionedByNode(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 4, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := Record{ID: "one", Tokens: []int{10, 11, 12, 13, 14, 15, 16, 17}, LossMask: make([]bool, 9), Corpus: "corpus"}
+	for index := range record.LossMask {
+		record.LossMask[index] = true
+	}
+	seen := map[int64]PreparedSequence{}
+	for node := 0; node < 2; node++ {
+		var encoded bytes.Buffer
+		begin := WorkerBegin{
+			Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: node,
+			Parallelism: Parallelism{WorldSize: 4, GPUsPerNode: 2, DataPlane: DataPlaneNodeLocal},
+		}
+		if err := WriteWorkerInput(context.Background(), &encoded, begin, staticRecordSource{record}, nil); err != nil {
+			t.Fatal(err)
+		}
+		decoder := json.NewDecoder(&encoded)
+		boundaries := 0
+		for {
+			var frame WorkerInputFrame
+			if err := decoder.Decode(&frame); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				t.Fatal(err)
+			}
+			if frame.Kind == "sequence" {
+				if _, duplicate := seen[frame.Sequence.Ordinal]; duplicate {
+					t.Fatalf("sequence %d assigned to more than one node", frame.Sequence.Ordinal)
+				}
+				seen[frame.Sequence.Ordinal] = *frame.Sequence
+			}
+			if frame.Kind == "micro_batch_end" {
+				boundaries++
+			}
+		}
+		if boundaries != 1 {
+			t.Fatalf("node %d received %d optimizer boundaries, want 1", node, boundaries)
+		}
+	}
+	if len(seen) != 4 {
+		t.Fatalf("prepared partitions cover %d sequences, want 4", len(seen))
+	}
+	if !reflect.DeepEqual(seen[0].Tokens, []int{10, 11, 12}) || !reflect.DeepEqual(seen[3].Tokens, []int{16, 17, 2}) {
+		t.Fatalf("prepared packing changed canonical sequence order: %+v", seen)
+	}
+	for ordinal, sequence := range seen {
+		if sequence.Consumption["corpus"] != 2 {
+			t.Fatalf("sequence %d consumption = %+v", ordinal, sequence.Consumption)
+		}
+	}
+}
+
+func TestPreparedSequencesAllowPartialFinalGlobalBatch(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 2, BatchSize: 4, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := Record{ID: "one", Tokens: []int{10, 11, 12, 13, 14, 15, 16, 17, 18}, LossMask: make([]bool, 10), Corpus: "corpus"}
+	for index := range record.LossMask {
+		record.LossMask[index] = true
+	}
+	seen := map[int64]bool{}
+	for node := 0; node < 2; node++ {
+		var encoded bytes.Buffer
+		begin := WorkerBegin{
+			Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: node,
+			Parallelism: Parallelism{WorldSize: 4, GPUsPerNode: 2, DataPlane: DataPlaneNodeLocal},
+		}
+		if err := WriteWorkerInput(context.Background(), &encoded, begin, staticRecordSource{record}, nil); err != nil {
+			t.Fatal(err)
+		}
+		decoder := json.NewDecoder(&encoded)
+		boundaries := 0
+		ended := false
+		for {
+			var frame WorkerInputFrame
+			if err := decoder.Decode(&frame); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				t.Fatal(err)
+			}
+			switch frame.Kind {
+			case "sequence":
+				if seen[frame.Sequence.Ordinal] {
+					t.Fatalf("sequence %d assigned to more than one node", frame.Sequence.Ordinal)
+				}
+				seen[frame.Sequence.Ordinal] = true
+			case "micro_batch_end":
+				boundaries++
+			case "end":
+				ended = true
+			}
+		}
+		if boundaries != 1 {
+			t.Fatalf("node %d received %d complete global-batch boundaries, want 1", node, boundaries)
+		}
+		if !ended {
+			t.Fatalf("node %d did not receive the end frame", node)
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("prepared partitions cover %d real sequences, want 5 real sequences plus 3 worker-padded slots", len(seen))
+	}
+}
+
+func TestPreparedSequencesRejectInsufficientFinalGlobalBatch(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 2, BatchSize: 4, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := Record{ID: "one", Tokens: []int{10, 11, 12, 13, 14, 15, 16}, LossMask: make([]bool, 8), Corpus: "corpus"}
+	for index := range record.LossMask {
+		record.LossMask[index] = true
+	}
+	begin := WorkerBegin{
+		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
+		Parallelism: Parallelism{WorldSize: 4, GPUsPerNode: 2, DataPlane: DataPlaneNodeLocal},
+	}
+	err = WriteWorkerInput(context.Background(), io.Discard, begin, staticRecordSource{record}, nil)
+	if err == nil || !strings.Contains(err.Error(), "produced 4 sequences; at least 5 are required") {
+		t.Fatalf("insufficient prepared stream error = %v", err)
+	}
+}
+
+type refusingRecordSource struct{}
+
+func (refusingRecordSource) Stream(context.Context, func(Record) error) error {
+	return errors.New("record source should not be reopened")
+}
+
+func TestFinalCheckpointVerificationDoesNotReplayTrainingRecords(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := WorkerBegin{Parameters: parameters, Resume: &WorkerResume{Step: parameters.Steps}}
+	var output bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &output, begin, refusingRecordSource{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), `"kind":"record"`) || !strings.Contains(output.String(), `"kind":"end"`) {
+		t.Fatalf("finalization stream = %s", output.String())
+	}
+}
+
+func TestPreparedSequenceCacheReplaysVerifiedChunks(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 2, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := Record{ID: "one", Tokens: []int{10, 11, 12, 13}, LossMask: []bool{true, true, true, true, true}, Corpus: "corpus"}
+	begin := WorkerBegin{
+		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
+		Parallelism:            Parallelism{WorldSize: 2, GPUsPerNode: 1, DataPlane: DataPlaneNodeLocal},
+		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("a", 64),
+	}
+	stale := filepath.Join(begin.PreparedCacheDirectory, begin.PreparedIdentity, ".node-0-interrupted")
+	if err := os.MkdirAll(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "partial"), []byte("incomplete"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var first bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &first, begin, staticRecordSource{record}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("interrupted cache still exists: %v", err)
+	}
+	var second bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &second, begin, refusingRecordSource{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if first.String() != second.String() {
+		t.Fatalf("cached worker stream differs\nfirst: %s\nsecond: %s", first.String(), second.String())
+	}
+	chunks, err := filepath.Glob(filepath.Join(begin.PreparedCacheDirectory, begin.PreparedIdentity, "node-0", "chunk-*.ndjson"))
+	if err != nil || len(chunks) != 1 {
+		t.Fatalf("chunks = %v, err=%v", chunks, err)
+	}
+	if err := os.WriteFile(chunks[0], []byte("tampered\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteWorkerInput(context.Background(), io.Discard, begin, refusingRecordSource{}, nil); err == nil || !strings.Contains(err.Error(), "digest differs") {
+		t.Fatalf("tampered prepared cache error = %v", err)
+	}
+}
+
+func TestPreparedSequenceResumeStartsAfterCheckpointBoundary(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 3, BatchSize: 4, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := make([]int, 24)
+	for index := range tokens {
+		tokens[index] = index + 10
+	}
+	record := Record{ID: "one", Tokens: tokens, LossMask: make([]bool, len(tokens)+1), Corpus: "corpus"}
+	for index := range record.LossMask {
+		record.LossMask[index] = true
+	}
+	begin := WorkerBegin{
+		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
+		Parallelism:            Parallelism{WorldSize: 4, GPUsPerNode: 2, DataPlane: DataPlaneNodeLocal},
+		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("d", 64),
+	}
+	if err := WriteWorkerInput(context.Background(), io.Discard, begin, staticRecordSource{record}, nil); err != nil {
+		t.Fatal(err)
+	}
+	begin.Resume = &WorkerResume{Step: 2}
+	var output bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &output, begin, refusingRecordSource{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var ordinals []int64
+	decoder := json.NewDecoder(&output)
+	boundaries := 0
+	for {
+		var frame WorkerInputFrame
+		if err := decoder.Decode(&frame); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			t.Fatal(err)
+		}
+		if frame.Kind == "sequence" {
+			ordinals = append(ordinals, frame.Sequence.Ordinal)
+		}
+		if frame.Kind == "micro_batch_end" {
+			boundaries++
+		}
+	}
+	if !reflect.DeepEqual(ordinals, []int64{8, 9}) || boundaries != 1 {
+		t.Fatalf("resumed prepared stream ordinals=%v boundaries=%d", ordinals, boundaries)
+	}
+}
+
+func TestPreparedSequenceCachePreservesPartialGlobalBatchBoundary(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 2, BatchSize: 8, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := make([]int, 27)
+	for index := range tokens {
+		tokens[index] = index + 10
+	}
+	record := Record{ID: "one", Tokens: tokens, LossMask: make([]bool, 28), Corpus: "corpus"}
+	for index := range record.LossMask {
+		record.LossMask[index] = true
+	}
+	begin := WorkerBegin{
+		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
+		Parallelism:            Parallelism{WorldSize: 4, GPUsPerNode: 2, DataPlane: DataPlaneNodeLocal},
+		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("c", 64),
+	}
+	var first bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &first, begin, staticRecordSource{record}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var second bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &second, begin, refusingRecordSource{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if first.String() != second.String() {
+		t.Fatalf("cached partial worker stream differs\nfirst: %s\nsecond: %s", first.String(), second.String())
+	}
+	if boundaries := strings.Count(second.String(), `"kind":"micro_batch_end"`); boundaries != 1 {
+		t.Fatalf("cached partial worker stream has %d complete boundaries, want 1", boundaries)
+	}
+}
+
+func TestPreparedSequenceCacheStopsAtByteLimit(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 2, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := WorkerBegin{
+		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
+		Parallelism:            Parallelism{WorldSize: 2, GPUsPerNode: 1, DataPlane: DataPlaneNodeLocal},
+		PreparedCacheDirectory: t.TempDir(), PreparedCacheMaxBytes: 1, PreparedIdentity: strings.Repeat("b", 64),
+	}
+	record := Record{ID: "one", Tokens: []int{10, 11, 12, 13}, LossMask: []bool{true, true, true, true, true}, Corpus: "corpus"}
+	if err := WriteWorkerInput(context.Background(), io.Discard, begin, staticRecordSource{record}, nil); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(begin.PreparedCacheDirectory, begin.PreparedIdentity, "node-0", "MANIFEST.json")
+	if _, err := os.Stat(manifest); !os.IsNotExist(err) {
+		t.Fatalf("byte-limited prepared cache was committed: %v", err)
 	}
 }
 

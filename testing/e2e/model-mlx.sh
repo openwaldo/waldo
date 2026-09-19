@@ -48,7 +48,8 @@ index_root="$work/waldo-index"
 lookaside="$work/lookaside"
 staging="$work/staging"
 models="$work/models"
-input="$work/training.txt"
+source_root="$work/source"
+input="$source_root/raw/training.jsonl"
 compose="$work/model.yaml"
 provider="$work/provider.json"
 huggingface_export="$work/huggingface-export"
@@ -60,7 +61,30 @@ export WALDO_CONFIG="$work/config.json"
 
 echo "testing: real MLX model lifecycle with $mlx_python"
 (cd "$repo_root" && GOCACHE="$work/go-cache" go build -o "$binary" ./cmd/waldo)
-printf 'OpenWALDO trains real weights through MLX.\nThis tiny record exists only to validate the complete backend.\n' > "$input"
+mkdir -p "$source_root/raw"
+cat > "$input" <<'EOF'
+{"text":"OpenWALDO trains real weights through MLX. This record validates the complete backend."}
+{"text":"Gradient accumulation preserves the logical optimizer batch while using smaller forward passes."}
+{"text":"Held-out evaluation measures deterministic records that optimizer updates never consume."}
+{"text":"A completed stage publishes the best evaluated checkpoint and verifies its serialized artifact."}
+EOF
+file_bytes=$(wc -c < "$input" | tr -d ' ')
+if command -v sha256sum >/dev/null 2>&1; then
+  file_sha=$(sha256sum "$input" | awk '{print $1}')
+  tree_sha=$(printf '%s\t%s\t%s\n' "$file_sha" "$file_bytes" training.jsonl | sha256sum | awk '{print $1}')
+else
+  file_sha=$(shasum -a 256 "$input" | awk '{print $1}')
+  tree_sha=$(printf '%s\t%s\t%s\n' "$file_sha" "$file_bytes" training.jsonl | shasum -a 256 | awk '{print $1}')
+fi
+cat > "$source_root/manifest.json" <<EOF
+{
+  "kind":"waldo-source-directory","schema":1,"retrieved_at":"2026-09-13T00:00:00Z",
+  "corpus":{"id":"mlx-e2e","title":"MLX-E2E-Corpus","description":"Disposable real MLX training input."},
+  "sources":[{"id":"mlx-e2e","path":"","license":"CC0-1.0","source":{"name":"mlx","version":"fixture-1","url":"https://example.invalid/mlx-e2e","category":"public-dataset","license_evidence":{"declaration":"CC0-1.0"}},"input":{"format":"jsonl","type":"record-map","fields":{"text":["text"]}},"artifacts":[]}],
+  "fetcher":{"name":"mlx-e2e"},
+  "raw":{"path":"raw","file_count":1,"byte_count":$file_bytes,"tree_sha256":"$tree_sha"}
+}
+EOF
 
 "$binary" index init "$index_root" >/dev/null
 "$binary" config set lookaside "file://$lookaside" >/dev/null
@@ -82,13 +106,7 @@ EOF
 "$binary" config set disclosure.provider "$provider" >/dev/null
 
 destination="$index_root/core/e2e/mlx"
-"$binary" index ingest "$input" "$destination" \
-  --title MLX-E2E-Corpus \
-  --description Disposable-real-MLX-training-input \
-  --license CC0-1.0 \
-  --source https://example.invalid/mlx-e2e \
-  --language en \
-  --source-category public-dataset >/dev/null
+"$binary" index ingest "$source_root" "$destination" >/dev/null
 
 contribution=""
 for candidate in "$staging"/*/contribution; do
@@ -123,7 +141,8 @@ stages:
       - core/e2e/mlx
     parameters:
       steps: 2
-      batch_size: 1
+      batch_size: 2
+      gradient_accumulation_steps: 2
       sequence_length: 16
       learning_rate: 0.001
       seed: 7
@@ -137,6 +156,30 @@ printf '%s\n' "$output" | grep -q 'backend       mlx@'"$revision"''
 summary=$("$binary" --json model summary mlx-smoke)
 printf '%s\n' "$summary" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*false'
 printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"mlx"'
+printf '%s\n' "$summary" | grep -Eq '"selected_checkpoint"[[:space:]]*:[[:space:]]*\{'
+printf '%s\n' "$summary" | grep -Eq '"artifact_heldout_loss"[[:space:]]*:'
+telemetry=$(find "$models/mlx-smoke/runs" -type f -name TELEMETRY.csv -print | sort | head -1)
+[ -n "$telemetry" ] || { echo "MLX run did not persist telemetry" >&2; exit 1; }
+awk -F, '
+  NR == 1 {
+    for (column = 1; column <= NF; column++) columns[$column] = column
+    next
+  }
+  $(columns["event"]) == "progress" {
+    found = 1
+    required[1] = "duration_seconds"
+    required[2] = "data_wait_seconds"
+    required[3] = "peak_memory_bytes"
+    required[4] = "training_flops"
+    required[5] = "achieved_tflops"
+    required[6] = "gradient_norm"
+    for (position = 1; position <= 6; position++) {
+      name = required[position]
+      if (!(name in columns) || $(columns[name]) == "") exit 1
+    }
+  }
+  END { if (!found) exit 1 }
+' "$telemetry" || { echo "MLX progress telemetry is incomplete" >&2; exit 1; }
 weights=$(find "$models/mlx-smoke/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print)
 [ -n "$weights" ] && [ -s "$weights" ] || { echo "real MLX weights were not produced" >&2; exit 1; }
 checkpoint_count=$(find "$models/mlx-smoke/runs" -type d -name 'step-*' -print | wc -l | tr -d ' ')
@@ -160,6 +203,53 @@ chat=$("$binary" --json model chat mlx-smoke "OpenWALDO" --max-tokens 2 --temper
 printf '%s\n' "$chat" | grep -Eq '"run_id"[[:space:]]*:[[:space:]]*"[^"]+"'
 printf '%s\n' "$chat" | grep -Eq '"tokens"[[:space:]]*:[[:space:]]*[0-2]'
 printf '%s\n' "$chat" | grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(eos|max_tokens)"'
+
+interrupted_log="$work/interrupted-training.log"
+WALDO_GPU_THROTTLE=0.01 "$binary" model train mlx-resume "$compose" >"$interrupted_log" 2>&1 &
+interrupted_pid=$!
+checkpoint_state=""
+poll=0
+while [ "$poll" -lt 200 ]; do
+  checkpoint_state=$(find "$models/mlx-resume/runs" -path '*/checkpoints/step-00000001/state.json' -print 2>/dev/null | head -1)
+  [ -n "$checkpoint_state" ] && break
+  if ! kill -0 "$interrupted_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.05
+  poll=$((poll + 1))
+done
+[ -n "$checkpoint_state" ] || { cat "$interrupted_log"; echo "MLX interruption test did not reach checkpoint 1" >&2; exit 1; }
+# Give the parent enough time to commit the worker's checkpoint event, while
+# throttling guarantees that the next optimizer step cannot finish first.
+sleep 0.1
+kill -INT "$interrupted_pid"
+set +e
+wait "$interrupted_pid"
+interrupted_code=$?
+set -e
+[ "$interrupted_code" -ne 0 ] || { echo "interrupted MLX training unexpectedly completed" >&2; exit 1; }
+
+resume_output=$("$binary" model train mlx-resume "$compose")
+printf '%s\n' "$resume_output"
+grep -ERq '"resume_step"[[:space:]]*:[[:space:]]*1' "$models/mlx-resume/runs" || {
+  echo "completed MLX run does not record checkpoint resume from step 1" >&2
+  exit 1
+}
+control_output=$("$binary" model train mlx-control "$compose")
+printf '%s\n' "$control_output"
+resumed_weights=$(find "$models/mlx-resume/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print | head -1)
+control_weights=$(find "$models/mlx-control/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print | head -1)
+"$mlx_python" - "$resumed_weights" "$control_weights" <<'PY'
+import sys
+
+import mlx.core as mx
+
+resumed = mx.load(sys.argv[1])
+control = mx.load(sys.argv[2])
+assert resumed.keys() == control.keys()
+for name in resumed:
+    assert mx.array_equal(resumed[name], control[name]).item(), name
+PY
 
 "$binary" model export mlx-smoke "$huggingface_export" --format huggingface --allow-incomplete >/dev/null
 "$binary" model export mlx-smoke "$mlx_export" --format mlx --allow-incomplete >/dev/null
@@ -256,4 +346,4 @@ else
   echo "testing: calibrated GGUF export skipped (llama-quantize and llama-imatrix not both installed)"
 fi
 
-echo "E2E MLX model passed: trained, resumed, generated, and exported Hugging Face, MLX, GGUF, and Ollama packages"
+echo "E2E MLX model passed: trained, deterministically checkpoint-resumed, generated, and exported Hugging Face, MLX, GGUF, and Ollama packages"

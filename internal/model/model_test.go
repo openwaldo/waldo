@@ -558,10 +558,16 @@ func TestTrainingRunPinsConfiguredRecordFilter(t *testing.T) {
 }
 
 func TestMergeProgressKeepsTerminalArtifactEvaluation(t *testing.T) {
-	progress := &training.Progress{Evaluations: []training.Evaluation{{Step: 10, Tokens: 100, Metrics: map[string]float64{"heldout_loss": 2}}}}
-	observation := training.Observation{Evaluations: []training.Evaluation{{Step: 10, Tokens: 100, Metrics: map[string]float64{"heldout_loss": 2, "artifact_heldout_loss": 2.001}}}}
+	progress := &training.Progress{Evaluations: []training.Evaluation{
+		{Step: 10, Tokens: 100, Metrics: map[string]float64{"heldout_loss": 2}},
+		{Step: 20, Tokens: 200, Metrics: map[string]float64{"heldout_loss": 3}},
+	}}
+	observation := training.Observation{Evaluations: []training.Evaluation{
+		{Step: 10, Tokens: 100, Metrics: map[string]float64{"heldout_loss": 2.001, "artifact_heldout_loss": 2.001}},
+		{Step: 20, Tokens: 200, Metrics: map[string]float64{"heldout_loss": 3}},
+	}}
 	merged := mergeProgress(progress, observation)
-	if len(merged.Evaluations) != 1 || merged.Evaluations[0].Metrics["artifact_heldout_loss"] != 2.001 {
+	if len(merged.Evaluations) != 2 || merged.Evaluations[0].Metrics["artifact_heldout_loss"] != 2.001 {
 		t.Fatalf("merged evaluations = %+v", merged.Evaluations)
 	}
 }
@@ -579,7 +585,7 @@ func TestResumeReplacesEvaluationAtCheckpointStep(t *testing.T) {
 	}
 }
 
-func TestOnlyFinalCheckpointBookkeepingFailureIsResumable(t *testing.T) {
+func TestAnyVerifiedCheckpointBackedFailureIsResumable(t *testing.T) {
 	requested := training.Parameters{Steps: 10, BatchSize: 1, SequenceLength: 10, LearningRate: 0.001, Seed: 1}
 	parameters, err := training.ResolveParameters(requested)
 	if err != nil {
@@ -609,16 +615,75 @@ func TestOnlyFinalCheckpointBookkeepingFailureIsResumable(t *testing.T) {
 		t.Fatalf("recoverable compose start = %d, %v", start, ok)
 	}
 	run.Error = "trainer exited"
-	if resumableRunState(run, parameters) {
-		t.Fatal("ordinary failed run became resumable")
+	if !resumableRunState(run, parameters) {
+		t.Fatal("final checkpoint after an arbitrary backend failure is not resumable")
 	}
 	run.Error = "invalid backend observation: corpus consumption accounts for 11 corpora and 400015360 of 400015360 token targets"
 	if !resumableRunState(run, parameters) {
 		t.Fatal("final-checkpoint sparse corpus accounting failure is not resumable")
 	}
+	run.Error = "TorchTitan worker: saved artifact held-out loss 4.030349 does not match live loss 3.856039 within tolerance 0.038560"
+	if !resumableRunState(run, parameters) {
+		t.Fatal("final-checkpoint artifact evaluation mismatch is not resumable")
+	}
+	run.Error = "TorchTitan worker: worker input ended without begin/end framing"
+	run.Progress.Checkpoints[0].Step = 5
+	run.Progress.Checkpoints[0].Tokens = 50
+	if !resumableRunState(run, parameters) {
+		t.Fatal("partial checkpoint after worker input exhaustion is not resumable")
+	}
+	run.Error = "trainer exited"
+	if !resumableRunState(run, parameters) {
+		t.Fatal("partial checkpoint after an arbitrary backend failure is not resumable")
+	}
+	run.Error = "TorchTitan worker: worker input ended without begin/end framing"
+	run.Progress.Checkpoints[0].Step = parameters.Steps
+	run.Progress.Checkpoints[0].Tokens = parameters.PlannedTokenCapacity
+	if !resumableRunState(run, parameters) {
+		t.Fatal("final checkpoint after input exhaustion is not resumable")
+	}
+	run.Error = "TorchTitan worker: saved artifact held-out loss 4.030349 does not match live loss 3.856039 within tolerance 0.038560"
 	run.Progress.Checkpoints[0].Step--
+	if !resumableRunState(run, parameters) {
+		t.Fatal("partial checkpoint after artifact evaluation failure is not resumable")
+	}
+	run.Progress.Checkpoints[0].Step = 0
 	if resumableRunState(run, parameters) {
-		t.Fatal("partial-checkpoint corpus accounting failure became resumable")
+		t.Fatal("zero-step checkpoint became resumable")
+	}
+	run.Progress.Checkpoints[0].Step = parameters.Steps + 1
+	if resumableRunState(run, parameters) {
+		t.Fatal("checkpoint beyond the planned steps became resumable")
+	}
+	run.Progress.Checkpoints[0].Step = 1
+	run.Progress.Checkpoints[0].Tokens = parameters.PlannedTokenCapacity + 1
+	if resumableRunState(run, parameters) {
+		t.Fatal("checkpoint beyond the planned token capacity became resumable")
+	}
+}
+
+func TestFixedTokenResumeMayCorrectOnlyDerivedEpochLimit(t *testing.T) {
+	persisted, err := training.ResolveParameters(training.Parameters{Tokens: 100, BatchSize: 1, SequenceLength: 10, LearningRate: 0.001, Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective := persisted
+	effective.Epochs = 2
+	if !equivalentResumeParameters(persisted, effective) {
+		t.Fatal("derived fixed-token epoch correction is not resume-compatible")
+	}
+	run := RunRecord{ID: "run", Attempts: []RunAttempt{{Ordinal: 1, ResumeStep: 5, Correction: "fixed-token-capacity-v1", EffectiveParameters: &effective}}}
+	if err := validateAttemptCorrections(run, RunBOM{Parameters: persisted}); err != nil {
+		t.Fatalf("valid attempt correction: %v", err)
+	}
+	changed := effective
+	changed.Seed++
+	if equivalentResumeParameters(persisted, changed) {
+		t.Fatal("seed change became resume-compatible")
+	}
+	run.Attempts[0].EffectiveParameters = &changed
+	if err := validateAttemptCorrections(run, RunBOM{Parameters: persisted}); err == nil {
+		t.Fatal("invalid attempt correction was accepted")
 	}
 }
 
@@ -787,6 +852,29 @@ func TestExportRejectsCorruptModelArtifact(t *testing.T) {
 	}
 }
 
+func TestVerifyCurrentModelArtifactsRejectsCorruptPublishedWeights(t *testing.T) {
+	root := t.TempDir()
+	builder := Builder{Root: root, NewID: func() (string, error) { return "run0001", nil }, Resolver: training.FakeResolver()}
+	if _, err := builder.Initialize("smoke", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	trained, err := builder.Train(context.Background(), "smoke", preparedFixture(t, testStage("pretrain")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyCurrentModelArtifacts(trained); err != nil {
+		t.Fatalf("verify current artifacts: %v", err)
+	}
+	pin := trained.Model.Runs[0]
+	artifact := filepath.Join(trained.Path, "runs", runDirectoryName(pin), filepath.FromSlash(pin.Artifacts[0].Path))
+	if err := os.WriteFile(artifact, []byte("corrupt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyCurrentModelArtifacts(trained); err == nil || (!strings.Contains(err.Error(), "SHA-256") && !strings.Contains(err.Error(), "size is")) {
+		t.Fatalf("corrupt current artifact error = %v", err)
+	}
+}
+
 func TestTrainRejectsResolverMismatchBeforeAddingRun(t *testing.T) {
 	root := t.TempDir()
 	builder := Builder{Root: root}
@@ -902,6 +990,119 @@ func TestTrainResumesInterruptedRunFromVerifiedCheckpoint(t *testing.T) {
 	}
 }
 
+func TestTrainRepairsFixedTokenCapacityAndResumesFailedCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	attempts := 0
+	backend := backendFunc(func(_ context.Context, request training.Request) (training.Observation, error) {
+		attempts++
+		if attempts == 1 {
+			path := filepath.Join(request.ArtifactDirectory, "checkpoints", "step-00000001", "state.json")
+			data := []byte("{\"kind\":\"waldo-test-checkpoint\",\"schema\":1,\"step\":1}\n")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return training.Observation{}, err
+			}
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				return training.Observation{}, err
+			}
+			digest := sha256.Sum256(data)
+			checkpoint := training.Checkpoint{Step: 1, Tokens: 64, Artifacts: []training.Artifact{{Path: "artifacts/checkpoints/step-00000001/state.json", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}}}
+			request.Report(training.Event{Kind: "checkpoint", Message: "test checkpoint", Step: 1, Tokens: 64, Checkpoint: &checkpoint})
+			return training.Observation{}, errors.New("TorchTitan worker: worker input ended without begin/end framing")
+		}
+		if request.Resume == nil || request.Resume.Step != 1 || request.Parameters.Epochs <= 1 {
+			return training.Observation{}, fmt.Errorf("capacity-corrected resume = %+v, epochs %d", request.Resume, request.Parameters.Epochs)
+		}
+		data := []byte("capacity-corrected resumed weights")
+		path := filepath.Join(request.ArtifactDirectory, "model.safetensors")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return training.Observation{}, err
+		}
+		digest := sha256.Sum256(data)
+		loss := 0.5
+		return training.Observation{
+			Steps: request.Parameters.Steps, ConsumedTokens: request.Parameters.PlannedTokenCapacity, FinalLoss: &loss,
+			Evaluations: []training.Evaluation{{Step: request.Parameters.Steps, Tokens: request.Parameters.PlannedTokenCapacity, Metrics: map[string]float64{"heldout_loss": 0.75}}},
+			Artifacts:   []training.Artifact{{Path: "artifacts/model.safetensors", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}},
+		}, nil
+	})
+	builder := Builder{Root: root, NewID: func() (string, error) { return "capacity0001", nil }, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backend), nil
+	})}
+	if _, err := builder.Initialize("capacity", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	stage := testStage("midtrain")
+	stage.Parameters.Steps = 0
+	stage.Parameters.Tokens = 1024
+	prepared := preparedFixture(t, stage)
+	if _, err := builder.Train(context.Background(), "capacity", prepared); err == nil || !strings.Contains(err.Error(), "worker input ended") {
+		t.Fatalf("first Train error = %v", err)
+	}
+	failed, err := Inspect(root, "capacity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Runs[0].State != RunInterrupted || failed.Runs[0].Attempts[0].State != RunFailed || failed.Model.Runs[0].Resume == nil {
+		t.Fatalf("checkpoint-backed failure was not retained as restartable: run %+v, pin %+v", failed.Runs[0], failed.Model.Runs[0])
+	}
+	resumeCompose := Compose{Architecture: testArchitecture(), Stages: []Stage{stage}}
+	if err := validateComposeTarget(failed, resumeCompose); err != nil {
+		t.Fatalf("checkpoint-backed interrupted run was rejected before compose recovery: %v", err)
+	}
+	if failed.RunBOMs[0].Parameters.Epochs <= 1 {
+		t.Fatalf("test fixture did not require multiple epochs: %+v", failed.RunBOMs[0].Parameters)
+	}
+	runDirectory := filepath.Join(failed.Path, "runs", runDirectoryName(failed.Model.Runs[0]))
+	var snapshot training.StagePreflight
+	if err := readStrictJSON(filepath.Join(runDirectory, "PREFLIGHT.json"), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Parameters.Epochs = 1
+	snapshot.CapacityVerified = false
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "PREFLIGHT.json"), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	preflightHash, preflightBytes, err := hashFile(filepath.Join(runDirectory, "PREFLIGHT.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runBOM := failed.RunBOMs[0]
+	runBOM.Parameters.Epochs = 1
+	runBOM.Preflight = &training.Artifact{Path: "PREFLIGHT.json", SHA256: preflightHash, Bytes: preflightBytes}
+	runBOMHash, err := hashJSON(runBOM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "RUN-BOM.json"), runBOM); err != nil {
+		t.Fatal(err)
+	}
+	run := failed.Runs[0]
+	run.BOMSHA256 = runBOMHash
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "RUN.json"), run); err != nil {
+		t.Fatal(err)
+	}
+	record := failed.Model
+	record.Runs[0].BOMSHA256 = runBOMHash
+	if err := persistModel(failed.Path, &record, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	completed, err := builder.Train(context.Background(), "capacity", prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || len(completed.Runs) != 1 || completed.Runs[0].State != RunComplete || len(completed.Runs[0].Attempts) != 2 {
+		t.Fatalf("capacity recovery = attempts %d, runs %+v", attempts, completed.Runs)
+	}
+	correction := completed.Runs[0].Attempts[1]
+	if correction.ResumeStep != 1 || correction.Correction != "fixed-token-capacity-v1" || correction.EffectiveParameters == nil || correction.EffectiveParameters.Epochs <= 1 {
+		t.Fatalf("capacity correction = %+v", correction)
+	}
+	if completed.RunBOMs[0].Parameters.Epochs != 1 {
+		t.Fatalf("immutable legacy run BOM was changed: %+v", completed.RunBOMs[0].Parameters)
+	}
+}
+
 func TestTrainDerivesAndPersistsEpochSteps(t *testing.T) {
 	root := t.TempDir()
 	builder := Builder{Root: root, Resolver: training.FakeResolver()}
@@ -917,6 +1118,50 @@ func TestTrainDerivesAndPersistsEpochSteps(t *testing.T) {
 	}
 	if len(result.RunBOMs) != 1 || result.RunBOMs[0].Parameters.Steps <= 0 || result.RunBOMs[0].Parameters.Epochs != 2 {
 		t.Fatalf("epoch-derived run BOM = %+v", result.RunBOMs)
+	}
+}
+
+func TestTrainReportsTokenBudgetCapacityProgress(t *testing.T) {
+	root := t.TempDir()
+	var events []Progress
+	builder := Builder{Root: root, Resolver: training.FakeResolver(), Progress: func(event Progress) { events = append(events, event) }}
+	if _, err := builder.Initialize("token-model", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	stage := testStage("pretrain")
+	stage.Parameters.Steps = 0
+	stage.Parameters.Tokens = 1024
+	if _, err := builder.Train(context.Background(), "token-model", preparedFixture(t, stage)); err != nil {
+		t.Fatal(err)
+	}
+	var filtering, packing, calculating, started, completed bool
+	for _, event := range events {
+		filtering = filtering || strings.Contains(event.Message, "1/3 applying corpus filters and excluding held-out records")
+		packing = packing || strings.Contains(event.Message, "2/3 tokenizing and packing records into fixed-length sequences")
+		calculating = calculating || strings.Contains(event.Message, "3/3 calculating the minimum corpus passes")
+		started = started || event.Bar != nil && event.Bar.Current == 0 && event.Bar.Total > 0
+		completed = completed || event.Bar != nil && event.Bar.Complete && event.Bar.Current == event.Bar.Total
+	}
+	if !filtering || !packing || !calculating || !started || !completed {
+		t.Fatalf("capacity progress events = %+v", events)
+	}
+}
+
+func TestRecordSelectionSummaryProgress(t *testing.T) {
+	var messages []string
+	builder := Builder{Progress: func(event Progress) { messages = append(messages, event.Message) }}
+	builder.reportRecordSelection("pretrain", training.RecordSelectionSummary{
+		InputRecords: 10, IncludedRecords: 7, HeldOutRecords: 1, SkippedRecords: 3,
+		IncludedLicenses: map[string]int64{"CC-BY-4.0": 2, "Apache-2.0": 5},
+		SkippedLicenses:  map[string]int64{"CC-BY-NC-4.0": 3},
+	})
+	want := []string{
+		"data selection: 10 input, 7 included (6 available for training, 1 held out), 3 skipped",
+		"included licenses: Apache-2.0=5, CC-BY-4.0=2",
+		"skipped licenses: CC-BY-NC-4.0=3",
+	}
+	if !reflect.DeepEqual(messages, want) {
+		t.Fatalf("selection summary messages = %v", messages)
 	}
 }
 
@@ -1222,6 +1467,68 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 	}
 }
 
+func TestComposeRetainsDurableTransactionAfterCheckpointBackedFailure(t *testing.T) {
+	root := t.TempDir()
+	compose := validCompose()
+	stage := preparedFixture(t, compose.Stages[0])
+	attempts := 0
+	backend := backendFunc(func(_ context.Context, request training.Request) (training.Observation, error) {
+		attempts++
+		if attempts == 1 {
+			path := filepath.Join(request.ArtifactDirectory, "checkpoints", "step-00000001", "state.json")
+			data := []byte("{\"kind\":\"waldo-test-checkpoint\",\"schema\":1,\"step\":1}\n")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return training.Observation{}, err
+			}
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				return training.Observation{}, err
+			}
+			digest := sha256.Sum256(data)
+			checkpoint := training.Checkpoint{Step: 1, Tokens: 64, Artifacts: []training.Artifact{{Path: "artifacts/checkpoints/step-00000001/state.json", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}}}
+			request.Report(training.Event{Kind: "checkpoint", Message: "test checkpoint", Step: 1, Tokens: 64, Checkpoint: &checkpoint})
+			return training.Observation{}, errors.New("synthetic worker failure after checkpoint")
+		}
+		if request.Resume == nil || request.Resume.Step != 1 {
+			return training.Observation{}, fmt.Errorf("missing checkpoint resume: %+v", request.Resume)
+		}
+		data := []byte("resumed compose weights")
+		path := filepath.Join(request.ArtifactDirectory, "model.safetensors")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return training.Observation{}, err
+		}
+		digest := sha256.Sum256(data)
+		loss := 0.5
+		return training.Observation{
+			Steps: 2, ConsumedTokens: 128, FinalLoss: &loss,
+			Evaluations: []training.Evaluation{{Step: 2, Tokens: 128, Metrics: map[string]float64{"heldout_loss": 0.75}}},
+			Artifacts:   []training.Artifact{{Path: "artifacts/model.safetensors", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}},
+		}, nil
+	})
+	builder := Builder{Root: root, ComposeName: "conversation.yaml", NewID: func() (string, error) { return "compose0001", nil }, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backend), nil
+	})}
+	if _, err := builder.Compose(context.Background(), "conversation", compose, []PreparedStage{stage}); err == nil || !strings.Contains(err.Error(), "synthetic worker failure") {
+		t.Fatalf("first Compose error = %v", err)
+	}
+	if pending, err := HasPendingCompose(root, "conversation"); err != nil || !pending {
+		t.Fatalf("checkpoint-backed failure did not retain transaction: pending=%v err=%v", pending, err)
+	}
+	interrupted, err := Inspect(root, "conversation")
+	if err != nil || interrupted.Runs[0].State != RunInterrupted || interrupted.Runs[0].Attempts[0].State != RunFailed {
+		t.Fatalf("checkpoint-backed compose state = %+v, err=%v", interrupted.Runs, err)
+	}
+	completed, err := builder.Compose(context.Background(), "conversation", compose, []PreparedStage{stage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || len(completed.Runs) != 1 || completed.Runs[0].State != RunComplete || len(completed.Runs[0].Attempts) != 2 {
+		t.Fatalf("resumed compose: attempts=%d runs=%+v", attempts, completed.Runs)
+	}
+	if pending, err := HasPendingCompose(root, "conversation"); err != nil || pending {
+		t.Fatalf("completed compose retained transaction: pending=%v err=%v", pending, err)
+	}
+}
+
 func TestComposeRecoversRunningRunAfterTransactionPersistenceFailure(t *testing.T) {
 	root := t.TempDir()
 	compose := validCompose()
@@ -1323,6 +1630,68 @@ func TestComposeResumesWhenAppendingToExistingModel(t *testing.T) {
 	}
 	if attempts != 2 || ids != 2 || len(completed.Runs) != 2 || completed.Runs[0].State != RunComplete || completed.Runs[1].State != RunComplete || len(completed.Runs[1].Attempts) != 2 {
 		t.Fatalf("completed append: attempts %d ids %d runs %+v", attempts, ids, completed.Runs)
+	}
+}
+
+func TestPendingComposeMatchesOriginalRequestBeforeCompletedCorporaAreSkipped(t *testing.T) {
+	root := t.TempDir()
+	first := validCompose()
+	first.Stages[0].Corpora = NewCorpusSelections([]string{"corpus-a"})
+	firstStage := preparedFixture(t, first.Stages[0])
+	firstStage.BOM.Paths = []string{"corpus-a"}
+	ids := 0
+	builder := Builder{Root: root, NewID: func() (string, error) {
+		ids++
+		return fmt.Sprintf("resume%04d", ids), nil
+	}, Resolver: training.FakeResolver()}
+	if _, err := builder.Compose(context.Background(), "conversation", first, []PreparedStage{firstStage}); err != nil {
+		t.Fatal(err)
+	}
+
+	requested := first
+	requested.Stages = []Stage{first.Stages[0], testStage("midtrain"), testStage("post-train")}
+	requested.Stages[1].Corpora = NewCorpusSelections([]string{"corpus-b"})
+	requested.Stages[2].Corpora = NewCorpusSelections([]string{"corpus-c"})
+	inspection, err := Inspect(root, "conversation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	filtered, skipped := SkipCompletedCorpora(requested, inspection)
+	if len(filtered.Stages) != 2 || len(skipped) != 1 || skipped[0].Path != "corpus-a" {
+		t.Fatalf("filtered compose = %+v, skipped = %+v", filtered.Stages, skipped)
+	}
+	prepared := make([]PreparedStage, 0, len(filtered.Stages))
+	for _, stage := range filtered.Stages {
+		item := preparedFixture(t, stage)
+		item.BOM.Paths = CorpusPaths(stage.Corpora)
+		prepared = append(prepared, item)
+	}
+	builder.Resolver = training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backendFunc(func(context.Context, training.Request) (training.Observation, error) {
+			return training.Observation{}, context.Canceled
+		})), nil
+	})
+	if _, err := builder.Compose(context.Background(), "conversation", filtered, prepared); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted append = %v", err)
+	}
+	if err := builder.CheckComposeTarget("conversation", requested); err != nil {
+		t.Fatalf("original compose request did not match its filtered pending transaction: %v", err)
+	}
+	normalized, normalizedSkipped, err := NormalizePendingComposeRequest(root, "conversation", requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(normalized, filtered) || !reflect.DeepEqual(normalizedSkipped, skipped) {
+		t.Fatalf("normalized pending compose = %+v, skipped = %+v", normalized.Stages, normalizedSkipped)
+	}
+	if _, err := builder.Compose(context.Background(), "conversation", normalized, prepared); !errors.Is(err, context.Canceled) {
+		t.Fatalf("normalized pending compose did not reach resumed training: %v", err)
+	}
+	different := requested
+	different.Stages = append([]Stage(nil), requested.Stages...)
+	different.Stages[2].Parameters.LearningRate *= 2
+	if err := builder.CheckComposeTarget("conversation", different); err == nil || !strings.Contains(err.Error(), "different inputs") {
+		t.Fatalf("changed original compose matched pending transaction: %v", err)
 	}
 }
 

@@ -56,10 +56,11 @@ discovers the visible GPU count and topology independently on every node.
 ## What WALDO installs
 
 Secondary hosts do not need WALDO installed. Rank 0 copies the exact running
-WALDO binary to a SHA-256-addressed directory under `/tmp/waldo-launch/` on
-each secondary, verifies it, and uses it for that launch. A later launch of the
-same binary safely reuses the same identity. Launcher scratch is removed after
-the worker exits.
+WALDO binary to a SHA-256-addressed, session-scoped directory beneath WALDO's
+configured scratch root on each secondary, verifies it, and uses it for that
+launch. The binary, worker scratch, and resume staging are removed when the
+session finishes or aborts. Configure the same absolute scratch path on storage
+with enough capacity on every node; launcher state does not use `/tmp`.
 
 WALDO does not install or modify GPU drivers, CUDA, NCCL, Python, PyTorch, or
 TorchTitan. Those machine-level runtimes must be installed before training.
@@ -279,6 +280,11 @@ a host, network, or launcher failure that occurs during a long earlier stage
 without waiting for TorchTitan's rendezvous timeout. The error names the host
 that did not acknowledge.
 
+Host capability checks happen before compose resolution, but WALDO does not
+start secondary training workers until it publishes the first runnable stage.
+If every selected corpus was already completed, the command reports the model
+unchanged, launches no training workers, and exits successfully on every host.
+
 ## Failure behavior
 
 This implementation is deliberately non-elastic. A secondary failure cancels
@@ -287,8 +293,16 @@ rank 0; a rank-0 failure terminates the remote workers. Repeating the exact
 newest verified checkpoint. Before launching GPUs, rank 0 verifies the
 checkpoint and stages its model, optimizer, RNG, and consumption state at the
 same path on every host. The resumed workers validate the saved world size and
-parallelism before restoring it. WALDO removes this temporary staging copy when
-the launcher session ends; the durable checkpoint remains under `model.root`.
+parallelism before restoring it. Each node's deterministic prepared-data stream
+starts at the checkpoint boundary, so committed optimizer steps are not read or
+trained again. WALDO removes this temporary staging copy when the launcher
+session ends; the durable checkpoint remains under `model.root`.
+
+A backend or bookkeeping failure after a complete checkpoint is treated as an
+interrupted attempt for recovery purposes. The attempt and its error remain in
+the run history, while repeating the exact command resumes from the checkpoint.
+A failure before the first complete checkpoint has no recoverable state and
+must start a new run.
 
 Checkpoint staging uses `lookaside.scratch`. Configure it on a filesystem with
 enough free space for one checkpoint, especially when `/tmp` is small:

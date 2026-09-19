@@ -12,11 +12,13 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/training"
 )
@@ -203,7 +205,7 @@ func TestRunSecondaryStreamPlansNeedsNoCorpusData(t *testing.T) {
 	}
 	cluster := training.Cluster{Nodes: 2, NodeRank: 1, Rendezvous: "train-0:29500", RendezvousID: "test"}
 	var stdout bytes.Buffer
-	if err := runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), &stream, nil, runner, &stdout, io.Discard); err != nil {
+	if err := runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), nil, &stream, nil, runner, &stdout, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !called {
@@ -215,6 +217,47 @@ func TestRunSecondaryStreamPlansNeedsNoCorpusData(t *testing.T) {
 	}
 	if ready.Kind != hostfileStageReadyKind || ready.Schema != 1 || ready.RunID != plan.RunID || ready.Stage != plan.Stage || ready.StageOrdinal != plan.StageOrdinal || ready.StageCount != plan.StageCount {
 		t.Fatalf("secondary readiness = %+v", ready)
+	}
+}
+
+func TestRunSecondaryStreamPlansAcceptsNoWork(t *testing.T) {
+	runner := func(context.Context, training.Cluster, training.Request) error {
+		t.Fatal("secondary runner was called for an empty launcher plan stream")
+		return nil
+	}
+	cluster := training.Cluster{Nodes: 2, NodeRank: 1, Rendezvous: "train-0:29500", RendezvousID: "test"}
+	var stdout bytes.Buffer
+	if err := runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), nil, strings.NewReader(""), nil, runner, &stdout, io.Discard); err != nil {
+		t.Fatalf("empty launcher plan stream: %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("empty launcher plan stream emitted control output %q", stdout.String())
+	}
+}
+
+func TestRunSecondaryStreamPlansRejectsTruncatedStages(t *testing.T) {
+	parameters, err := training.ResolveParameters(training.Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := model.MultiNodePlan{
+		Kind: model.MultiNodePlanKind, Schema: model.MultiNodePlanSchema,
+		RunID: "run-1", Stage: "pretrain", StageOrdinal: 1, StageCount: 2,
+		Nodes: 2, Objective: "causal-language-modeling",
+		ArchitectureSHA256: strings.Repeat("b", 64),
+		Architecture:       json.RawMessage(`{"family":"decoder-transformer","vocabulary_size":259,"tokenizer":{"name":"byte","revision":"builtin-byte-schema-1"}}`),
+		Parameters:         parameters,
+		EvaluationSet:      &training.EvaluationSet{Selection: "lowest-sha256-v1", SHA256: strings.Repeat("a", 64)},
+	}
+	var stream bytes.Buffer
+	if err := json.NewEncoder(&stream).Encode(plan); err != nil {
+		t.Fatal(err)
+	}
+	runner := func(context.Context, training.Cluster, training.Request) error { return nil }
+	cluster := training.Cluster{Nodes: 2, NodeRank: 1, Rendezvous: "train-0:29500", RendezvousID: "test"}
+	err = runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), nil, &stream, nil, runner, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "launcher plan stream ended before the final stage") {
+		t.Fatalf("truncated launcher plan error = %v", err)
 	}
 }
 
@@ -243,12 +286,44 @@ func TestRunSecondaryStreamPlansDoesNotAcknowledgeFailedReadiness(t *testing.T) 
 	}
 	var stdout bytes.Buffer
 	cluster := training.Cluster{Nodes: 2, NodeRank: 1, Rendezvous: "train-0:29500", RendezvousID: "test"}
-	err = runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), &stream, prepare, runner, &stdout, io.Discard)
+	err = runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), nil, &stream, prepare, runner, &stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "stage 1/2 secondary readiness") || !strings.Contains(err.Error(), "rendezvous unreachable") {
 		t.Fatalf("readiness error = %v", err)
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("failed readiness emitted acknowledgement %q", stdout.String())
+	}
+}
+
+func TestRunSecondaryStreamPlansMaterializesNodeLocalCorpus(t *testing.T) {
+	bom := seedMultiNodeCorpus(t)
+	plan := multiNodePlanForTest(t, bom, `{"family":"decoder-transformer","vocabulary_size":259,"tokenizer":{"name":"byte","revision":"builtin-byte-schema-1"}}`)
+	plan.Parallelism = training.Parallelism{WorldSize: 2, GPUsPerNode: 1, DataPlane: training.DataPlaneNodeLocal}
+	var stream bytes.Buffer
+	if err := json.NewEncoder(&stream).Encode(plan); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := lookaside.NewCache(t.TempDir(), nil, lookaside.WithPersistentStorage(t.TempDir(), 1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster := training.Cluster{Nodes: 2, NodeRank: 1, WorldSize: 2, Rendezvous: "train-0:29500", RendezvousID: "test"}
+	called := false
+	runner := func(_ context.Context, _ training.Cluster, request training.Request) error {
+		called = true
+		if request.Records == nil || request.EvaluationRecords == nil || len(request.Inputs) != 1 || len(request.BOM.Shards) != 1 {
+			t.Fatalf("node-local request omitted corpus data: %+v", request)
+		}
+		if request.DataNodeRank != 1 || request.PreparedCacheDirectory != filepath.Join(cache.Scratch(), "prepared") || request.PreparedCacheMaxBytes != cache.MaxBytes() {
+			t.Fatalf("node-local cache request = %+v", request)
+		}
+		return nil
+	}
+	if err := runSecondaryStreamPlansWithRunner(Context{Execution: context.Background()}, cluster, t.TempDir(), cache, &stream, nil, runner, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("secondary runner was not called")
 	}
 }
 
@@ -293,13 +368,25 @@ esac
 	}
 	t.Cleanup(func() { listenHostfileRendezvous = previousListener })
 	cluster := training.Cluster{Nodes: 2, Rendezvous: "127.0.0.1:0", RendezvousID: "session-test"}
-	var output bytes.Buffer
-	session, err := startHostfileSession(context.Background(), trainingHostfile{Hosts: []string{"train-0", "train-1"}}, cluster, t.TempDir(), &output)
+	scratch := t.TempDir()
+	cacheRoot := t.TempDir()
+	cache, err := lookaside.NewCache(cacheRoot, nil, lookaside.WithPersistentStorage(scratch, 1<<20))
 	if err != nil {
 		t.Fatal(err)
 	}
+	var output bytes.Buffer
+	session, err := startHostfileSession(context.Background(), trainingHostfile{Hosts: []string{"train-0", "train-1"}}, cluster, cache, &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.workersStarted || len(session.workers) != 0 {
+		t.Fatalf("training workers started before the first stage plan: %+v", session.workers)
+	}
 	if session.cluster.WorldSize != 2 {
 		t.Fatalf("discovered world size = %d, want 2", session.cluster.WorldSize)
+	}
+	if !strings.HasPrefix(session.remoteRoot, scratch+string(os.PathSeparator)) {
+		t.Fatalf("remote launch root = %q, want beneath configured scratch %q", session.remoteRoot, scratch)
 	}
 	evaluation := training.EvaluationSet{Selection: "lowest-sha256-v1", SHA256: strings.Repeat("a", 64)}
 	if err := session.publish(model.MultiNodePlan{
@@ -308,6 +395,9 @@ esac
 		Nodes: 2, EvaluationSet: &evaluation,
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if !session.workersStarted || len(session.workers) != 1 {
+		t.Fatalf("first stage plan did not start one secondary worker: %+v", session.workers)
 	}
 	if err := session.publish(model.MultiNodePlan{
 		Kind: model.MultiNodePlanKind, Schema: model.MultiNodePlanSchema,
@@ -319,6 +409,9 @@ esac
 	if err := session.finish(nil); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Stat(session.remoteRoot); !os.IsNotExist(err) {
+		t.Fatalf("launch staging remains after finish: %v", err)
+	}
 	if !strings.Contains(output.String(), "[train-1] worker accepted launcher stage 1") || !strings.Contains(output.String(), "[train-1] worker accepted launcher stage 2") {
 		t.Fatalf("worker output = %q", output.String())
 	}
@@ -329,6 +422,55 @@ esac
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("preflight output %q omits %q", output.String(), expected)
 		}
+	}
+}
+
+func TestHostfileSessionNoWorkDoesNotStartTrainingWorkers(t *testing.T) {
+	bin := t.TempDir()
+	ssh := filepath.Join(bin, "ssh")
+	marker := filepath.Join(t.TempDir(), "worker-started")
+	script := `#!/bin/sh
+case "$*" in
+  *--check*)
+    printf '%s\n' '{"python":"python3","python_version":"3.12","torch_version":"2.8","torchtitan_version":"0.2","accelerators":[{"manufacturer":"NVIDIA","model":"H200","memory_bytes":150323855360}]}'
+    ;;
+  *--plan-stdin*)
+    : > '` + marker + `'
+    cat >/dev/null
+    ;;
+  *) cat >/dev/null ;;
+esac
+`
+	if err := os.WriteFile(ssh, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	capabilities := training.TorchTitanHost{
+		Python: "python3", PythonVersion: "3.12", TorchVersion: "2.8", TorchTitanVersion: "0.2",
+		Accelerators: []training.Accelerator{{Manufacturer: "NVIDIA", Model: "H200", MemoryBytes: 140 << 30}},
+	}
+	previous := inspectHostfileTorchTitan
+	inspectHostfileTorchTitan = func(context.Context) (training.TorchTitanHost, error) { return capabilities, nil }
+	t.Cleanup(func() { inspectHostfileTorchTitan = previous })
+	previousListener := listenHostfileRendezvous
+	listenHostfileRendezvous = func(string) (io.Closer, error) { return io.NopCloser(strings.NewReader("")), nil }
+	t.Cleanup(func() { listenHostfileRendezvous = previousListener })
+	cache, err := lookaside.NewCache(t.TempDir(), nil, lookaside.WithPersistentStorage(t.TempDir(), 1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := startHostfileSession(context.Background(), trainingHostfile{Hosts: []string{"train-0", "train-1"}}, training.Cluster{Nodes: 2, Rendezvous: "127.0.0.1:0", RendezvousID: "no-work"}, cache, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.finish(nil); err != nil {
+		t.Fatal(err)
+	}
+	if session.workersStarted || len(session.workers) != 0 {
+		t.Fatalf("no-work session started training workers: %+v", session.workers)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("remote training worker was invoked for no work: %v", err)
 	}
 }
 
@@ -344,7 +486,7 @@ func TestHostfilePublishRejectsWrongStageAcknowledgement(t *testing.T) {
 		ready: make(chan hostfileStageReady, 1), done: make(chan struct{}),
 	}
 	worker.ready <- hostfileStageReady{Kind: hostfileStageReadyKind, Schema: 1, RunID: "wrong-run", Stage: "post-train", StageOrdinal: 2, StageCount: 3}
-	session := hostfileSession{ctx: context.Background(), cluster: training.Cluster{Rendezvous: "127.0.0.1:0"}, workers: []*hostfileWorker{worker}}
+	session := hostfileSession{ctx: context.Background(), cluster: training.Cluster{Rendezvous: "127.0.0.1:0"}, workers: []*hostfileWorker{worker}, workersStarted: true}
 	err := session.publish(model.MultiNodePlan{RunID: "run-2", Stage: "post-train", StageOrdinal: 2, StageCount: 3})
 	_ = inputWriter.Close()
 	if err == nil || !strings.Contains(err.Error(), "train-1 acknowledged unexpected stage plan") || !strings.Contains(err.Error(), "wrong-run") {
@@ -366,11 +508,51 @@ func TestHostfilePublishTimesOutNamingHostAndStage(t *testing.T) {
 	previous := hostfileStageReadyTimeout
 	hostfileStageReadyTimeout = 10 * time.Millisecond
 	t.Cleanup(func() { hostfileStageReadyTimeout = previous })
-	session := hostfileSession{ctx: context.Background(), cluster: training.Cluster{Rendezvous: "127.0.0.1:0"}, workers: []*hostfileWorker{worker}}
+	session := hostfileSession{ctx: context.Background(), cluster: training.Cluster{Rendezvous: "127.0.0.1:0"}, workers: []*hostfileWorker{worker}, workersStarted: true}
 	err := session.publish(model.MultiNodePlan{RunID: "run-3", StageOrdinal: 3, StageCount: 5})
 	_ = inputWriter.Close()
 	if err == nil || !strings.Contains(err.Error(), "train-2 did not acknowledge stage 3/5") || !strings.Contains(err.Error(), "10ms") {
 		t.Fatalf("readiness timeout error = %v", err)
+	}
+}
+
+func TestHostfileFinishPreservesPrimaryAndSecondaryFailureSemantics(t *testing.T) {
+	primaryFailure := errors.New("primary failed")
+	secondaryFailure := errors.New("secondary failed")
+	for _, test := range []struct {
+		name       string
+		primaryErr error
+		workerErr  error
+		want       string
+	}{
+		{name: "success"},
+		{name: "secondary failure", workerErr: secondaryFailure, want: "secondary training workers failed: train-1: secondary failed"},
+		{name: "primary failure", primaryErr: primaryFailure, want: "primary failed"},
+		{name: "primary failure remains authoritative", primaryErr: primaryFailure, workerErr: secondaryFailure, want: "primary failed"},
+		{name: "secondary failure that canceled primary", primaryErr: context.Canceled, workerErr: secondaryFailure, want: "secondary training workers failed: train-1: secondary failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			done := make(chan struct{})
+			close(done)
+			reader, writer := io.Pipe()
+			defer reader.Close()
+			worker := &hostfileWorker{host: "train-1", stdin: writer, done: done, err: test.workerErr}
+			session := hostfileSession{
+				ctx: context.Background(), cancel: func() {}, output: io.Discard,
+				hostfile: trainingHostfile{Hosts: []string{"train-0", "train-1"}, Wrapper: "/usr/bin/true"},
+				workers:  []*hostfileWorker{worker}, workersStarted: true,
+			}
+			err := session.finish(test.primaryErr)
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("finish error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("finish error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -398,18 +580,25 @@ func TestTrainingRendezvousReachability(t *testing.T) {
 
 func TestHostfileWorkerArgumentsCarryNCCLSettings(t *testing.T) {
 	session := hostfileSession{
-		remoteBinary: "/tmp/waldo-launch/build/waldo",
-		remoteRoot:   "/tmp/waldo-launch/build",
+		remoteBinary:  "/tmp/waldo-launch/build/waldo",
+		remoteRoot:    "/tmp/waldo-launch/build",
+		cacheRoot:     "/home/gmk/.waldo/cache",
+		cacheScratch:  "/home/gmk/.waldo/scratch",
+		cacheMaxBytes: 20 << 30,
+		cacheMirrors:  []string{"https://mirror.example/lookaside/v1"},
 		cluster: training.Cluster{
 			Nodes: 2, Rendezvous: "train-0:29500", RendezvousID: "session-test",
 			Interface: "ib0", HCA: "mlx5_0",
 		},
 	}
 	arguments := strings.Join(session.workerArguments(1, false), " ")
-	for _, expected := range []string{"--nccl-interface ib0", "--nccl-hca mlx5_0"} {
+	for _, expected := range []string{"--nccl-interface ib0", "--nccl-hca mlx5_0", "--cache-root /home/gmk/.waldo/cache", "--cache-scratch /home/gmk/.waldo/scratch", "--cache-max-bytes 21474836480", "--cache-mirror https://mirror.example/lookaside/v1"} {
 		if !strings.Contains(arguments, expected) {
 			t.Fatalf("worker arguments %q omit %q", arguments, expected)
 		}
+	}
+	if !strings.Contains(arguments, "--scratch /tmp/waldo-launch/build/runs/session-test/node-1") {
+		t.Fatalf("worker arguments %q omit session-scoped scratch", arguments)
 	}
 }
 
@@ -418,6 +607,46 @@ func TestHostfileRemoteInvocationSelectsRankZeroPythonDirectory(t *testing.T) {
 	invocation := session.remoteInvocation([]string{"/tmp/waldo", "model", "train-worker"})
 	if !strings.HasPrefix(invocation, "PATH='/opt/waldo-python/bin:/usr/local/bin:/usr/bin:/bin' ") {
 		t.Fatalf("remote invocation = %q", invocation)
+	}
+}
+
+func TestHostfileRemoteWorkerInvocationPublishesPIDAndForwardsTermination(t *testing.T) {
+	session := hostfileSession{pythonDir: "/opt/waldo-python/bin", remoteRoot: "/tmp/waldo/session"}
+	invocation := session.remoteWorkerInvocation(2, []string{"/tmp/waldo", "model", "train-worker"})
+	for _, expected := range []string{
+		`env PATH='/opt/waldo-python/bin:/usr/local/bin:/usr/bin:/bin' '/tmp/waldo' 'model' 'train-worker' <&0 & child=$!`,
+		`printf '%s\n' "$child" > '/tmp/waldo/session/worker-2.pid'`,
+		`trap 'kill -TERM "$child" 2>/dev/null || true; wait "$child"; exit 143' HUP INT TERM`,
+		`rm -f -- '/tmp/waldo/session/worker-2.pid'`,
+	} {
+		if !strings.Contains(invocation, expected) {
+			t.Fatalf("remote worker invocation %q omits %q", invocation, expected)
+		}
+	}
+}
+
+func TestHostfileRemoteWorkerInvocationPreservesPlanStdin(t *testing.T) {
+	directory := t.TempDir()
+	helper := filepath.Join(directory, "worker")
+	result := filepath.Join(directory, "result")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nIFS= read -r line\nprintf '%s\\n' \"$line\" > \"$1\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	session := hostfileSession{pythonDir: "/usr/bin", remoteRoot: directory}
+	command := exec.Command("sh", "-c", session.remoteWorkerInvocation(1, []string{helper, result}))
+	command.Stdin = strings.NewReader("stage-plan\n")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("remote worker invocation: %v: %s", err, output)
+	}
+	data, err := os.ReadFile(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "stage-plan\n" {
+		t.Fatalf("worker stdin = %q, want stage plan", data)
+	}
+	if _, err := os.Stat(session.workerPIDPath(1)); !os.IsNotExist(err) {
+		t.Fatalf("worker PID file remains after normal exit: %v", err)
 	}
 }
 

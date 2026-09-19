@@ -36,6 +36,20 @@ func TestMLXResolverSelectsFirstUsableRuntime(t *testing.T) {
 	}
 }
 
+func TestMLXWorkerPublishesBestEvaluatedCheckpoint(t *testing.T) {
+	source := string(mlxWorker)
+	for _, expected := range []string{
+		`selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"])`,
+		`self.model.load_weights(selected_path)`,
+		`"selected_checkpoint": selection`,
+		`selected checkpoint step {selected_step}`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("MLX worker omits best-checkpoint publication behavior %q", expected)
+		}
+	}
+}
+
 func TestMLXResolverFailsClosed(t *testing.T) {
 	valid := json.RawMessage(`{"family":"decoder-transformer","vocabulary_size":259,"tokenizer":{"name":"byte","revision":"builtin-byte-schema-1"}}`)
 	if _, err := (MLXResolver{OS: "linux", Arch: "amd64"}).Resolve(context.Background(), ResolveRequest{Architecture: valid}); err == nil || !strings.Contains(err.Error(), "Apple Silicon") {

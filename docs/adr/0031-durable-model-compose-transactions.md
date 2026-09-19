@@ -11,11 +11,12 @@ model remains at `<model.root>/<name>` while transaction metadata lives beneath
 
 Each invocation takes a non-blocking per-model lock. Completed stages are
 verified and skipped. An interrupted stage resumes the same run from its newest
-verified compatible checkpoint. Failed stages are terminal and are not silently
-replayed.
+verified compatible checkpoint. A failed attempt with a complete verified
+checkpoint is retained as interrupted and resumes from that checkpoint; a
+failed attempt without one is terminal and is not silently replayed.
 
 The transaction is removed after every stage completes and the model BOM
-commits. Failed stages normally remain terminal. A storage failure can prevent
+commits. Failures without a checkpoint remain terminal. A storage failure can prevent
 both the terminal run state and transaction from being persisted atomically.
 For the narrow resulting case—a model still marked `running` with no retained
 transaction—WALDO checks the non-blocking per-model lock. If no process owns

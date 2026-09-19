@@ -109,6 +109,7 @@ stages:
       profile: causal-pretrain-weighted
       tokens: 1966080000
       batch_size: 32
+      gradient_accumulation_steps: 4
       sequence_length: 1024
       learning_rate: 0.0002
       seed: 42
@@ -125,6 +126,21 @@ stages:
 
 Unknown fields and additional YAML documents are rejected. JSON uses the same
 field names and structure.
+
+`batch_size` is the global number of packed sequences contributing to one
+optimizer step. Optional `gradient_accumulation_steps` defaults to 1 and must
+divide `batch_size` exactly. Each physical global micro-batch is
+`batch_size / gradient_accumulation_steps`; the selected distributed world
+size must divide that value evenly. Schedulers, checkpoints, `steps`, and token
+budgets count optimizer steps, never micro-batches.
+
+For shared-plan multi-node training, WALDO mirrors and verifies corpus objects
+once per node, prepares deterministic sequence partitions in the node
+coordinator, and distributes them only to local ranks. Do not configure a
+separate corpus mirror per GPU. NFS is suitable for the small rendezvous plan,
+but it is not the default training-data path. Launcher-stream compatibility
+runs retain global-rank-zero broadcast and record that fallback in the run
+BOM.
 
 ## Top-level fields
 
@@ -284,6 +300,8 @@ compatibility boundary.
 | `key_value_heads` | yes | positive integer | Key/value-head count. Must divide `attention_heads`. |
 | `dropout` | no | `0 <= value < 1`; default `0` | Residual dropout applied during training and disabled during evaluation and inference. |
 | `tie_embeddings` | no | boolean; default `false` | Reuses input embeddings as the output projection when true. False adds a separate output matrix. Reference composes set it explicitly. |
+| `qk_normalization` | no | boolean; default `false` | RMS-normalizes rotary query and key vectors before attention. |
+| `initialization` | no | `normal` or `depth-scaled`; default `normal` | Weight initialization recipe. `depth-scaled` reduces residual output projection variance by model depth. |
 | `parameter_dtype` | yes | `float32`, `float16`, or `bfloat16` | Portable parameter and mixed-precision artifact declaration. Backend support is checked before training. |
 | `tokenizer.name` | yes | supported name | Selects WALDO's offline tokenizer implementation. |
 | `tokenizer.revision` | yes | immutable revision | Pins exact tokenizer behavior. |
@@ -435,6 +453,11 @@ silently train on a different subset. The BOM's manifest totals remain the
 indexed reference totals; run and evaluation evidence describe actual training
 consumption. If the combined filters eliminate every row from one selected
 corpus, preflight warns that the corpus will contribute zero training tokens.
+
+After each successful stage, WALDO prints the input, included, held-out, and
+skipped record counts. When filtering required a row scan, it also prints
+included and skipped counts grouped by effective license. The same selection
+accounting is preserved in the stage preflight artifact.
 The corpus remains in the selection BOM for auditability, while observed
 consumption lists only corpora that supplied positive token targets.
 
@@ -448,15 +471,24 @@ must use one representation or the other, never both.
 | --- | --- | --- | --- |
 | `profile` | no | `causal-pretrain-shuffled` | Selects versioned record ordering, corpus exposure, and held-out selection. |
 | `parallelism` | no | `auto` | TorchTitan placement: `auto`, `data-parallel`, `hybrid-sharded-data-parallel`, or `fully-sharded-data-parallel`. The resolved placement is pinned in the run BOM. |
-| `tokens` | one training budget | positive integer | Fixed pretraining target budget. WALDO rounds it up to a complete optimizer step and persists the derived step count. Cannot be combined with `epochs` or `steps`. |
+| `tokens` | one training budget | positive integer | Fixed training target budget. WALDO rounds it up to a complete optimizer step and preflights the minimum deterministic corpus-pass count needed to supply it. Cannot be combined with `epochs` or `steps`. |
 | `epochs` | one training budget | `1..1000000` | Complete deterministic passes over every selected canonical record. When `steps` is omitted, WALDO derives the exact optimizer-step count after filtering and held-out selection. |
 | `steps` | legacy/fixed-step budget | positive integer | Explicit optimizer steps and learning-rate schedule length. Retained for existing composes and exact fixed-step experiments; it may be combined with `epochs` as a repetition limit. |
 | `batch_size` | yes | positive integer | Global number of packed sequences in each optimizer step. Multi-GPU training partitions these sequences across ranks, so the value must be at least and evenly divisible by the aggregate GPU count. |
+| `gradient_accumulation_steps` | no | default `1`; exact divisor of `batch_size` | Splits the logical global batch into physical micro-batches. Each micro-batch must remain divisible by world size. |
+| `compute_precision` | no | `auto`, `float32`, `float16`, or `bfloat16` | Compute autocast precision. `auto` follows `parameter_dtype`. CUDA FP16 uses persisted dynamic loss scaling. |
+| `activation_checkpointing` | no | default `false` | Recomputes transformer layers during backward to reduce activation memory. PyTorch/TorchTitan only. |
+| `compile` | no | default `false` | Compiles the live PyTorch/TorchTitan forward graph. The unwrapped model remains the checkpoint and export source. |
+| `distribution_policy` | no | `distributable` | Selects only records whose effective license is on WALDO's reviewed distributable allowlist. Other records in the same corpus are skipped. Selected sources must carry a pinned version and license evidence; the resulting review and obligations are pinned in the run BOM. |
 | `sequence_length` | yes | positive integer, at most `context_tokens` | Number of predicted token targets per packed sequence. |
-| `learning_rate` | yes | finite positive number | Peak AdamW learning rate. |
+| `learning_rate` | yes | finite positive number | Peak optimizer learning rate. |
+| `optimizer` | no | `adamw` or `muon-adamw`; default `adamw` | Optimizer recipe. Muon applies orthogonalized momentum updates to hidden matrices and AdamW to embeddings, output heads, and vectors; it currently requires PyTorch data-parallel placement. |
+| `schedule` | no | `cosine` or `warmup-stable-warmdown`; default `cosine` | Learning-rate schedule. |
 | `seed` | no | default `0` | Controls deterministic shuffling, evaluation selection, initialization, and training randomness. Reference composes set it explicitly. |
 | `weight_decay` | no | default `0.1`; `0..1` | AdamW weight decay. Explicit zero disables it. |
 | `warmup_steps` | no | `min(100, steps/10)`; `0..steps` | Linear warmup duration. For runs longer than one step, the default is at least one. Explicit zero disables warmup. |
+| `warmdown_steps` | no | half of the run for `warmup-stable-warmdown`, otherwise `0` | Linear warmdown duration. Warmup plus warmdown cannot exceed the run. |
+| `minimum_learning_rate_ratio` | no | `0.1` for cosine, `0` for warmup-stable-warmdown; `0..1` | Final learning rate as a fraction of the peak. |
 | `checkpoint_every` | no | `min(500, steps)`; `0..steps` | Checkpoint interval. Explicit zero disables periodic checkpoints. |
 | `evaluate_every` | no | `min(500, steps)`; `0..steps` | Held-out evaluation interval. Explicit zero disables periodic evaluation. |
 | `shuffle_buffer_records` | no | default `1024`; `1..1000000` | Maximum records retained by deterministic bounded shuffle. |
@@ -479,10 +511,12 @@ derived_steps * batch_size * sequence_length
 Records are continuously packed with an EOS token between records; document
 boundaries do not force padding to a new sequence. Epoch-driven stages scan the
 finite filtered stream and derive their exact steps before creating a run.
-Fixed-token stages derive steps without a full scan and retain a single source
-pass. Legacy stages declaring both fields verify that their epochs contain
-enough packed targets to reach the requested steps. A run fails rather than
-silently shortening its declared budget.
+Fixed-token stages derive steps before scanning, then preflight and persist the
+minimum complete deterministic source-pass count needed to reach that budget.
+Legacy stages declaring both fields verify that their epochs contain enough
+packed targets to reach the requested steps. An impossible run fails during
+preflight rather than after accelerator work begins or by silently shortening
+its declared budget.
 
 Setting any one of `evaluation_fraction`, `evaluation_max_records`, or
 `evaluation_max_bytes` to zero disables the held-out set and resolves all
@@ -490,13 +524,13 @@ three values to zero.
 
 ### Fixed profile behavior
 
-All profiles resolve to AdamW with betas `0.9` and `0.95`, epsilon `1e-8`, and
-a cosine schedule ending at 10% of the peak learning rate. Those values and
-continuous EOS packing are versioned profile facts, not compose fields.
+All profiles default to AdamW with betas `0.9` and `0.95`, epsilon `1e-8`, and
+a cosine schedule ending at 10% of the peak learning rate. A compose may select
+the controlled Muon/AdamW or warmup-stable-warmdown experiments explicitly.
+Continuous EOS packing remains a versioned profile fact.
 
 A schema-1 compose has no fields for arbitrary chat-template expressions,
-optimizer choice, gradient accumulation, activation checkpointing,
-mixture-of-experts routing, or distributed topology. The optional built-in
+mixture-of-experts routing, or physical distributed topology. The optional built-in
 interaction contract controls inference formatting; it does not change the
 causal training objective. Hardware and backend topology remain machine-local
 policy; other training behaviors require a separately versioned portable

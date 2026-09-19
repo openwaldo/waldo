@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r16"
+	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r23"
 	recommendedTorchVersion      = "2.15.0.dev20260905+cu130"
 	recommendedTorchTitanVersion = "0.3.0"
 	recommendedTorchIndex        = "https://download.pytorch.org/whl/nightly/cu130"
@@ -47,6 +47,7 @@ func (backend TorchTitan) Descriptor() Descriptor {
 		Framework: BackendTorchTitan,
 		Capabilities: Capabilities{
 			Objectives: []string{"causal-language-modeling", "assistant-response-modeling"}, CheckpointResume: true, Distributed: true, Safetensors: true,
+			ActivationCheckpointing: true, Compile: true,
 		},
 	}
 }
@@ -74,8 +75,9 @@ func (backend TorchTitan) Run(ctx context.Context, request Request) (Observation
 		nodes = 1
 	}
 	worldSize := nodes * backend.LocalProcs
-	if worldSize > 1 && (request.Parameters.BatchSize < int64(worldSize) || request.Parameters.BatchSize%int64(worldSize) != 0) {
-		return Observation{}, fmt.Errorf("TorchTitan global batch size %d must be at least and divisible by world size %d", request.Parameters.BatchSize, worldSize)
+	request.DataNodeRank = backend.NodeRank
+	if err := ValidateBatchTopology(request.Parameters, worldSize); err != nil {
+		return Observation{}, fmt.Errorf("TorchTitan: %w", err)
 	}
 	if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
 		return Observation{}, fmt.Errorf("create TorchTitan artifact directory: %w", err)
@@ -113,6 +115,9 @@ func (backend TorchTitan) Run(ctx context.Context, request Request) (Observation
 	}
 	command := exec.CommandContext(ctx, backend.Python, backend.launchArguments(workerPath, request)...)
 	command.Env = environment
+	if request.Parallelism.DataPlane == DataPlaneNodeLocal {
+		command.Env = append(command.Env, "WALDO_TORCH_DATA_PLANE="+DataPlaneNodeLocal)
+	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	configureGracefulCancellation(command)
 	if backend.Secondary {
@@ -437,21 +442,35 @@ const torchTitanProbeProgram = `
 import importlib.metadata
 import fcntl
 import json
+import os
 import platform
 import resource
+import shutil
 import subprocess
 import socket
 import struct
+import sysconfig
 from pathlib import Path
 import torch
 import torchtitan
 import torch.testing._internal.distributed.fake_pg
+from triton.runtime import driver as triton_driver
 from torch.distributed._composable.fsdp import fully_shard
 from torch.distributed.checkpoint.state_dict import get_model_state_dict, StateDictOptions
 from torchtitan.distributed import ParallelDims
 
 if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
     raise RuntimeError("TorchTitan requires at least one visible CUDA or ROCm GPU")
+# Torch compile reaches this lazy native-helper build only on the first model
+# batch. Force it during preflight so missing compilers, Python headers, or
+# driver link libraries fail before corpus materialization and GPU launch.
+compiler = os.environ.get("CC") or shutil.which("gcc") or shutil.which("cc")
+if not compiler:
+    raise RuntimeError("Triton native build requires a C compiler; install gcc or set CC")
+python_header = Path(sysconfig.get_path("include")) / "Python.h"
+if not python_header.is_file():
+    raise RuntimeError(f"Triton native build requires {python_header}; install the matching Python development headers")
+triton_driver.active.get_current_target()
 manufacturer = "AMD" if torch.version.hip else "NVIDIA"
 devices = []
 for index in range(torch.cuda.device_count()):
@@ -668,7 +687,7 @@ func torchTitanInstallGuidanceForDistribution(distribution string) string {
 # Then ensure python3 resolves to that interpreter.`
 	lower := strings.ToLower(distribution)
 	if strings.Contains(lower, "rocky") || strings.Contains(lower, "rhel") || strings.Contains(lower, "red hat") || strings.Contains(lower, "alma") || strings.Contains(lower, "centos") || strings.Contains(lower, "fedora") {
-		prerequisite = `sudo dnf install -y python3.11 python3.11-pip
+		prerequisite = `sudo dnf install -y gcc python3.11 python3.11-devel python3.11-pip
 mkdir -p "$HOME/.local/bin"
 ln -sfn /usr/bin/python3.11 "$HOME/.local/bin/python3"
 export PATH="$HOME/.local/bin:$PATH"

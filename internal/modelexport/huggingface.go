@@ -26,6 +26,7 @@ import (
 
 type Options struct {
 	EUBOM        []byte
+	Attribution  []byte
 	Finalize     func(string) error
 	Quantization *Quantization
 	Report       func(string)
@@ -129,6 +130,7 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 		return "", err
 	}
 	files := map[string][]byte{
+		"ATTRIBUTION.md":            options.Attribution,
 		"EU-BOM.json":               options.EUBOM,
 		"generation_config.json":    []byte(huggingFaceGenerationConfig),
 		"special_tokens_map.json":   []byte(huggingFaceSpecialTokens),
@@ -165,7 +167,7 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 		"generation_config.json": "generation-configuration",
 		"tokenizer_config.json":  "tokenizer", "special_tokens_map.json": "tokenizer",
 		"tokenization_openwaldo.py": "tokenizer-code", "architecture.py": "architecture-code",
-		"README.md": "documentation", "EU-BOM.json": "regulatory-disclosure",
+		"README.md": "documentation", "EU-BOM.json": "regulatory-disclosure", "ATTRIBUTION.md": "training-data-attribution",
 	}
 	if interactionTemplate != "" {
 		roles["chat_template.jinja"] = "interaction-template"

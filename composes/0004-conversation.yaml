@@ -1,20 +1,26 @@
-# Conversation level 2: the proven conversation1 recipe extended with a
-# knowledge-first technical curriculum and broader assistant supervision.
+# Conversation level 4: train this compose as model `conversation3`. It is a
+# larger successor to the restored 0003 conversation curriculum, with
+# technical and scientific knowledge as the majority.
+# This is a private research compose pending the corpus-rights reviews listed
+# in docs/COMPOSE-CORPUS-LICENSE-AUDIT.md. Its model artifacts must not be
+# represented or released as distributable.
 kind: waldo-model-compose
 schema: 1
 interaction:
   template: user-assistant-v1
 architecture:
   family: decoder-transformer
-  context_tokens: 2048
+  context_tokens: 4096
   vocabulary_size: 50259
-  hidden_size: 1152
-  intermediate_size: 3072
-  layers: 20
-  attention_heads: 16
-  key_value_heads: 4
-  dropout: 0.1
-  tie_embeddings: true
+  hidden_size: 1536
+  intermediate_size: 4096
+  layers: 24
+  attention_heads: 24
+  key_value_heads: 8
+  dropout: 0.0
+  tie_embeddings: false
+  qk_normalization: true
+  initialization: depth-scaled
   parameter_dtype: bfloat16
   tokenizer:
     name: tiktoken/r50k_base
@@ -30,31 +36,42 @@ stages:
         boilerplate_content: true
     corpora:
       - path: core/books/gutenberg
-        weight: 3
+        weight: 1
       - path: core/common-pile/wikimedia
-        weight: 4
+        weight: 3
       - path: government/regulations
         weight: 1
       - path: science/plos
-        weight: 2
+        weight: 3
+      - path: core/synthetic/cosmopedia-v2
+        weight: 5
+      - path: core/common-pile/stackexchange
+        weight: 5
     parameters:
       profile: causal-pretrain-weighted
-      tokens: 11999969280
+      parallelism: auto
+      tokens: 5000000000
       batch_size: 16
-      sequence_length: 2048
-      learning_rate: 0.00013
+      gradient_accumulation_steps: 4
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
+      sequence_length: 4096
+      learning_rate: 0.00011
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 42
       weight_decay: 0.15
-      warmup_steps: 3662
+      warmup_steps: 2747
       shuffle_buffer_records: 65536
       shuffle_buffer_bytes: 2147483648
-      checkpoint_every: 18310
-      evaluate_every: 18310
+      checkpoint_every: 13733
+      evaluate_every: 13733
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
-  # Teach durable technical concepts before conversational adaptation. Large,
-  # explanatory corpora lead the mixture; code and development discussions
-  # provide concrete systems vocabulary without dominating it.
+
+  # Follow the knowledge-heavy foundation with concrete systems code,
+  # documentation, and a bounded amount of development discussion.
   - name: technical-knowledge-midtrain
     type: pre-training
     objective: causal-language-modeling
@@ -67,28 +84,33 @@ stages:
         repetitive_content: true
         boilerplate_content: true
     corpora:
-      - {path: core/synthetic/cosmopedia-v2, weight: 8}
-      - {path: core/common-pile/stackexchange, weight: 8}
-      - {path: code/copyleft/linux-core, weight: 3}
+      - {path: code/copyleft/linux-core, weight: 4}
       - {path: code/permissive/linux-core, weight: 2}
-      - {path: community/linux-kernel-mailing-list, weight: 2}
+      - {path: community/linux-kernel-mailing-list, weight: 3}
       - {path: code/stack-v2-html, weight: 1}
       - {path: code/cloud-native-core, weight: 1}
       - {path: community/git-mailing-list, weight: 1}
       - {path: community/python-mailing-lists, weight: 1}
     parameters:
       profile: causal-pretrain-weighted
-      tokens: 3000000000
+      parallelism: auto
+      tokens: 1000000000
       batch_size: 8
-      sequence_length: 2048
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
+      sequence_length: 4096
       learning_rate: 0.00002
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 45
       weight_decay: 0.08
-      warmup_steps: 1831
+      warmup_steps: 916
       shuffle_buffer_records: 65536
       shuffle_buffer_bytes: 1073741824
-      checkpoint_every: 9155
-      evaluate_every: 9155
+      checkpoint_every: 4578
+      evaluate_every: 4578
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
 
@@ -114,10 +136,17 @@ stages:
         weight: 2
     parameters:
       profile: causal-pretrain-weighted
+      parallelism: auto
       epochs: 3
       batch_size: 8
-      sequence_length: 2048
-      learning_rate: 0.00004
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
+      sequence_length: 4096
+      learning_rate: 0.00003
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 43
       weight_decay: 0.08
       warmup_steps: 305
@@ -148,21 +177,28 @@ stages:
         weight: 2
     parameters:
       profile: causal-pretrain-weighted
-      tokens: 400000000
+      parallelism: auto
+      tokens: 100000000
       batch_size: 8
-      sequence_length: 2048
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
+      sequence_length: 4096
       learning_rate: 0.00001
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 46
       weight_decay: 0.04
-      warmup_steps: 1221
+      warmup_steps: 122
       shuffle_buffer_records: 32768
       shuffle_buffer_bytes: 536870912
-      checkpoint_every: 2441
-      evaluate_every: 2441
+      checkpoint_every: 610
+      evaluate_every: 610
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
 
-  # Finish with the same bounded behavior anchor that made conversation1
+  # Finish with the same bounded behavior anchor used by 0002 and 0003
   # useful. Narrow alignment belongs after broad and technical learning.
   - name: post-train
     type: fine-tuning
@@ -180,18 +216,27 @@ stages:
         weight: 8
       - path: post-train/sft/helpsteer2
         weight: 3
+      - path: post-train/sft/waldo-project-v1
+        weight: 1
     parameters:
       profile: causal-pretrain-weighted
+      parallelism: auto
       epochs: 3
       batch_size: 8
-      sequence_length: 2048
-      learning_rate: 0.000015
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
+      sequence_length: 4096
+      learning_rate: 0.000008
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 44
       weight_decay: 0.05
-      warmup_steps: 96
+      warmup_steps: 48
       shuffle_buffer_records: 16384
       shuffle_buffer_bytes: 268435456
-      checkpoint_every: 160
-      evaluate_every: 160
+      checkpoint_every: 80
+      evaluate_every: 80
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432

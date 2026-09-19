@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const PyTorchRevision = "builtin-pytorch-worker-schema-1-r7"
+const PyTorchRevision = "builtin-pytorch-worker-schema-1-r12"
 
 //go:embed workers/pytorch.py
 var pyTorchWorker []byte
@@ -34,6 +34,7 @@ func (backend PyTorch) Descriptor() Descriptor {
 		Framework: BackendPyTorch,
 		Capabilities: Capabilities{
 			Objectives: []string{"causal-language-modeling", "assistant-response-modeling"}, CheckpointResume: true, Safetensors: true,
+			ActivationCheckpointing: true, Compile: true,
 		},
 	}
 }
