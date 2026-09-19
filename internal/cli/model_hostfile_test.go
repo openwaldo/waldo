@@ -474,6 +474,39 @@ esac
 	}
 }
 
+func TestHostfileWorkerMaterializeProgressReusesTerminalLine(t *testing.T) {
+	var output bytes.Buffer
+	session := hostfileSession{output: &output, outputTerminal: true}
+	session.copyWorkerStdout(&hostfileWorker{host: "train-1", ready: make(chan hostfileStageReady, 1)}, strings.NewReader(
+		"  materialize [===================     ]  82%  107/131  28.0 GiB/33.8 GiB  verified one\n"+
+			"  materialize [====================    ]  83%  108/131  28.3 GiB/33.8 GiB  verified two\n"+
+			"  materialize [========================] 100%  131/131  33.8 GiB/33.8 GiB  verified final\n"+
+			"joining rendezvous as node 1 of 2\n"))
+
+	got := output.String()
+	if strings.Count(got, "\r\x1b[K[train-1]   materialize") != 3 {
+		t.Fatalf("terminal materialize output = %q", got)
+	}
+	if strings.Contains(got, "verified one\n") || strings.Contains(got, "verified two\n") {
+		t.Fatalf("intermediate terminal updates created lines: %q", got)
+	}
+	if !strings.Contains(got, "verified final\n[train-1] joining rendezvous") {
+		t.Fatalf("completed terminal update was not finalized: %q", got)
+	}
+}
+
+func TestHostfileWorkerMaterializeProgressRemainsLineOrientedInLogs(t *testing.T) {
+	var output bytes.Buffer
+	session := hostfileSession{output: &output}
+	session.copyWorkerOutput("train-1", strings.NewReader(
+		"  materialize [===================     ]  82%  107/131  28.0 GiB/33.8 GiB  verified one\n"+
+			"  materialize [========================] 100%  131/131  33.8 GiB/33.8 GiB  verified final\n"))
+
+	if strings.Count(output.String(), "\n") != 2 || strings.Contains(output.String(), "\r") {
+		t.Fatalf("non-terminal materialize output = %q", output.String())
+	}
+}
+
 func TestHostfilePublishRejectsWrongStageAcknowledgement(t *testing.T) {
 	previousListener := listenHostfileRendezvous
 	listenHostfileRendezvous = func(string) (io.Closer, error) { return io.NopCloser(strings.NewReader("")), nil }

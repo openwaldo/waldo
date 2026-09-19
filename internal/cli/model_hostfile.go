@@ -28,6 +28,7 @@ import (
 	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/training"
+	"golang.org/x/term"
 )
 
 func runModelTrainHostfile(commandContext Context, args []string, path string, stdout, stderr io.Writer) error {
@@ -293,26 +294,28 @@ type hostfileStageReady struct {
 }
 
 type hostfileSession struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	hostfile       trainingHostfile
-	cluster        training.Cluster
-	binary         string
-	binarySHA256   string
-	remoteBinary   string
-	remoteRoot     string
-	resumeRoot     string
-	resumeStaged   bool
-	pythonDir      string
-	cacheRoot      string
-	cacheScratch   string
-	cacheMaxBytes  int64
-	cacheMirrors   []string
-	workers        []*hostfileWorker
-	workersStarted bool
-	output         io.Writer
-	outputMu       sync.Mutex
-	publishMu      sync.Mutex
+	ctx             context.Context
+	cancel          context.CancelFunc
+	hostfile        trainingHostfile
+	cluster         training.Cluster
+	binary          string
+	binarySHA256    string
+	remoteBinary    string
+	remoteRoot      string
+	resumeRoot      string
+	resumeStaged    bool
+	pythonDir       string
+	cacheRoot       string
+	cacheScratch    string
+	cacheMaxBytes   int64
+	cacheMirrors    []string
+	workers         []*hostfileWorker
+	workersStarted  bool
+	output          io.Writer
+	outputTerminal  bool
+	remoteBarActive bool
+	outputMu        sync.Mutex
+	publishMu       sync.Mutex
 }
 
 const hostfileWorkerExitGrace = 10 * time.Second
@@ -343,7 +346,7 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 		remoteBinary: remoteRoot + "/waldo",
 		resumeRoot:   filepath.Join(remoteRoot, "resume"),
 		cacheRoot:    cache.Root(), cacheScratch: cache.Scratch(), cacheMaxBytes: cache.MaxBytes(), cacheMirrors: cache.Mirrors(),
-		output: output,
+		output: output, outputTerminal: terminalWriter(output),
 	}
 	local, err := inspectHostfileTorchTitan(sessionContext)
 	if err != nil {
@@ -628,9 +631,7 @@ func (session *hostfileSession) remoteWorkerInvocation(rank int, arguments []str
 func (session *hostfileSession) copyWorkerOutput(host string, source io.Reader) {
 	scanner := bufio.NewScanner(source)
 	for scanner.Scan() {
-		session.outputMu.Lock()
-		fmt.Fprintf(session.output, "[%s] %s\n", host, scanner.Text())
-		session.outputMu.Unlock()
+		session.writeWorkerLine(host, scanner.Text())
 	}
 }
 
@@ -643,10 +644,32 @@ func (session *hostfileSession) copyWorkerStdout(worker *hostfileWorker, source 
 			worker.ready <- ready
 			continue
 		}
-		session.outputMu.Lock()
-		fmt.Fprintf(session.output, "[%s] %s\n", worker.host, line)
-		session.outputMu.Unlock()
+		session.writeWorkerLine(worker.host, line)
 	}
+}
+
+func terminalWriter(output io.Writer) bool {
+	type fileDescriptor interface{ Fd() uintptr }
+	writer, ok := output.(fileDescriptor)
+	return ok && term.IsTerminal(int(writer.Fd()))
+}
+
+func (session *hostfileSession) writeWorkerLine(host, line string) {
+	session.outputMu.Lock()
+	defer session.outputMu.Unlock()
+	if session.outputTerminal && strings.HasPrefix(line, "  materialize [") {
+		fmt.Fprintf(session.output, "\r\x1b[K[%s] %s", host, line)
+		session.remoteBarActive = !strings.Contains(line, "] 100%")
+		if !session.remoteBarActive {
+			fmt.Fprintln(session.output)
+		}
+		return
+	}
+	if session.remoteBarActive {
+		fmt.Fprintln(session.output)
+		session.remoteBarActive = false
+	}
+	fmt.Fprintf(session.output, "[%s] %s\n", host, line)
 }
 
 func (session *hostfileSession) publish(plan model.MultiNodePlan) error {
