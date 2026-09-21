@@ -1,6 +1,8 @@
 # Conversation level 3: corrected 12B-token conversation baseline.
 # This preserves the 0002 architecture, foundation exposure, and corpus order,
-# while applying assistant-only loss and bounded one-pass conversation tuning.
+# while applying assistant-only loss and bounded conversation tuning. Its
+# portable weights remain float32 because the BF16 artifact from the measured
+# conversation3 run lost substantial held-out quality after serialization.
 # It is a private research compose pending record-level rights work for
 # Gutenberg, federal rulemaking, PLOS, and HelpSteer2.
 kind: waldo-model-compose
@@ -18,7 +20,7 @@ architecture:
   key_value_heads: 4
   dropout: 0.1
   tie_embeddings: true
-  parameter_dtype: bfloat16
+  parameter_dtype: float32
   tokenizer:
     name: tiktoken/r50k_base
     revision: tiktoken-r50k-base
@@ -146,3 +148,43 @@ stages:
       evaluate_every: 160
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
+
+  # Keep project identity separate from the broad behavior mixture so held-out
+  # selection measures whether the final artifact actually learned it. The
+  # low learning rate and small bounded repetition limit collateral forgetting.
+  - name: project-grounding
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/waldo-project-v1
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      epochs: 5
+      batch_size: 8
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
+      sequence_length: 2048
+      learning_rate: 0.000002
+      optimizer: adamw
+      schedule: cosine
+      seed: 45
+      weight_decay: 0
+      warmup_steps: 10
+      shuffle_buffer_records: 4096
+      shuffle_buffer_bytes: 134217728
+      checkpoint_every: 20
+      evaluate_every: 20
+      evaluation_max_records: 256
+      evaluation_max_bytes: 8388608

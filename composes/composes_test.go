@@ -236,10 +236,12 @@ func TestConversationThreeCorrectsCompleteBaselineExposure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if compose.Architecture != short.Architecture || compose.Interaction != short.Interaction || len(compose.Stages) != len(short.Stages) {
+	expectedArchitecture := short.Architecture
+	expectedArchitecture.ParameterDType = "float32"
+	if compose.Architecture != expectedArchitecture || compose.Interaction != short.Interaction || len(compose.Stages) != len(short.Stages)+1 {
 		t.Fatalf("restored conversation contract differs from 0002")
 	}
-	for index := range compose.Stages {
+	for index := range short.Stages {
 		if compose.Stages[index].Name != short.Stages[index].Name || !reflect.DeepEqual(compose.Stages[index].Corpora, short.Stages[index].Corpora) {
 			t.Fatalf("restored conversation stage %d changed its curriculum", index)
 		}
@@ -253,11 +255,15 @@ func TestConversationThreeCorrectsCompleteBaselineExposure(t *testing.T) {
 	if compose.Stages[1].Parameters.LearningRate != 0.00002 || compose.Stages[2].Parameters.LearningRate != 0.000008 {
 		t.Fatalf("corrected conversation learning rates = %g / %g", compose.Stages[1].Parameters.LearningRate, compose.Stages[2].Parameters.LearningRate)
 	}
+	grounding := compose.Stages[3]
+	if grounding.Name != "project-grounding" || grounding.Objective != "assistant-response-modeling" || grounding.Parameters.Epochs != 5 || grounding.Parameters.LearningRate != 0.000002 || !reflect.DeepEqual(corpusPaths(grounding.Corpora), []string{"post-train/sft/waldo-project-v1"}) {
+		t.Fatalf("project grounding stage = %+v", grounding)
+	}
 	forecast, err := model.ForecastCompose(compose)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 11999969280 || !reflect.DeepEqual(forecast.EpochDerivedStages, []string{"conversational-midtrain", "post-train"}) {
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 11999969280 || !reflect.DeepEqual(forecast.EpochDerivedStages, []string{"conversational-midtrain", "post-train", "project-grounding"}) {
 		t.Fatalf("restored conversation forecast = %+v", forecast)
 	}
 }
@@ -268,10 +274,10 @@ func TestConversationFourIsLargerAndKnowledgeDominant(t *testing.T) {
 		t.Fatal(err)
 	}
 	architecture := compose.Architecture
-	if architecture.ContextTokens != 4096 || architecture.HiddenSize != 1536 || architecture.IntermediateSize != 4096 || architecture.Layers != 24 || architecture.AttentionHeads != 24 || architecture.KeyValueHeads != 8 || architecture.TieEmbeddings || !architecture.QKNormalization || architecture.Initialization != "depth-scaled" || architecture.Dropout != 0 {
+	if architecture.ContextTokens != 4096 || architecture.HiddenSize != 1536 || architecture.IntermediateSize != 4096 || architecture.Layers != 24 || architecture.AttentionHeads != 24 || architecture.KeyValueHeads != 8 || architecture.TieEmbeddings || !architecture.QKNormalization || architecture.Initialization != "depth-scaled" || architecture.Dropout != 0 || architecture.ParameterDType != "float32" {
 		t.Fatalf("conversation4 architecture = %+v", architecture)
 	}
-	if got := []string{compose.Stages[0].Name, compose.Stages[1].Name, compose.Stages[2].Name, compose.Stages[3].Name, compose.Stages[4].Name}; !reflect.DeepEqual(got, []string{"pretrain", "technical-knowledge-midtrain", "conversational-midtrain", "expanded-conversation-sft", "post-train"}) {
+	if got := []string{compose.Stages[0].Name, compose.Stages[1].Name, compose.Stages[2].Name, compose.Stages[3].Name, compose.Stages[4].Name, compose.Stages[5].Name}; !reflect.DeepEqual(got, []string{"pretrain", "technical-knowledge-midtrain", "conversational-midtrain", "expanded-conversation-sft", "post-train", "project-grounding"}) {
 		t.Fatalf("conversation4 stage order = %v", got)
 	}
 	wantFoundation := []string{"core/books/gutenberg", "core/common-pile/wikimedia", "government/regulations", "science/plos", "core/synthetic/cosmopedia-v2", "core/common-pile/stackexchange"}
@@ -299,6 +305,15 @@ func TestConversationFourIsLargerAndKnowledgeDominant(t *testing.T) {
 		if parameters.Optimizer != "adamw" || parameters.Schedule != "warmup-stable-warmdown" {
 			t.Fatalf("conversation3 candidate stage %s optimizer schedule = %q/%q", stage.Name, parameters.Optimizer, parameters.Schedule)
 		}
+	}
+	for _, index := range []int{2, 3, 4, 5} {
+		if compose.Stages[index].Objective != "assistant-response-modeling" {
+			t.Fatalf("conversation4 structured stage %s objective = %q", compose.Stages[index].Name, compose.Stages[index].Objective)
+		}
+	}
+	grounding := compose.Stages[5]
+	if grounding.Parameters.Epochs != 5 || grounding.Parameters.LearningRate != 0.000002 || !reflect.DeepEqual(corpusPaths(grounding.Corpora), []string{"post-train/sft/waldo-project-v1"}) {
+		t.Fatalf("conversation4 project grounding = %+v", grounding)
 	}
 	forecast, err := model.ForecastCompose(compose)
 	if err != nil {

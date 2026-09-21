@@ -32,6 +32,36 @@ using the same accelerator class and measured training FLOPs, show:
 
 Held-out loss alone is not a promotion gate.
 
+## 2026-09 artifact-boundary audit
+
+The `conversation3` diagnostic exposed a lifecycle error: PyTorch trained FP32
+master parameters under BF16 autocast, but WALDO rounded checkpoints and the
+terminal artifact to BF16 before later stages and inference. The measured
+pretraining loss changed from 2.6724 live to 3.1388 after reload, and midtrain
+changed from 1.8105 to 2.3527. The previous worker merely warned and published
+the degraded artifact; selection could then report a value that was no longer
+the best recorded value.
+
+The corrected boundary requires:
+
+- FP32 master weights in PyTorch and TorchTitan resume checkpoints;
+- target-representation evaluation at step 1 and every evaluation boundary;
+- best-checkpoint selection using that publishable representation;
+- a terminal reload check for PyTorch, TorchTitan, and MLX;
+- rejection of any selected checkpoint that is not the global minimum among
+  eligible persisted candidates; and
+- terminal, non-resumable classification for deterministic artifact-integrity
+  failures.
+
+The 0003 and 0004 reference composes also keep portable parameters in float32
+and add a final low-rate WALDO-only grounding stage with its own held-out
+selection. The audit corrected 0004's structured conversation stages from
+full-sequence causal loss to assistant-only response loss.
+These repairs address the observed artifact loss and hidden project-data
+underexposure. They do not turn held-out language-model loss into a capability
+test: the Linux, operating-system, OpenWALDO, repetition, and multi-turn prompt
+set still must be run before promoting the resulting model.
+
 ## Work sequence
 
 ### 0. Establish a trustworthy baseline

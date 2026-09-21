@@ -21,7 +21,9 @@ architecture:
   tie_embeddings: false
   qk_normalization: true
   initialization: depth-scaled
-  parameter_dtype: bfloat16
+  # Keep portable weights lossless until this architecture has passed WALDO's
+  # live-versus-publishable reduced-precision check.
+  parameter_dtype: float32
   tokenizer:
     name: tiktoken/r50k_base
     revision: tiktoken-r50k-base
@@ -116,7 +118,7 @@ stages:
 
   - name: conversational-midtrain
     type: fine-tuning
-    objective: causal-language-modeling
+    objective: assistant-response-modeling
     conversation:
       template: user-assistant-v1
       supervised_roles: [assistant]
@@ -198,11 +200,11 @@ stages:
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
 
-  # Finish with the same bounded behavior anchor used by 0002 and 0003
-  # useful. Narrow alignment belongs after broad and technical learning.
+  # Finish with the same bounded behavior anchor used by 0003. Narrow
+  # alignment belongs after broad and technical learning.
   - name: post-train
     type: fine-tuning
-    objective: causal-language-modeling
+    objective: assistant-response-modeling
     conversation:
       template: user-assistant-v1
       supervised_roles: [assistant]
@@ -240,3 +242,40 @@ stages:
       evaluate_every: 80
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
+
+  - name: project-grounding
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/waldo-project-v1
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      epochs: 5
+      batch_size: 8
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
+      sequence_length: 4096
+      learning_rate: 0.000002
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
+      seed: 47
+      weight_decay: 0
+      warmup_steps: 5
+      shuffle_buffer_records: 4096
+      shuffle_buffer_bytes: 134217728
+      checkpoint_every: 10
+      evaluate_every: 10
+      evaluation_max_records: 256
+      evaluation_max_bytes: 8388608

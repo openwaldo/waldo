@@ -11,7 +11,7 @@ They are planning ranges until replaced by observed WALDO run evidence.
 The numbered ladder also owns the measured capability-per-FLOP comparison.
 `0000-canary.yaml` and `0001-babble.yaml` are the systems gates,
 `0002-conversation.yaml` records the undertrained 2.4B-token experiment,
-`0003-conversation.yaml` restores the 12B-token comparison baseline, and
+`0003-conversation.yaml` is the corrected 12B-token comparison baseline, and
 `0004-conversation.yaml` is the larger `conversation3` candidate. Do not run
 the larger candidate until the correctness, data-plane, batch-semantics, and
 evaluation gates in the [training robustness plan](../docs/TRAINING-ROBUSTNESS-PLAN.md)
@@ -135,8 +135,8 @@ WALDO requirements:
 
 | Field | Plan |
 | --- | --- |
-| Status | Corrected 12B-token comparison baseline; train as `conversation2` |
-| Builds from | Fresh random initialization; same architecture and corpus sequence as 0002 |
+| Status | Corrected 12B-token comparison baseline; rerun under a fresh model name after artifact-integrity fixes |
+| Builds from | Fresh random initialization; same core architecture and first three corpus stages as 0002, with lossless float32 portable weights |
 | Model type | Dense monolithic foundation plus conversation SFT; approximately 337M parameters |
 | Recommended hardware | 1x 8-GPU NVIDIA H100 SXM system |
 | Approximate runtime | Measure directly; approximately five times the pretraining exposure of 0002 |
@@ -150,23 +150,28 @@ Success criteria:
 
 Corpus requirements:
 
-- The exact 0002 corpus selection and weights.
-- 12B pretraining tokens followed by one bounded pass over each conversation stage.
+- The exact 0002 corpus selection and weights for its first three stages.
+- 12B pretraining tokens, one bounded pass over each broad conversation stage,
+  then five low-rate passes over the compact WALDO project grounding corpus.
 
 WALDO requirements:
 
 - Train under a fresh model name; do not append pretraining after 0002 post-training.
 - Apply assistant-only response loss during both conversation stages.
 - Use lower conversation-stage learning rates and one pass to limit the held-out-loss regression observed in the initial 0003 run.
+- Keep the portable artifact in float32 until reduced-precision publication
+  passes WALDO's live-versus-publishable loss check for this architecture.
+- Select project grounding against its own held-out set rather than allowing
+  the much larger broad SFT mixture to hide failure to learn WALDO facts.
 - Add fixed side-by-side generation and held-out evaluations.
 
 ## Conversation level 4 (`0004-conversation.yaml`)
 
 | Field | Plan |
 | --- | --- |
-| Status | `conversation3` candidate; blocked on systems, evaluation, and corpus gates |
+| Status | Larger candidate; blocked on systems, evaluation, and corpus gates |
 | Builds from | Random initialization with the restored 0003 curriculum embedded first |
-| Model type | Approximately 758M-parameter dense model, 4,096-token context, technical knowledge midtraining, and expanded conversation SFT |
+| Model type | Approximately 758M-parameter dense model, 4,096-token context, technical knowledge midtraining, expanded assistant-only SFT, and isolated WALDO grounding |
 | Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
 | Approximate runtime | Determine from promoted G1/G2 evidence for the roughly 6.1B-token curriculum |
 
@@ -187,18 +192,23 @@ Corpus requirements:
   systems vocabulary in a separate 1B-token stage. Known non-English rows are
   excluded; legacy rows without language metadata are retained.
 - Tulu 3, Smol-SmolTalk, and UltraChat provide broader assistant supervision.
-- The validated Interaction Contract and HelpSteer2 stage remains last so
-  narrow behavior tuning is not overwritten by broader training.
+- The validated Interaction Contract and HelpSteer2 behavior anchor follows
+  broad SFT and immediately precedes the narrow project-grounding stage.
 
 WALDO requirements:
 
+- Use assistant-only loss for every structured conversation stage; role
+  markers, user prompts, and system context remain conditioning input.
+- Keep portable parameters in float32 until this larger architecture has
+  passed the reduced-precision artifact-integrity gate.
+- Evaluate the final WALDO grounding stage on its own held-out records.
 - A fresh model is required because conversation3 has more than twice the
   parameter capacity and context length of the 0003 conversation model as well as a corrected
   stage order.
 - Fixed side-by-side conversation evaluations.
 - Promote only when it beats the previous rung without material regression.
-- Train this compose under the model name `conversation3`; the numeric compose
-  prefix describes its ladder position, not its model artifact name.
+- Train this compose under a fresh model name; the numeric compose prefix
+  describes its ladder position, not its model artifact name.
 
 ## Tool-use model (`holding/tool-use.yaml`)
 
