@@ -11,15 +11,16 @@ import (
 	"testing"
 )
 
-// The artifact check in ADR 0044 exists to detect serialization, precision, and
-// loader faults in the persisted weights. It can only measure those if the
-// reloaded model is evaluated exactly as the live model was. Evaluating the two
-// at different compute precisions instead measures autocast rounding, which
-// accumulates with depth until it exceeds the tolerance for every sufficiently
-// large model while revealing nothing about the artifact.
+// The artifact check in ADR 0044 compares the publishable parameter
+// representation with the live FP32-master model under identical compute
+// precision. This makes target-dtype degradation visible before publication.
 func TestPyTorchWorkerEvaluatesArtifactAtLiveEvaluationPrecision(t *testing.T) {
+	source := string(pyTorchWorker)
+	if !strings.Contains(source, `WORKER_REVISION = "`+PyTorchRevision+`"`) || !strings.Contains(source, `TORCHTITAN_REVISION = "`+TorchTitanRevision+`"`) {
+		t.Fatalf("embedded PyTorch worker revisions do not match the Go adapters")
+	}
 	pattern := regexp.MustCompile(`evaluate_model\([^)]*mixed_precision=(True|False)\)`)
-	matches := pattern.FindAllStringSubmatch(string(pyTorchWorker), -1)
+	matches := pattern.FindAllStringSubmatch(source, -1)
 	if len(matches) < 2 {
 		t.Fatalf("expected the worker to evaluate both the live and reloaded model, found %d call(s)", len(matches))
 	}
@@ -30,20 +31,20 @@ func TestPyTorchWorkerEvaluatesArtifactAtLiveEvaluationPrecision(t *testing.T) {
 	}
 }
 
-func TestPyTorchWorkerMakesPersistedArtifactEvaluationAuthoritative(t *testing.T) {
+func TestPyTorchWorkerFailsClosedOnArtifactDegradation(t *testing.T) {
 	source := string(pyTorchWorker)
 	for _, expected := range []string{
-		`metrics["live_compiled_heldout_loss"] = live_loss`,
-		`metrics["heldout_loss"] = artifact_loss`,
-		`persisted artifact metric is authoritative`,
-		`if not math.isfinite(artifact_loss):`,
+		`"live_compiled_heldout_loss": live_loss`,
+		`"publishable_checkpoint_heldout_loss": artifact_loss`,
+		`if abs(artifact_loss - live_loss) > tolerance:`,
+		`"use parameter_dtype float32 or correct target-dtype training before spending more compute"`,
+		`if abs(artifact_loss - candidate_loss) > tolerance:`,
+		`error_class="artifact-integrity" if isinstance(error, ArtifactIntegrityError) else ""`,
+		`"value": candidate_loss`,
 	} {
 		if !strings.Contains(source, expected) {
-			t.Fatalf("PyTorch worker omits persisted-artifact evaluation behavior %q", expected)
+			t.Fatalf("PyTorch worker omits fail-closed artifact behavior %q", expected)
 		}
-	}
-	if strings.Contains(source, `saved artifact held-out loss {artifact_loss:.6f} does not match live loss`) {
-		t.Fatal("PyTorch worker still rejects a finite persisted artifact for compiled/eager loss drift")
 	}
 }
 
@@ -54,10 +55,25 @@ func TestPyTorchWorkerPublishesBestEvaluatedCheckpoint(t *testing.T) {
 		`load_safetensors(selected_path)`,
 		`"selected_checkpoint": selection`,
 		`selected checkpoint step {selected_evaluation['step']}`,
-		`not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints)`,
+		`and not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints):`,
 	} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("PyTorch worker omits best-checkpoint publication behavior %q", expected)
+		}
+	}
+}
+
+func TestPyTorchWorkerSeparatesResumeAndPortableWeightPrecision(t *testing.T) {
+	source := string(pyTorchWorker)
+	for _, expected := range []string{
+		`portable=False`,
+		`self.parameter_dtype if portable else None`,
+		`"storage_dtype": "float32" if storage_dtype is None else self.architecture["parameter_dtype"]`,
+		`self.evaluate_weight_file(checkpoint_path, quantize=True)`,
+		`self.evaluate_weight_file(weights_path, quantize=False)`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("PyTorch worker omits precision boundary %q", expected)
 		}
 	}
 }

@@ -20,7 +20,11 @@ from mlx.utils import tree_flatten, tree_map, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r13"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r14"
+
+
+class ArtifactIntegrityError(ValueError):
+    pass
 
 
 def emit(kind, **payload):
@@ -476,12 +480,13 @@ class Trainer:
                     "eta_seconds": eta,
                 },
             )
-        checkpoint_every = self.parameters["checkpoint_every"]
-        if checkpoint_every > 0 and self.step_number % checkpoint_every == 0:
-            self.save_checkpoint()
         evaluate_every = self.parameters["evaluate_every"]
-        if evaluate_every > 0 and self.step_number % evaluate_every == 0:
+        evaluate_due = evaluate_every > 0 and (self.step_number == 1 or self.step_number % evaluate_every == 0)
+        if evaluate_due:
             self.record_evaluation(loss_value)
+        checkpoint_every = self.parameters["checkpoint_every"]
+        if checkpoint_every > 0 and self.step_number % checkpoint_every == 0 and not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints):
+            self.save_checkpoint()
         self.last_step_finished = time.perf_counter()
 
     def save_weights(self, path, kind, step):
@@ -655,14 +660,14 @@ class Trainer:
             raise ValueError(
                 f"canonical stream produced only {self.step_number} training steps; profile requires {self.target_steps}"
             )
-        if self.parameters["checkpoint_every"] > 0 and (
-            not self.checkpoints or self.checkpoints[-1]["step"] != self.step_number
-        ):
-            self.save_checkpoint()
         if self.parameters["evaluate_every"] > 0 and (
             not self.evaluations or self.evaluations[-1]["step"] != self.step_number
         ):
             self.record_evaluation(self.final_loss)
+        if self.parameters["checkpoint_every"] > 0 and (
+            not self.checkpoints or self.checkpoints[-1]["step"] != self.step_number
+        ):
+            self.save_checkpoint()
 
         weights_name = "model.safetensors"
         weights_path = os.path.join(self.artifact_directory, weights_name)
@@ -680,14 +685,22 @@ class Trainer:
         self.save_weights(weights_path, "waldo-mlx-model", selected_step)
         if selected_evaluation is not None:
             live_loss = selected_evaluation["metrics"]["heldout_loss"]
+            self.model.load_weights(weights_path)
+            mx.eval(self.model.parameters())
             artifact_loss = self.evaluate_model()
+            tolerance = max(0.02, abs(live_loss) * 0.01)
+            if not math.isfinite(artifact_loss):
+                raise ArtifactIntegrityError("saved artifact held-out loss is not finite")
+            if abs(artifact_loss - live_loss) > tolerance:
+                raise ArtifactIntegrityError(
+                    f"saved artifact held-out loss {artifact_loss:.6f} does not match selected checkpoint "
+                    f"loss {live_loss:.6f} within tolerance {tolerance:.6f}"
+                )
             selected_evaluation["metrics"]["live_compiled_heldout_loss"] = live_loss
-            selected_evaluation["metrics"]["heldout_loss"] = artifact_loss
-            selected_evaluation["metrics"]["heldout_perplexity"] = math.exp(min(artifact_loss, 80.0))
             selected_evaluation["metrics"]["artifact_heldout_loss"] = artifact_loss
             selected_evaluation["metrics"]["artifact_heldout_perplexity"] = math.exp(min(artifact_loss, 80.0))
             selected_evaluation["metrics"]["artifact_loss_delta"] = artifact_loss - live_loss
-            selection = {"step": selected_evaluation["step"], "tokens": selected_evaluation["tokens"], "metric": "heldout_loss", "value": artifact_loss}
+            selection = {"step": selected_evaluation["step"], "tokens": selected_evaluation["tokens"], "metric": "heldout_loss", "value": live_loss}
             emit("event", event={"kind": "log", "message": f"selected checkpoint step {selected_step} and verified the model artifact at held-out loss {artifact_loss:.4f}", "step": selected_evaluation["step"], "tokens": selected_evaluation["tokens"]})
         config_name = "config.json"
         config_path = os.path.join(self.artifact_directory, config_name)
@@ -788,5 +801,5 @@ try:
     run()
 except Exception as error:
     traceback.print_exc(file=sys.stderr)
-    emit("error", error=str(error))
+    emit("error", error=str(error), error_class="artifact-integrity" if isinstance(error, ArtifactIntegrityError) else "")
     sys.exit(1)

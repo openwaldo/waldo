@@ -24,9 +24,13 @@ from torch.utils.checkpoint import checkpoint
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r12"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r23"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r13"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r24"
 IS_PRIMARY = True
+
+
+class ArtifactIntegrityError(ValueError):
+    pass
 
 
 def emit(kind, **payload):
@@ -873,15 +877,16 @@ class Trainer:
                     "eta_seconds": eta,
                 },
             )
-        checkpoint_every = self.parameters["checkpoint_every"]
-        if checkpoint_every > 0 and self.step_number % checkpoint_every == 0:
-            self.save_checkpoint()
         evaluate_every = self.parameters["evaluate_every"]
-        if evaluate_every > 0 and self.step_number % evaluate_every == 0:
+        evaluate_due = evaluate_every > 0 and (self.step_number == 1 or self.step_number % evaluate_every == 0)
+        if evaluate_due:
             self.record_evaluation(loss_value)
+        checkpoint_every = self.parameters["checkpoint_every"]
+        if checkpoint_every > 0 and self.step_number % checkpoint_every == 0 and not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints):
+            self.save_checkpoint()
         self.last_step_finished = time.perf_counter()
 
-    def save_weights(self, path, kind, step):
+    def model_state_dict(self):
         if self.distributed:
             from torch.distributed.checkpoint.state_dict import (
                 get_model_state_dict,
@@ -894,16 +899,21 @@ class Trainer:
             )
         else:
             tensors = self.model.state_dict()
+        return tensors
+
+    def save_weights(self, path, kind, step, portable):
+        tensors = self.model_state_dict()
         if IS_PRIMARY:
-            self.save_weight_tensors(path, tensors, kind, step)
+            self.save_weight_tensors(path, tensors, kind, step, self.parameter_dtype if portable else None)
         if self.distributed:
             torch.distributed.barrier()
 
-    def save_weight_tensors(self, path, tensors, kind, step):
-        tensors = {
-            name: value.to(dtype=self.parameter_dtype) if value.is_floating_point() else value
-            for name, value in tensors.items()
-        }
+    def save_weight_tensors(self, path, tensors, kind, step, storage_dtype):
+        if storage_dtype is not None:
+            tensors = {
+                name: value.to(dtype=storage_dtype) if value.is_floating_point() else value
+                for name, value in tensors.items()
+            }
         backend = "torchtitan" if self.distributed else "pytorch"
         revision = TORCHTITAN_REVISION if self.distributed else WORKER_REVISION
         save_safetensors(
@@ -918,6 +928,7 @@ class Trainer:
                 "architecture_sha256": self.begin["architecture_sha256"],
                 "run_id": self.begin["run_id"],
                 "step": str(step),
+                "storage_dtype": "float32" if storage_dtype is None else self.architecture["parameter_dtype"],
             },
         )
 
@@ -933,7 +944,19 @@ class Trainer:
                 total[corpus] = total.get(corpus, 0) + count
         return total, states
 
-    def save_checkpoint(self):
+    def report_checkpoint(self, item):
+        emit(
+            "event",
+            event={
+                "kind": "checkpoint",
+                "message": f"checkpoint step {item['step']} persisted",
+                "step": item["step"],
+                "tokens": item["tokens"],
+                "checkpoint": item,
+            },
+        )
+
+    def save_checkpoint(self, report=True):
         consumption, consumption_states = self.gather_consumption()
         name = f"checkpoints/step-{self.step_number:08d}"
         path = os.path.join(self.artifact_directory, *name.split("/"))
@@ -951,7 +974,9 @@ class Trainer:
         runtime_path = os.path.join(temporary, "runtime.pt")
         state_path = os.path.join(temporary, "state.json")
         backend_name = "torchtitan" if self.distributed else "pytorch"
-        self.save_weights(weights_path, f"waldo-{backend_name}-checkpoint", self.step_number)
+        # Checkpoints are exact continuation state. Keep FP32 master weights;
+        # parameter_dtype applies to the portable terminal artifact, not resume.
+        self.save_weights(weights_path, f"waldo-{backend_name}-checkpoint", self.step_number, portable=False)
         random_state = {
             "cpu": torch.get_rng_state().cpu(),
             "cuda": torch.cuda.get_rng_state(self.device).cpu() if self.device.type == "cuda" else None,
@@ -1012,16 +1037,9 @@ class Trainer:
             ] if IS_PRIMARY else [],
         }
         self.checkpoints.append(item)
-        emit(
-            "event",
-            event={
-                "kind": "checkpoint",
-                "message": f"checkpoint step {self.step_number} persisted",
-                "step": self.step_number,
-                "tokens": self.consumed_tokens,
-                "checkpoint": item,
-            },
-        )
+        if report:
+            self.report_checkpoint(item)
+        return item
 
     def restore_checkpoint(self):
         if self.resume["step"] <= 0 or self.resume["step"] > self.target_steps:
@@ -1093,25 +1111,83 @@ class Trainer:
                 total_tokens += float(mask.sum().detach().cpu().item())
         return total_loss / total_tokens
 
+    def evaluate_weight_file(self, path, quantize):
+        loss_value = 0.0
+        failure = None
+        if IS_PRIMARY:
+            try:
+                tensors = load_safetensors(path)
+                if quantize:
+                    tensors = {
+                        name: value.to(dtype=self.parameter_dtype) if value.is_floating_point() else value
+                        for name, value in tensors.items()
+                    }
+                artifact_model = DecoderLM(self.architecture)
+                missing, unexpected = artifact_model.load_state_dict(tensors, strict=False)
+                del tensors
+                if missing or unexpected:
+                    raise ValueError(f"weights do not match portable architecture: missing={missing}, unexpected={unexpected}")
+                artifact_model.to(device=self.device, dtype=torch.float32)
+                loss_value = self.evaluate_model(artifact_model, mixed_precision=True)
+                del artifact_model
+            except Exception as error:
+                failure = str(error)
+        if self.distributed:
+            failures = [failure]
+            torch.distributed.broadcast_object_list(failures, src=0, device=self.device)
+            failure = failures[0]
+        if failure is not None:
+            raise ValueError(f"evaluate persisted weights: {failure}")
+        if self.distributed:
+            value = torch.tensor(loss_value, dtype=torch.float64, device=self.device)
+            torch.distributed.broadcast(value, src=0)
+            loss_value = float(value.cpu().item())
+        return loss_value
+
     def record_evaluation(self, _training_loss):
         if not self.evaluation_sequences:
             return
-        loss_value = self.evaluate_model(self.model, mixed_precision=True)
+        live_loss = self.evaluate_model(self.model, mixed_precision=True)
         self.model.train()
+        checkpoint = next((item for item in self.checkpoints if item["step"] == self.step_number), None)
+        unpublished_checkpoint = checkpoint is None
+        if unpublished_checkpoint:
+            checkpoint = self.save_checkpoint(report=False)
+        checkpoint_path = os.path.join(
+            self.artifact_directory,
+            "checkpoints",
+            f"step-{self.step_number:08d}",
+            "model.safetensors",
+        )
+        artifact_loss = self.evaluate_weight_file(checkpoint_path, quantize=True)
+        tolerance = max(0.02, abs(live_loss) * 0.01)
+        if not math.isfinite(artifact_loss):
+            raise ArtifactIntegrityError("publishable checkpoint held-out loss is not finite")
+        if abs(artifact_loss - live_loss) > tolerance:
+            raise ArtifactIntegrityError(
+                f"publishable {self.architecture['parameter_dtype']} checkpoint held-out loss {artifact_loss:.6f} "
+                f"does not match live FP32-master loss {live_loss:.6f} within tolerance {tolerance:.6f}; "
+                "use parameter_dtype float32 or correct target-dtype training before spending more compute"
+            )
+        if unpublished_checkpoint:
+            self.report_checkpoint(checkpoint)
         item = {
             "step": self.step_number,
             "tokens": self.consumed_tokens,
-            "metrics": {"heldout_loss": loss_value, "heldout_perplexity": math.exp(min(loss_value, 80.0))},
+            "metrics": {
+                "heldout_loss": artifact_loss,
+                "heldout_perplexity": math.exp(min(artifact_loss, 80.0)),
+                "live_compiled_heldout_loss": live_loss,
+                "publishable_checkpoint_heldout_loss": artifact_loss,
+                "artifact_loss_delta": artifact_loss - live_loss,
+            },
         }
         self.evaluations.append(item)
-        earlier = [evaluation["metrics"]["heldout_loss"] for evaluation in self.evaluations[:-1] if evaluation["step"] > 0]
-        if self.step_number > 0 and (not earlier or loss_value < min(earlier)) and not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints):
-            self.save_checkpoint()
         emit(
             "event",
             event={
                 "kind": "evaluation",
-                "message": f"step {self.step_number} held-out loss {loss_value:.4f}",
+                "message": f"step {self.step_number} publishable held-out loss {artifact_loss:.4f} (live {live_loss:.4f})",
                 "step": self.step_number,
                 "tokens": self.consumed_tokens,
                 "evaluation": item,
@@ -1169,14 +1245,14 @@ class Trainer:
             raise ValueError(
                 f"canonical stream produced only {self.step_number} training steps; profile requires {self.target_steps}"
             )
-        if self.parameters["checkpoint_every"] > 0 and (
-            not self.checkpoints or self.checkpoints[-1]["step"] != self.step_number
-        ):
-            self.save_checkpoint()
         if self.parameters["evaluate_every"] > 0 and (
             not self.evaluations or self.evaluations[-1]["step"] != self.step_number
         ):
             self.record_evaluation(self.final_loss)
+        if self.parameters["checkpoint_every"] > 0 and (
+            not self.checkpoints or self.checkpoints[-1]["step"] != self.step_number
+        ):
+            self.save_checkpoint()
 
         final_consumption, _ = self.gather_consumption()
 
@@ -1194,55 +1270,35 @@ class Trainer:
                 load_safetensors(selected_path),
                 f"waldo-{backend_name}-model",
                 selected_checkpoint["step"],
+                self.parameter_dtype,
             )
         elif selected_checkpoint is None:
-            self.save_weights(weights_path, f"waldo-{backend_name}-model", self.step_number)
+            self.save_weights(weights_path, f"waldo-{backend_name}-model", self.step_number, portable=True)
         if self.distributed and selected_checkpoint is not None:
             torch.distributed.barrier()
         selection = None
-        if IS_PRIMARY and self.evaluation_sequences:
-            artifact_model = DecoderLM(self.architecture)
-            missing, unexpected = artifact_model.load_state_dict(load_safetensors(weights_path), strict=False)
-            if missing or unexpected:
-                raise ValueError(f"saved artifact weights do not match architecture: missing={missing}, unexpected={unexpected}")
-            artifact_model.to(device=self.device, dtype=torch.float32)
-            # Evaluate the artifact exactly as the live model was evaluated. Under
-            # a different compute precision this comparison measures autocast
-            # rounding rather than the reload, and that error grows with depth
-            # until it exceeds the tolerance for every sufficiently large model.
-            artifact_loss = self.evaluate_model(artifact_model, mixed_precision=True)
-            del artifact_model
+        artifact_loss = self.evaluate_weight_file(weights_path, quantize=False) if self.evaluation_sequences else None
+        if IS_PRIMARY and artifact_loss is not None:
             selected_evaluation = self.evaluations[-1] if selected_evaluation is None else selected_evaluation
-            live_loss = selected_evaluation["metrics"]["heldout_loss"]
-            tolerance = max(0.02, abs(live_loss) * 0.01)
+            candidate_loss = selected_evaluation["metrics"]["heldout_loss"]
+            tolerance = max(0.02, abs(candidate_loss) * 0.01)
             if not math.isfinite(artifact_loss):
-                raise ValueError("saved artifact held-out loss is not finite")
+                raise ArtifactIntegrityError("saved artifact held-out loss is not finite")
+            if abs(artifact_loss - candidate_loss) > tolerance:
+                raise ArtifactIntegrityError(
+                    f"saved artifact held-out loss {artifact_loss:.6f} does not match selected publishable "
+                    f"checkpoint loss {candidate_loss:.6f} within tolerance {tolerance:.6f}"
+                )
             metrics = selected_evaluation["metrics"]
-            metrics["live_compiled_heldout_loss"] = live_loss
-            metrics["heldout_loss"] = artifact_loss
-            metrics["heldout_perplexity"] = math.exp(min(artifact_loss, 80.0))
             metrics["artifact_heldout_loss"] = artifact_loss
             metrics["artifact_heldout_perplexity"] = math.exp(min(artifact_loss, 80.0))
-            metrics["artifact_loss_delta"] = artifact_loss - live_loss
+            metrics["serialization_loss_delta"] = artifact_loss - candidate_loss
             selection = {
                 "step": selected_evaluation["step"],
                 "tokens": selected_evaluation["tokens"],
                 "metric": "heldout_loss",
-                "value": artifact_loss,
+                "value": candidate_loss,
             }
-            if abs(artifact_loss - live_loss) > tolerance:
-                emit(
-                    "event",
-                    event={
-                        "kind": "log",
-                        "message": (
-                            f"persisted artifact held-out loss {artifact_loss:.4f} differs from live compiled loss "
-                            f"{live_loss:.4f}; persisted artifact metric is authoritative"
-                        ),
-                        "step": self.step_number,
-                        "tokens": self.consumed_tokens,
-                    },
-                )
             emit(
                 "event",
                 event={
@@ -1480,7 +1536,7 @@ try:
     run()
 except Exception as error:
     traceback.print_exc(file=sys.stderr)
-    emit("error", error=str(error))
+    emit("error", error=str(error), error_class="artifact-integrity" if isinstance(error, ArtifactIntegrityError) else "")
     sys.exit(1)
 finally:
     if torch.distributed.is_initialized():

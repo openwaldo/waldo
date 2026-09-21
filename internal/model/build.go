@@ -623,6 +623,11 @@ func hasVerifiedCheckpoint(progress *training.Progress) bool {
 	return progress != nil && len(progress.Checkpoints) > 0
 }
 
+func interruptedTrainingError(err error, progress *training.Progress) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		hasVerifiedCheckpoint(progress) && !training.IsNonRetryableWorkerError(err)
+}
+
 func equivalentResumeParameters(persisted, effective training.ResolvedParameters) bool {
 	if equivalentTrainingParameters(persisted, effective) {
 		return true
@@ -793,9 +798,9 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 						break
 					}
 				}
-				if backendErr == nil && selection.Execution.Backend.Name == training.BackendPyTorch {
+				if backendErr == nil && backendRequiresArtifactVerification(selection.Execution.Backend.Name) {
 					if observation.SelectedCheckpoint == nil {
-						backendErr = fmt.Errorf("invalid backend observation: PyTorch did not identify the checkpoint used for the persisted model artifact")
+						backendErr = fmt.Errorf("invalid backend observation: %s did not identify the checkpoint used for the persisted model artifact", selection.Execution.Backend.Name)
 					} else {
 						verified := false
 						for _, evaluation := range observation.Evaluations {
@@ -806,7 +811,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 							break
 						}
 						if !verified {
-							backendErr = fmt.Errorf("invalid backend observation: selected PyTorch checkpoint does not verify the persisted model artifact")
+							backendErr = fmt.Errorf("invalid backend observation: selected %s checkpoint does not verify the persisted model artifact", selection.Execution.Backend.Name)
 						}
 					}
 				}
@@ -824,7 +829,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 	if backendErr != nil {
 		run.State = RunFailed
 		attempt.State = RunFailed
-		if errors.Is(backendErr, context.Canceled) || errors.Is(backendErr, context.DeadlineExceeded) || hasVerifiedCheckpoint(run.Progress) {
+		if interruptedTrainingError(backendErr, run.Progress) {
 			run.State = RunInterrupted
 		}
 		run.Error = backendErr.Error()

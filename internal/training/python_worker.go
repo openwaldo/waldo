@@ -158,7 +158,7 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 				completed = true
 				observation = *frame.Observation
 			case "error":
-				return errors.New(frame.Error)
+				return &WorkerError{Message: frame.Error, Class: frame.ErrorClass}
 			}
 			return nil
 		})

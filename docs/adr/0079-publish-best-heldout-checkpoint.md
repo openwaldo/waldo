@@ -14,12 +14,18 @@ and measured a better model.
 
 When a stage has held-out evaluation, its terminal artifact is the evaluated
 checkpoint with the lowest finite `heldout_loss`. Ties select the earliest
-checkpoint. Each backend saves every newly best evaluated candidate even when
-it falls between the configured periodic checkpoint boundaries.
+checkpoint. PyTorch and TorchTitan persist every evaluated candidate because
+selection is based on the candidate's publishable parameter representation,
+not only its live FP32-master model. MLX persists every newly best candidate.
+These checkpoints are created even when they fall between configured periodic
+checkpoint boundaries.
 
-Checkpoint and evaluation histories are durable resume state. At completion,
-the backend reloads the selected checkpoint, writes the terminal weights from
-it, and evaluates the serialized artifact on the same pinned held-out set.
+Checkpoint and evaluation histories are durable resume state. PyTorch and
+TorchTitan checkpoints retain lossless FP32 master weights and optimizer state;
+only the terminal artifact is converted to the declared `parameter_dtype`. At
+completion, the backend reloads the selected checkpoint, writes the terminal
+weights from it, reloads that file, and evaluates it on the same pinned
+held-out set.
 WALDO records the selected step, consumed tokens, metric, and value and rejects
 a PyTorch completion that lacks artifact verification for that selection.
 

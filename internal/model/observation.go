@@ -18,6 +18,10 @@ import (
 	"github.com/openwaldo/waldo/internal/training"
 )
 
+func backendRequiresArtifactVerification(name string) bool {
+	return name == training.BackendPyTorch || name == training.BackendTorchTitan || name == training.BackendMLX
+}
+
 func validateBackendObservation(runDirectory string, planned PlannedStage, observation training.Observation) error {
 	if observation.Steps < 0 || observation.Steps > planned.Parameters.Steps {
 		return fmt.Errorf("reported steps %d are outside planned range 0..%d", observation.Steps, planned.Parameters.Steps)
@@ -81,15 +85,24 @@ func validateBackendObservation(runDirectory string, planned PlannedStage, obser
 			return fmt.Errorf("selected checkpoint metadata is invalid")
 		}
 		checkpointFound, evaluationFound := false, false
+		checkpointTokens := make(map[int64]int64, len(observation.Checkpoints))
 		for _, checkpoint := range observation.Checkpoints {
+			checkpointTokens[checkpoint.Step] = checkpoint.Tokens
 			checkpointFound = checkpointFound || checkpoint.Step == selected.Step && checkpoint.Tokens == selected.Tokens
 		}
+		best := math.Inf(1)
 		for _, evaluation := range observation.Evaluations {
 			value, ok := evaluation.Metrics[selected.Metric]
 			evaluationFound = evaluationFound || evaluation.Step == selected.Step && evaluation.Tokens == selected.Tokens && ok && value == selected.Value
+			if tokens, eligible := checkpointTokens[evaluation.Step]; eligible && tokens == evaluation.Tokens && ok && value < best {
+				best = value
+			}
 		}
 		if !checkpointFound || !evaluationFound {
 			return fmt.Errorf("selected checkpoint does not match a persisted checkpoint and evaluation")
+		}
+		if selected.Value != best {
+			return fmt.Errorf("selected checkpoint heldout_loss %.6f is not the best eligible persisted value %.6f", selected.Value, best)
 		}
 	}
 	return nil

@@ -38,11 +38,19 @@ func TestMLXResolverSelectsFirstUsableRuntime(t *testing.T) {
 
 func TestMLXWorkerPublishesBestEvaluatedCheckpoint(t *testing.T) {
 	source := string(mlxWorker)
+	if !strings.Contains(source, `WORKER_REVISION = "`+MLXRevision+`"`) {
+		t.Fatalf("embedded MLX worker revision does not match Go adapter %q", MLXRevision)
+	}
 	for _, expected := range []string{
 		`selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"])`,
 		`self.model.load_weights(selected_path)`,
 		`"selected_checkpoint": selection`,
 		`selected checkpoint step {selected_step}`,
+		`self.model.load_weights(weights_path)`,
+		`if abs(artifact_loss - live_loss) > tolerance:`,
+		`"value": live_loss`,
+		`self.step_number == 1 or self.step_number % evaluate_every == 0`,
+		`error_class="artifact-integrity" if isinstance(error, ArtifactIntegrityError) else ""`,
 	} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("MLX worker omits best-checkpoint publication behavior %q", expected)

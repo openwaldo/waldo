@@ -97,6 +97,21 @@ type WorkerOutputFrame struct {
 	Event       *Event       `json:"event,omitempty"`
 	Observation *Observation `json:"observation,omitempty"`
 	Error       string       `json:"error,omitempty"`
+	ErrorClass  string       `json:"error_class,omitempty"`
+}
+
+const WorkerErrorArtifactIntegrity = "artifact-integrity"
+
+type WorkerError struct {
+	Message string
+	Class   string
+}
+
+func (err *WorkerError) Error() string { return err.Message }
+
+func IsNonRetryableWorkerError(err error) bool {
+	var worker *WorkerError
+	return errors.As(err, &worker) && worker.Class == WorkerErrorArtifactIntegrity
 }
 
 func WriteWorkerInput(ctx context.Context, output io.Writer, begin WorkerBegin, records, evaluationRecords RecordSource) error {
@@ -348,6 +363,9 @@ func (frame WorkerOutputFrame) Validate() error {
 	case "error":
 		if frame.Error == "" {
 			return fmt.Errorf("worker error frame is missing error")
+		}
+		if frame.ErrorClass != "" && frame.ErrorClass != WorkerErrorArtifactIntegrity {
+			return fmt.Errorf("worker error frame has unsupported error_class %q", frame.ErrorClass)
 		}
 	default:
 		return fmt.Errorf("unsupported worker output kind %q", frame.Kind)

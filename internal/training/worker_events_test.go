@@ -87,3 +87,17 @@ func TestEmbeddedWorkerEmitsOnlyRecognizedFrameKinds(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerArtifactIntegrityErrorIsTypedAndNonRetryable(t *testing.T) {
+	var observed error
+	err := ReadWorkerOutput(strings.NewReader(`{"kind":"error","schema":1,"error":"artifact degraded","error_class":"artifact-integrity"}`+"\n"), func(frame WorkerOutputFrame) error {
+		observed = &WorkerError{Message: frame.Error, Class: frame.ErrorClass}
+		return observed
+	})
+	if err == nil || !IsNonRetryableWorkerError(err) || !IsNonRetryableWorkerError(observed) {
+		t.Fatalf("typed worker error = %v / %v", err, observed)
+	}
+	if err := (WorkerOutputFrame{Kind: "error", Schema: 1, Error: "x", ErrorClass: "unknown"}).Validate(); err == nil {
+		t.Fatal("unsupported worker error class was accepted")
+	}
+}

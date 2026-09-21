@@ -28,6 +28,8 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
 revision=$(sed -n 's/.*TorchTitanRevision = "\(.*\)".*/\1/p' "$repo_root/internal/training/torchtitan.go")
 [ -n "$revision" ] || { echo "could not read TorchTitanRevision from internal/training/torchtitan.go" >&2; exit 1; }
+local_gpus=$("$titan_python" -c 'import torch; print(torch.cuda.device_count())')
+[ "$local_gpus" -gt 0 ] || { echo "TorchTitan E2E did not find a CUDA GPU" >&2; exit 1; }
 temporary_base=${TMPDIR:-/tmp}
 work=$(mktemp -d "$temporary_base/waldo-torchtitan-e2e.XXXXXX")
 
@@ -47,13 +49,17 @@ binary="$work/waldo"
 index_root="$work/waldo-index"
 staging="$work/staging"
 models="$work/models"
-input="$work/training.txt"
+input="$work/training"
 compose="$work/model.yaml"
 export WALDO_CONFIG="$work/config.json"
 
 echo "testing: real TorchTitan model lifecycle with $titan_python"
 (cd "$repo_root" && GOCACHE="$work/go-cache" go build -o "$binary" ./cmd/waldo)
-printf 'OpenWALDO validates its distributed TorchTitan adapter.\nThis corpus is disposable.\n' > "$input"
+mkdir -p "$input"
+printf 'OpenWALDO validates its distributed TorchTitan adapter.\n' > "$input/one.txt"
+printf 'Internal checkpoints preserve exact FP32 training state.\n' > "$input/two.txt"
+printf 'Held-out records validate publishable model quality.\n' > "$input/three.txt"
+printf 'Portable artifacts use the architecture parameter dtype.\n' > "$input/four.txt"
 
 "$binary" index init "$index_root" >/dev/null
 "$binary" config set lookaside "file://$work/lookaside" >/dev/null
@@ -106,7 +112,7 @@ stages:
       - core/e2e/torchtitan
     parameters:
       steps: 2
-      batch_size: 1
+      batch_size: $local_gpus
       sequence_length: 16
       learning_rate: 0.001
       seed: 7
@@ -120,11 +126,32 @@ printf '%s\n' "$output" | grep -q 'backend       torchtitan@'"$revision"''
 summary=$("$binary" --json model summary torchtitan-smoke)
 printf '%s\n' "$summary" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*false'
 printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"torchtitan"'
+printf '%s\n' "$summary" | grep -Eq '"selected_checkpoint"[[:space:]]*:[[:space:]]*\{'
+printf '%s\n' "$summary" | grep -Eq '"publishable_checkpoint_heldout_loss"[[:space:]]*:'
+printf '%s\n' "$summary" | grep -Eq '"artifact_heldout_loss"[[:space:]]*:'
 weights=$(find "$models/torchtitan-smoke/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print)
 [ -n "$weights" ] && [ -s "$weights" ] || { echo "real TorchTitan weights were not produced" >&2; exit 1; }
 checkpoint_count=$(find "$models/torchtitan-smoke/runs" -type d -name 'step-*' -print | wc -l | tr -d ' ')
 [ "$checkpoint_count" -eq 2 ] || { echo "found $checkpoint_count TorchTitan checkpoints, want 2" >&2; exit 1; }
 find "$models/torchtitan-smoke/runs" -type d -name 'step-*' -exec test -f '{}/model.safetensors' \; -exec test -f '{}/runtime.pt' \; -exec test -f '{}/state.json' \;
 grep -ERq '"world_size"[[:space:]]*:[[:space:]]*[1-9]' "$models/torchtitan-smoke/runs" || { echo "TorchTitan run did not persist world size" >&2; exit 1; }
+checkpoint=$(find "$models/torchtitan-smoke/runs" -type f -path '*/checkpoints/step-*/model.safetensors' -print | sort | tail -1)
+"$titan_python" - "$weights" "$checkpoint" <<'PY'
+import json
+import struct
+import sys
+
+def header(path):
+    with open(path, "rb") as stream:
+        length = struct.unpack("<Q", stream.read(8))[0]
+        return json.loads(stream.read(length))
+
+portable = header(sys.argv[1])
+checkpoint = header(sys.argv[2])
+assert portable["__metadata__"]["storage_dtype"] == "bfloat16"
+assert portable["embedding.weight"]["dtype"] == "BF16"
+assert checkpoint["__metadata__"]["storage_dtype"] == "float32"
+assert checkpoint["embedding.weight"]["dtype"] == "F32"
+PY
 
 echo "E2E TorchTitan model passed: distributed mesh, optimization, checkpoints, and portable weights verified"
