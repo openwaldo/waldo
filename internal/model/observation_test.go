@@ -123,6 +123,14 @@ func TestArtifactIntegrityFailureIsNotResumable(t *testing.T) {
 	if resumableRunState(run, training.ResolvedParameters{Steps: 2, PlannedTokenCapacity: 128}) {
 		t.Fatal("persisted artifact-integrity failure unexpectedly became resumable")
 	}
+	numerical := &training.WorkerError{Message: "loss became non-finite", Class: training.WorkerErrorNumericalIntegrity}
+	if interruptedTrainingError(fmt.Errorf("worker: %w", numerical), progress) {
+		t.Fatal("deterministic numerical-integrity failure must fail instead of resuming")
+	}
+	run.FailureClass = training.WorkerErrorNumericalIntegrity
+	if resumableRunState(run, training.ResolvedParameters{Steps: 2, PlannedTokenCapacity: 128}) {
+		t.Fatal("persisted numerical-integrity failure unexpectedly became resumable")
+	}
 }
 
 func TestCheckArtifactFileDefersContentHashing(t *testing.T) {

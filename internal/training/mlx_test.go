@@ -49,8 +49,12 @@ func TestMLXWorkerPublishesBestEvaluatedCheckpoint(t *testing.T) {
 		`self.model.load_weights(weights_path)`,
 		`if abs(artifact_loss - live_loss) > tolerance:`,
 		`"value": live_loss`,
-		`self.step_number == 1 or self.step_number % evaluate_every == 0`,
-		`error_class="artifact-integrity" if isinstance(error, ArtifactIntegrityError) else ""`,
+		`safety_steps = {1}`,
+		`if self.evaluation_sequences and (not self.evaluations or self.evaluations[-1]["step"] != self.step_number):`,
+		`error_class = "artifact-integrity"`,
+		`error_class = "numerical-integrity"`,
+		`non-finite training loss at optimizer step`,
+		`non-finite gradient norm at optimizer step`,
 	} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("MLX worker omits best-checkpoint publication behavior %q", expected)

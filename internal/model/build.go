@@ -608,7 +608,7 @@ func resumableRunState(run RunRecord, parameters training.ResolvedParameters) bo
 	if run.State == RunInterrupted {
 		return true
 	}
-	if run.FailureClass == training.WorkerErrorArtifactIntegrity {
+	if run.FailureClass == training.WorkerErrorArtifactIntegrity || run.FailureClass == training.WorkerErrorNumericalIntegrity {
 		return false
 	}
 	// A checkpoint is WALDO's durable recovery boundary. Once its artifacts were
@@ -733,6 +733,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 	run.State = RunRunning
 	run.Finished = ""
 	run.Error = ""
+	run.FailureClass = ""
 	if run.Started == "" {
 		run.Started = formatTime(attemptStarted)
 	}
@@ -791,7 +792,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 		planned := PlannedStage{Name: stage.Name, Parameters: plannedParameters, PlannedTokens: runBOM.Parameters.PlannedTokenCapacity}
 		if err := validateBackendObservation(runDirectory, planned, observation); err != nil {
 			backendErr = fmt.Errorf("invalid backend observation: %w", err)
-		} else if set := runBOM.EvaluationSet; set != nil && set.Records > 0 && runBOM.Parameters.EvaluateEvery > 0 {
+		} else if set := runBOM.EvaluationSet; set != nil && set.Records > 0 && (runBOM.Parameters.EvaluateEvery > 0 || backendRequiresArtifactVerification(selection.Execution.Backend.Name)) {
 			if len(observation.Evaluations) == 0 {
 				backendErr = fmt.Errorf("invalid backend observation: held-out evaluation was configured but no metrics were reported")
 			} else {

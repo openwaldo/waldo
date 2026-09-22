@@ -577,6 +577,9 @@ func modelGGUFMetadata(record model.ModelRecord) ([]ggufMetadata, error) {
 	if err := architecture.Validate(); err != nil {
 		return nil, fmt.Errorf("GGUF architecture: %w", err)
 	}
+	if err := validateStandardLlamaArchitecture(architecture, "GGUF/Ollama"); err != nil {
+		return nil, err
+	}
 	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
 		return nil, fmt.Errorf("GGUF export currently requires byte@builtin-byte-schema-1 with vocabulary_size 259")
 	}

@@ -7,6 +7,7 @@
 set -eu
 
 if [ "$(uname -s)" != "Linux" ]; then
+  [ "${WALDO_E2E_REQUIRED:-0}" != "1" ] || { echo "testing: real TorchTitan model lifecycle requires Linux" >&2; exit 1; }
   echo "testing: real TorchTitan model lifecycle skipped (requires Linux)"
   exit 0
 fi
@@ -20,6 +21,7 @@ for candidate in "$(command -v python3 2>/dev/null || true)" "$(command -v pytho
   fi
 done
 if [ -z "$titan_python" ]; then
+  [ "${WALDO_E2E_REQUIRED:-0}" != "1" ] || { echo "testing: no usable GPU TorchTitan runtime" >&2; exit 1; }
   echo "testing: real TorchTitan model lifecycle skipped (no usable GPU TorchTitan runtime)"
   exit 0
 fi
@@ -99,6 +101,8 @@ architecture:
   layers: 1
   attention_heads: 4
   key_value_heads: 2
+  dropout: 0.1
+  qk_normalization: true
   tie_embeddings: true
   parameter_dtype: bfloat16
   tokenizer:
@@ -111,14 +115,15 @@ stages:
     corpora:
       - core/e2e/torchtitan
     parameters:
-      steps: 2
+      steps: 100
+      epochs: 100
       batch_size: $local_gpus
       sequence_length: 16
       learning_rate: 0.001
       seed: 7
       compile: true
-      checkpoint_every: 1
-      evaluate_every: 1
+      checkpoint_every: 100
+      evaluate_every: 100
 EOF
 
 output=$("$binary" model train torchtitan-smoke "$compose")
@@ -130,9 +135,13 @@ printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"torchtitan"
 printf '%s\n' "$summary" | grep -Eq '"selected_checkpoint"[[:space:]]*:[[:space:]]*\{'
 printf '%s\n' "$summary" | grep -Eq '"publishable_checkpoint_heldout_loss"[[:space:]]*:'
 printf '%s\n' "$summary" | grep -Eq '"live_compiled_heldout_loss"[[:space:]]*:'
+printf '%s\n' "$summary" | grep -Eq '"live_eager_compute_heldout_loss"[[:space:]]*:'
 printf '%s\n' "$summary" | grep -Eq '"live_eager_heldout_loss"[[:space:]]*:'
 printf '%s\n' "$summary" | grep -Eq '"compile_loss_delta"[[:space:]]*:'
+printf '%s\n' "$summary" | grep -Eq '"compute_precision_loss_delta"[[:space:]]*:'
 printf '%s\n' "$summary" | grep -Eq '"artifact_heldout_loss"[[:space:]]*:'
+chat_output=$("$binary" model chat torchtitan-smoke "Continue this sentence: OpenWALDO" --temperature 0 --top-p 1 --max-tokens 4)
+[ -n "$chat_output" ] || { echo "TorchTitan inference produced no output" >&2; exit 1; }
 weights=$(find "$models/torchtitan-smoke/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print)
 [ -n "$weights" ] && [ -s "$weights" ] || { echo "real TorchTitan weights were not produced" >&2; exit 1; }
 checkpoint_count=$(find "$models/torchtitan-smoke/runs" -type d -name 'step-*' -print | wc -l | tr -d ' ')
@@ -158,4 +167,4 @@ assert checkpoint["__metadata__"]["storage_dtype"] == "float32"
 assert checkpoint["embedding.weight"]["dtype"] == "F32"
 PY
 
-echo "E2E TorchTitan model passed: distributed mesh, optimization, checkpoints, and portable weights verified"
+echo "E2E TorchTitan model passed: shared training/inference architecture, distributed optimization, compiled/eager/FP32 artifact equivalence, and checkpoints verified"

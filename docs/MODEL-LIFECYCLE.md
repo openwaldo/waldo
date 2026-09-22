@@ -158,11 +158,16 @@ when the architecture declares a reduced portable `parameter_dtype`. This
 preserves exact optimizer continuation. WALDO converts only the selected
 terminal artifact, then verifies that representation against the held-out set.
 
-When held-out evaluation is configured, WALDO evaluates step 1 and every
-configured evaluation boundary. PyTorch and TorchTitan compare the live
-compiled model, the eager FP32-master model, and the publishable parameter
-representation at each such boundary and fail immediately on material drift
-between either boundary. WALDO publishes the
+When a held-out set exists, WALDO evaluates step 1, every configured periodic
+boundary, and the terminal step. Compiled PyTorch/TorchTitan runs add early
+safety boundaries at steps 100 and 1000 when those steps exist.
+`evaluate_every: 0` disables periodic evaluation but never the terminal
+artifact-quality gate. PyTorch and TorchTitan compare compiled
+compute-precision execution, eager compute-precision execution, eager FP32
+master weights, and the reloaded publishable artifact under the same FP32
+semantics used by chat inference. They fail immediately on material drift at
+any boundary. Training also stops before an optimizer update when loss or the
+optimizer-step gradient norm is non-finite. WALDO publishes the
 persisted candidate with the lowest finite publishable `heldout_loss`, not
 necessarily the last optimizer step. It reloads the selected terminal artifact
 and evaluates that saved file again before completion. `RUN.json` records the
@@ -170,6 +175,17 @@ selected step, token count, metric, and value. Summaries distinguish the last
 optimizer-step metric from the selected and reloaded artifact metrics. The
 full requested training budget still runs when validation passes; this
 selection rule is not early stopping.
+
+PyTorch/TorchTitan training, artifact verification, and chat inference execute
+one embedded model implementation owned by `internal/pytorchruntime`. Runtime
+configuration must match the immutable model architecture before chat starts.
+This prevents shape-preserving features such as QK normalization from silently
+differing between training and inference.
+
+Standard Llama-based Hugging Face, MLX-LM, GGUF, and Ollama exports fail closed
+when the WALDO architecture enables parameter-free QK normalization. Those
+runtimes cannot currently preserve its attention math. Native WALDO artifacts
+remain usable; portable export requires an exact runtime implementation first.
 
 One compatibility exception repairs a WALDO-derived value rather than a user
 change. If an older fixed-token run exhausted its input because WALDO pinned too

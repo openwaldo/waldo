@@ -97,6 +97,9 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	_ = ctx
 	record := inspection.Model
 	record.Interaction = inspection.EffectiveInteraction()
+	if err := validateStandardLlamaArchitecture(record.Architecture, format); err != nil {
+		return "", err
+	}
 	artifacts, err := inference.ResolveArtifacts(inspection)
 	if err != nil {
 		return "", err
@@ -190,6 +193,13 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	}
 	committed = true
 	return absolute, nil
+}
+
+func validateStandardLlamaArchitecture(architecture model.Architecture, format string) error {
+	if architecture.QKNormalization {
+		return fmt.Errorf("%s export cannot preserve WALDO qk_normalization; use the native waldo export until this runtime has an exact architecture implementation", format)
+	}
+	return nil
 }
 
 func huggingFaceTokenizerConfiguration(record model.ModelRecord) (map[string]any, string, error) {

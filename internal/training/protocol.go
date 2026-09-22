@@ -100,7 +100,10 @@ type WorkerOutputFrame struct {
 	ErrorClass  string       `json:"error_class,omitempty"`
 }
 
-const WorkerErrorArtifactIntegrity = "artifact-integrity"
+const (
+	WorkerErrorArtifactIntegrity  = "artifact-integrity"
+	WorkerErrorNumericalIntegrity = "numerical-integrity"
+)
 
 type WorkerError struct {
 	Message string
@@ -110,7 +113,8 @@ type WorkerError struct {
 func (err *WorkerError) Error() string { return err.Message }
 
 func IsNonRetryableWorkerError(err error) bool {
-	return WorkerErrorClass(err) == WorkerErrorArtifactIntegrity
+	class := WorkerErrorClass(err)
+	return class == WorkerErrorArtifactIntegrity || class == WorkerErrorNumericalIntegrity
 }
 
 func WorkerErrorClass(err error) string {
@@ -371,7 +375,7 @@ func (frame WorkerOutputFrame) Validate() error {
 		if frame.Error == "" {
 			return fmt.Errorf("worker error frame is missing error")
 		}
-		if frame.ErrorClass != "" && frame.ErrorClass != WorkerErrorArtifactIntegrity {
+		if frame.ErrorClass != "" && frame.ErrorClass != WorkerErrorArtifactIntegrity && frame.ErrorClass != WorkerErrorNumericalIntegrity {
 			return fmt.Errorf("worker error frame has unsupported error_class %q", frame.ErrorClass)
 		}
 	default:

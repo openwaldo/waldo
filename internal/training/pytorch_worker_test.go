@@ -6,27 +6,43 @@
 package training
 
 import (
-	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/openwaldo/waldo/internal/pytorchruntime"
 )
 
-// The artifact check in ADR 0044 compares the publishable parameter
-// representation with the live FP32-master model under identical compute
-// precision. This makes target-dtype degradation visible before publication.
-func TestPyTorchWorkerEvaluatesArtifactAtLiveEvaluationPrecision(t *testing.T) {
+func TestPyTorchWorkerEvaluatesEveryExecutionBoundary(t *testing.T) {
 	source := string(pyTorchWorker)
 	if !strings.Contains(source, `WORKER_REVISION = "`+PyTorchRevision+`"`) || !strings.Contains(source, `TORCHTITAN_REVISION = "`+TorchTitanRevision+`"`) {
 		t.Fatalf("embedded PyTorch worker revisions do not match the Go adapters")
 	}
-	pattern := regexp.MustCompile(`evaluate_model\([^)]*mixed_precision=(True|False)(?:,[^)]*)?\)`)
-	matches := pattern.FindAllStringSubmatch(source, -1)
-	if len(matches) < 2 {
-		t.Fatalf("expected the worker to evaluate both the live and reloaded model, found %d call(s)", len(matches))
+	for _, expected := range []string{
+		`eager_compute_loss = self.evaluate_model(self.model, mixed_precision=True, compiled=False)`,
+		`self.evaluate_model(self.model, mixed_precision=True, compiled=True)`,
+		`if self.parameters.get("compile", False)`,
+		`eager_float32_loss = self.evaluate_model(self.model, mixed_precision=False, compiled=False)`,
+		`self.evaluate_model(artifact_model, mixed_precision=False, compiled=False)`,
+		`"live_eager_compute_heldout_loss": eager_compute_loss`,
+		`"live_eager_heldout_loss": eager_float32_loss`,
+		`"compute_precision_loss_delta": eager_compute_loss - eager_float32_loss`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("PyTorch worker omits execution-boundary evaluation %q", expected)
+		}
 	}
-	for _, match := range matches[1:] {
-		if match[1] != matches[0][1] {
-			t.Fatalf("held-out evaluations disagree on compute precision: %q vs %q", matches[0][0], match[0])
+}
+
+func TestPyTorchTrainingUsesSharedInferenceModel(t *testing.T) {
+	source := pytorchruntime.WithModel(pyTorchWorker)
+	for _, expected := range []string{
+		`WALDO_SHARED_DECODER_LM = DecoderLM`,
+		`DecoderLM = WALDO_SHARED_DECODER_LM`,
+		`architecture.get("qk_normalization", False)`,
+		`if self.qk_normalization:`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("composed PyTorch worker omits shared model contract %q", expected)
 		}
 	}
 }
@@ -35,18 +51,36 @@ func TestPyTorchWorkerFailsClosedOnArtifactDegradation(t *testing.T) {
 	source := string(pyTorchWorker)
 	for _, expected := range []string{
 		`"live_compiled_heldout_loss": compiled_loss`,
-		`"live_eager_heldout_loss": live_loss`,
+		`"live_eager_heldout_loss": eager_float32_loss`,
 		`"publishable_checkpoint_heldout_loss": artifact_loss`,
-		`if abs(compiled_loss - live_loss) > compile_tolerance:`,
+		`if abs(compiled_loss - eager_compute_loss) > compile_tolerance:`,
 		`disable compile or correct compiled execution before spending more compute`,
-		`if abs(artifact_loss - live_loss) > tolerance:`,
+		`if abs(eager_compute_loss - eager_float32_loss) > precision_tolerance:`,
+		`correct compute-precision behavior before spending more compute`,
+		`if abs(artifact_loss - eager_float32_loss) > tolerance:`,
 		`"correct checkpoint serialization or target-dtype conversion before spending more compute"`,
 		`if abs(artifact_loss - candidate_loss) > tolerance:`,
-		`error_class="artifact-integrity" if isinstance(error, ArtifactIntegrityError) else ""`,
+		`error_class = "artifact-integrity"`,
+		`error_class = "numerical-integrity"`,
 		`"value": candidate_loss`,
 	} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("PyTorch worker omits fail-closed artifact behavior %q", expected)
+		}
+	}
+}
+
+func TestPyTorchWorkerFailsEarlyOnNumericalAndExecutionDrift(t *testing.T) {
+	source := string(pyTorchWorker)
+	for _, expected := range []string{
+		`non-finite training loss at optimizer step`,
+		`non-finite gradient norm at optimizer step`,
+		`if self.parameters.get("compile", False):`,
+		`safety_steps.update((min(100, self.target_steps), min(1000, self.target_steps)))`,
+		`self.step_number in safety_steps`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("PyTorch worker omits early training guard %q", expected)
 		}
 	}
 }
@@ -193,8 +227,7 @@ func TestPyTorchWorkerPinsMemoryAndPrecisionControls(t *testing.T) {
 		`class MuonAdamW(torch.optim.Optimizer)`,
 		`zeropower_via_newton_schulz5`,
 		`schedule["name"] == "warmup-stable-warmdown"`,
-		`architecture.get("qk_normalization", False)`,
-		`architecture.get("initialization", "normal") == "depth-scaled"`,
+		`WALDO_SHARED_DECODER_LM`,
 		`"scaler": self.scaler.state_dict()`,
 		`self.scaler.load_state_dict(runtime.get("scaler", {}))`,
 	} {

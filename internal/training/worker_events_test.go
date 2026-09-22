@@ -97,6 +97,13 @@ func TestWorkerArtifactIntegrityErrorIsTypedAndNonRetryable(t *testing.T) {
 	if err == nil || !IsNonRetryableWorkerError(err) || !IsNonRetryableWorkerError(observed) {
 		t.Fatalf("typed worker error = %v / %v", err, observed)
 	}
+	numerical := &WorkerError{Message: "loss is non-finite", Class: WorkerErrorNumericalIntegrity}
+	if !IsNonRetryableWorkerError(numerical) {
+		t.Fatalf("numerical-integrity error must not resume: %v", numerical)
+	}
+	if err := (WorkerOutputFrame{Kind: "error", Schema: 1, Error: "x", ErrorClass: WorkerErrorNumericalIntegrity}).Validate(); err != nil {
+		t.Fatalf("numerical-integrity error frame rejected: %v", err)
+	}
 	if err := (WorkerOutputFrame{Kind: "error", Schema: 1, Error: "x", ErrorClass: "unknown"}).Validate(); err == nil {
 		t.Fatal("unsupported worker error class was accepted")
 	}

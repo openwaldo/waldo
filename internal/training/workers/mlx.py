@@ -20,10 +20,14 @@ from mlx.utils import tree_flatten, tree_map, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r14"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r15"
 
 
 class ArtifactIntegrityError(ValueError):
+    pass
+
+
+class NumericalIntegrityError(ValueError):
     pass
 
 
@@ -408,6 +412,8 @@ class Trainer:
         if GPU_THROTTLE < 1:
             time.sleep((time.perf_counter() - step_started) * (1 / GPU_THROTTLE - 1))
         valid_tokens = int(mask.sum().item())
+        if not math.isfinite(float(loss.item())):
+            raise NumericalIntegrityError(f"non-finite training loss at optimizer step {next_step}; no optimizer update was applied")
         if valid_tokens <= 0 and self.accumulated_tokens == 0:
             raise ValueError("gradient accumulation micro-batch has no supervised token targets")
         if self.accumulated_gradients is None:
@@ -427,22 +433,20 @@ class Trainer:
             return
 
         averaged_gradients = tree_map(lambda gradient: gradient / self.accumulated_tokens, self.accumulated_gradients)
-        gradient_norm_value = None
-        gradient_norm = None
-        if should_report:
-            squared_norm = mx.array(0.0)
-            for _, gradient in tree_flatten(averaged_gradients):
-                squared_norm = squared_norm + mx.sum(gradient.astype(mx.float32) ** 2)
-            gradient_norm = mx.sqrt(squared_norm)
+        # Validate every optimizer update before mutating model or optimizer
+        # state. Delayed sampling can let one bad gradient poison a long run.
+        squared_norm = mx.array(0.0)
+        for _, gradient in tree_flatten(averaged_gradients):
+            squared_norm = squared_norm + mx.sum(gradient.astype(mx.float32) ** 2)
+        gradient_norm = mx.sqrt(squared_norm)
+        mx.eval(gradient_norm)
+        gradient_norm_value = float(gradient_norm.item())
+        if not math.isfinite(gradient_norm_value):
+            raise NumericalIntegrityError(f"non-finite gradient norm at optimizer step {next_step}; no optimizer update was applied")
         update_started = time.perf_counter()
         self.optimizer.update(self.model, averaged_gradients)
-        evaluated = [self.model.parameters(), self.optimizer.state]
-        if gradient_norm is not None:
-            evaluated.append(gradient_norm)
-        mx.eval(*evaluated)
+        mx.eval(self.model.parameters(), self.optimizer.state)
         self.accumulated_compute_seconds += max(time.perf_counter() - update_started, 1e-9)
-        if gradient_norm is not None:
-            gradient_norm_value = float(gradient_norm.item())
         loss_value = self.accumulated_loss_sum / self.accumulated_tokens
         valid_tokens = self.accumulated_tokens
         step_seconds = max(self.accumulated_compute_seconds, 1e-9)
@@ -481,7 +485,10 @@ class Trainer:
                 },
             )
         evaluate_every = self.parameters["evaluate_every"]
-        evaluate_due = evaluate_every > 0 and (self.step_number == 1 or self.step_number % evaluate_every == 0)
+        safety_steps = {1}
+        evaluate_due = bool(self.evaluation_sequences) and (
+            self.step_number in safety_steps or (evaluate_every > 0 and self.step_number % evaluate_every == 0)
+        )
         if evaluate_due:
             self.record_evaluation(loss_value)
         checkpoint_every = self.parameters["checkpoint_every"]
@@ -660,9 +667,10 @@ class Trainer:
             raise ValueError(
                 f"canonical stream produced only {self.step_number} training steps; profile requires {self.target_steps}"
             )
-        if self.parameters["evaluate_every"] > 0 and (
-            not self.evaluations or self.evaluations[-1]["step"] != self.step_number
-        ):
+        # evaluate_every=0 disables periodic evaluation, not the terminal
+        # artifact-quality gate. If a held-out set exists, every completed real
+        # run must validate and select its published inference artifact.
+        if self.evaluation_sequences and (not self.evaluations or self.evaluations[-1]["step"] != self.step_number):
             self.record_evaluation(self.final_loss)
         if self.parameters["checkpoint_every"] > 0 and (
             not self.checkpoints or self.checkpoints[-1]["step"] != self.step_number
@@ -801,5 +809,10 @@ try:
     run()
 except Exception as error:
     traceback.print_exc(file=sys.stderr)
-    emit("error", error=str(error), error_class="artifact-integrity" if isinstance(error, ArtifactIntegrityError) else "")
+    error_class = ""
+    if isinstance(error, ArtifactIntegrityError):
+        error_class = "artifact-integrity"
+    elif isinstance(error, NumericalIntegrityError):
+        error_class = "numerical-integrity"
+    emit("error", error=str(error), error_class=error_class)
     sys.exit(1)

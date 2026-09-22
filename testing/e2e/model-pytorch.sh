@@ -7,6 +7,7 @@
 set -eu
 
 if [ "$(uname -s)" != "Linux" ]; then
+  [ "${WALDO_E2E_REQUIRED:-0}" != "1" ] || { echo "testing: real PyTorch model lifecycle requires Linux" >&2; exit 1; }
   echo "testing: real PyTorch model lifecycle skipped (requires Linux)"
   exit 0
 fi
@@ -20,6 +21,7 @@ for candidate in "$(command -v python3 2>/dev/null || true)" "$(command -v pytho
   fi
 done
 if [ -z "$torch_python" ]; then
+  [ "${WALDO_E2E_REQUIRED:-0}" != "1" ] || { echo "testing: no usable PyTorch Python runtime" >&2; exit 1; }
   echo "testing: real PyTorch model lifecycle skipped (no usable PyTorch Python runtime)"
   exit 0
 fi
@@ -125,6 +127,8 @@ architecture:
   layers: 1
   attention_heads: 4
   key_value_heads: 2
+  dropout: 0.1
+  qk_normalization: true
   tie_embeddings: true
   parameter_dtype: bfloat16
   tokenizer:
@@ -137,14 +141,15 @@ stages:
     corpora:
       - core/e2e/pytorch
     parameters:
-      steps: 2
+      steps: 100
+      epochs: 100
       batch_size: 1
       sequence_length: 16
       learning_rate: 0.001
       seed: 7
       compile: true
-      checkpoint_every: 1
-      evaluate_every: 1
+      checkpoint_every: 100
+      evaluate_every: 100
 EOF
 
 output=$("$binary" model train pytorch-smoke "$compose")
@@ -156,9 +161,13 @@ printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"pytorch"'
 printf '%s\n' "$summary" | grep -Eq '"selected_checkpoint"[[:space:]]*:[[:space:]]*\{'
 printf '%s\n' "$summary" | grep -Eq '"publishable_checkpoint_heldout_loss"[[:space:]]*:'
 printf '%s\n' "$summary" | grep -Eq '"live_compiled_heldout_loss"[[:space:]]*:'
+printf '%s\n' "$summary" | grep -Eq '"live_eager_compute_heldout_loss"[[:space:]]*:'
 printf '%s\n' "$summary" | grep -Eq '"live_eager_heldout_loss"[[:space:]]*:'
 printf '%s\n' "$summary" | grep -Eq '"compile_loss_delta"[[:space:]]*:'
+printf '%s\n' "$summary" | grep -Eq '"compute_precision_loss_delta"[[:space:]]*:'
 printf '%s\n' "$summary" | grep -Eq '"artifact_heldout_loss"[[:space:]]*:'
+chat_output=$("$binary" model chat pytorch-smoke "Continue this sentence: OpenWALDO" --temperature 0 --top-p 1 --max-tokens 4)
+[ -n "$chat_output" ] || { echo "PyTorch inference produced no output" >&2; exit 1; }
 
 train_output=$("$binary" model train pytorch-smoke core/e2e/pytorch --epochs 2)
 printf '%s\n' "$train_output" | grep -q 'backend       pytorch@'"$revision"''
@@ -173,44 +182,28 @@ current_weights=$(find "$models/pytorch-smoke/runs" -type f -name model.safetens
 current_checkpoint=$(find "$models/pytorch-smoke/runs" -type f -path '*/checkpoints/step-*/model.safetensors' -print | sort | tail -1)
 [ -s "$current_checkpoint" ] || { echo "real PyTorch checkpoint weights were not produced" >&2; exit 1; }
 
-"$binary" model export pytorch-smoke "$huggingface_export" --format huggingface --allow-incomplete >/dev/null
-"$binary" model export pytorch-smoke "$gguf_export" --format gguf --allow-incomplete >/dev/null
-"$torch_python" - "$current_weights" "$huggingface_export" "$gguf_export" <<'PY'
-import hashlib
+if "$binary" model export pytorch-smoke "$huggingface_export" --format huggingface --allow-incomplete >"$root/huggingface-export.log" 2>&1; then
+  echo "Hugging Face export unexpectedly discarded qk_normalization" >&2
+  exit 1
+fi
+grep -q 'cannot preserve WALDO qk_normalization' "$root/huggingface-export.log"
+if "$binary" model export pytorch-smoke "$gguf_export" --format gguf --allow-incomplete >"$root/gguf-export.log" 2>&1; then
+  echo "GGUF export unexpectedly discarded qk_normalization" >&2
+  exit 1
+fi
+grep -q 'cannot preserve WALDO qk_normalization' "$root/gguf-export.log"
+"$torch_python" - "$current_weights" <<'PY'
 import json
-import os
 import struct
 import sys
 
-source, huggingface_root, gguf_root = sys.argv[1:]
-
-def tensor_payload(path):
-    with open(path, "rb") as stream:
-        length = struct.unpack("<Q", stream.read(8))[0]
-        header = json.loads(stream.read(length))
-        payload = hashlib.sha256(stream.read()).hexdigest()
-    return header, payload
-
-source_header, source_payload = tensor_payload(source)
+with open(sys.argv[1], "rb") as stream:
+    length = struct.unpack("<Q", stream.read(8))[0]
+    source_header = json.loads(stream.read(length))
 assert source_header["__metadata__"]["backend"] == "pytorch"
 assert source_header["__metadata__"]["storage_dtype"] == "bfloat16"
 assert "embedding.weight" in source_header
 assert source_header["embedding.weight"]["dtype"] == "BF16"
-target_header, target_payload = tensor_payload(os.path.join(huggingface_root, "model.safetensors"))
-assert source_payload == target_payload
-assert target_header["__metadata__"]["format"] == "pt"
-assert "model.embed_tokens.weight" in target_header
-with open(os.path.join(gguf_root, "model.gguf"), "rb") as stream:
-    assert stream.read(4) == b"GGUF"
-    assert struct.unpack("<I", stream.read(4))[0] == 3
-for root in (huggingface_root, gguf_root):
-    with open(os.path.join(root, "BOM.json"), encoding="utf-8") as stream:
-        bom = json.load(stream)
-    for item in bom["artifacts"]:
-        with open(os.path.join(root, item["path"]), "rb") as stream:
-            data = stream.read()
-        assert len(data) == item["bytes"]
-        assert hashlib.sha256(data).hexdigest() == item["sha256"]
 PY
 
 "$torch_python" - "$current_checkpoint" <<'PY'
@@ -225,4 +218,4 @@ assert header["__metadata__"]["storage_dtype"] == "float32"
 assert header["embedding.weight"]["dtype"] == "F32"
 PY
 
-echo "E2E PyTorch model passed: trained, continued, and exported Hugging Face and GGUF packages"
+echo "E2E PyTorch model passed: shared training/inference architecture, compiled/eager/FP32 artifact equivalence, continuation, and unsafe exports rejected"

@@ -59,6 +59,12 @@ There is no single Python architecture file shared by every runtime:
 The generated Python file is a runtime binding, not a copy of WALDO's training
 worker. GGUF and Ollama do not need or include Python architecture code.
 
+These derived packages currently bind to standard Llama implementations.
+WALDO therefore rejects Hugging Face, MLX-LM, GGUF, and Ollama export when the
+managed architecture enables parameter-free `qk_normalization`; those runtimes
+would otherwise accept the same tensor shapes while producing different
+logits. Use the native `waldo` package until an exact portable binding exists.
+
 ## Prerequisites and selection
 
 The model name resolves beneath the configured `model.root`, which defaults to

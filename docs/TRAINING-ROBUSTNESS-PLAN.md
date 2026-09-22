@@ -49,13 +49,25 @@ The corrected boundary requires:
 
 - FP32 master weights in PyTorch and TorchTitan resume checkpoints;
 - separate compiled-live, eager-live, and persisted-reload measurements;
+- separate eager compute-precision and eager FP32 inference measurements;
+- one shared PyTorch model implementation across training, artifact checks,
+  and chat inference;
 - target-representation evaluation at step 1 and every evaluation boundary;
+- early compiled-execution safety evaluations at steps 100 and 1000 before
+  committing substantial accelerator time;
 - best-checkpoint selection using that publishable representation;
 - a terminal reload check for PyTorch, TorchTitan, and MLX;
 - rejection of any selected checkpoint that is not the global minimum among
   eligible persisted candidates; and
 - terminal, non-resumable classification for deterministic artifact-integrity
-  failures.
+  and numerical-integrity failures.
+
+The full audit also found that the old PyTorch chat worker duplicated the model
+definition and omitted QK normalization. That did not affect 0003, whose
+architecture leaves QK normalization disabled, but it would have caused 0004
+to train and infer with different attention math. Worker r15/r26 makes the
+shared implementation authoritative and verifies the runtime configuration
+against the immutable architecture before chat.
 
 The 0003 and 0004 reference composes disable compiled execution until its
 equivalence with eager inference has been demonstrated, keep portable
@@ -82,6 +94,8 @@ Before another multi-day model run:
    estimated training FLOPs, MFU, gradient norm, and skipped/non-finite steps.
 4. Pin the hardware, software, compose, corpus BOM, tokenizer, seed, and
    evaluation BOM in one comparison report.
+5. Run `./testing/training-acceptance.sh` on a Linux GPU host. A skipped backend
+   is a failure in this release gate, not a passing test.
 
 Exit gate: estimates agree with observed peak memory within 15%, token counts
 are exact, and resumed and uninterrupted golden runs pass.

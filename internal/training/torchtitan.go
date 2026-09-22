@@ -18,10 +18,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/openwaldo/waldo/internal/pytorchruntime"
 )
 
 const (
-	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r25"
+	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r26"
 	recommendedTorchVersion      = "2.15.0.dev20260905+cu130"
 	recommendedTorchTitanVersion = "0.3.0"
 	recommendedTorchIndex        = "https://download.pytorch.org/whl/nightly/cu130"
@@ -89,7 +91,7 @@ func (backend TorchTitan) Run(ctx context.Context, request Request) (Observation
 	}
 	workerPath := worker.Name()
 	defer os.Remove(workerPath)
-	if _, err := worker.Write(pyTorchWorker); err != nil {
+	if _, err := worker.WriteString(pytorchruntime.WithModel(pyTorchWorker)); err != nil {
 		_ = worker.Close()
 		return Observation{}, err
 	}

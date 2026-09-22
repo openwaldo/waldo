@@ -490,7 +490,7 @@ must use one representation or the other, never both.
 | `warmdown_steps` | no | half of the run for `warmup-stable-warmdown`, otherwise `0` | Linear warmdown duration. Warmup plus warmdown cannot exceed the run. |
 | `minimum_learning_rate_ratio` | no | `0.1` for cosine, `0` for warmup-stable-warmdown; `0..1` | Final learning rate as a fraction of the peak. |
 | `checkpoint_every` | no | `min(500, steps)`; `0..steps` | Checkpoint interval. Explicit zero disables periodic checkpoints. |
-| `evaluate_every` | no | `min(500, steps)`; `0..steps` | Held-out evaluation interval. Explicit zero disables periodic evaluation. |
+| `evaluate_every` | no | `min(500, steps)`; `0..steps` | Held-out evaluation interval. Explicit zero disables periodic evaluation; real backends still run safety and terminal artifact-quality evaluations whenever a held-out set exists. |
 | `shuffle_buffer_records` | no | default `1024`; `1..1000000` | Maximum records retained by deterministic bounded shuffle. |
 | `shuffle_buffer_bytes` | no | default 64 MiB; `1 B..16 GiB` | Maximum record text retained by deterministic bounded shuffle. |
 | `corpus_weights` | only for `causal-pretrain-weighted`; legacy form | each weight `1..1000000` | Integer relative token exposure keyed by every selected corpus path. Configured corpus `weight` fields are preferred. |

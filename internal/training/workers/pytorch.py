@@ -24,12 +24,16 @@ from torch.utils.checkpoint import checkpoint
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r14"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r25"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r15"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r26"
 IS_PRIMARY = True
 
 
 class ArtifactIntegrityError(ValueError):
+    pass
+
+
+class NumericalIntegrityError(ValueError):
     pass
 
 
@@ -800,6 +804,8 @@ class Trainer:
             torch.distributed.all_reduce(global_loss_sum, op=torch.distributed.ReduceOp.SUM)
         else:
             global_loss_sum = loss_sum.detach()
+        if not math.isfinite(float(global_loss_sum.cpu().item())):
+            raise NumericalIntegrityError(f"non-finite training loss at optimizer step {next_step}; no optimizer update was applied")
         valid_tokens = int(global_valid_tokens.cpu().item())
         if valid_tokens <= 0 and self.accumulated_tokens == 0:
             raise ValueError("gradient accumulation micro-batch has no supervised token targets")
@@ -820,9 +826,12 @@ class Trainer:
         for parameter in self.model.parameters():
             if parameter.grad is not None:
                 parameter.grad.div_(self.accumulated_tokens)
-        gradient_norm = None
-        if should_report:
-            gradient_norm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), math.inf).detach().cpu().item())
+        # Validate every optimizer update, not only progress-reporting steps.
+        # A non-finite BF16 gradient can otherwise poison weights long before
+        # the next checkpoint or held-out evaluation notices the failure.
+        gradient_norm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), math.inf).detach().cpu().item())
+        if not math.isfinite(gradient_norm):
+            raise NumericalIntegrityError(f"non-finite gradient norm at optimizer step {next_step}; no optimizer update was applied")
         update_started = time.perf_counter()
         if self.scaler.is_enabled():
             scale_before = self.scaler.get_scale()
@@ -878,7 +887,12 @@ class Trainer:
                 },
             )
         evaluate_every = self.parameters["evaluate_every"]
-        evaluate_due = evaluate_every > 0 and (self.step_number == 1 or self.step_number % evaluate_every == 0)
+        safety_steps = {1}
+        if self.parameters.get("compile", False):
+            safety_steps.update((min(100, self.target_steps), min(1000, self.target_steps)))
+        evaluate_due = bool(self.evaluation_sequences) and (
+            self.step_number in safety_steps or (evaluate_every > 0 and self.step_number % evaluate_every == 0)
+        )
         if evaluate_due:
             self.record_evaluation(loss_value)
         checkpoint_every = self.parameters["checkpoint_every"]
@@ -1128,7 +1142,9 @@ class Trainer:
                 if missing or unexpected:
                     raise ValueError(f"weights do not match portable architecture: missing={missing}, unexpected={unexpected}")
                 artifact_model.to(device=self.device, dtype=torch.float32)
-                loss_value = self.evaluate_model(artifact_model, mixed_precision=True, compiled=False)
+                # Match the PyTorch chat runtime exactly: reloaded portable
+                # weights, eager execution, and no training autocast.
+                loss_value = self.evaluate_model(artifact_model, mixed_precision=False, compiled=False)
                 del artifact_model
             except Exception as error:
                 failure = str(error)
@@ -1147,8 +1163,13 @@ class Trainer:
     def record_evaluation(self, _training_loss):
         if not self.evaluation_sequences:
             return
-        compiled_loss = self.evaluate_model(self.model, mixed_precision=True, compiled=True)
-        live_loss = self.evaluate_model(self.model, mixed_precision=True, compiled=False)
+        eager_compute_loss = self.evaluate_model(self.model, mixed_precision=True, compiled=False)
+        compiled_loss = (
+            self.evaluate_model(self.model, mixed_precision=True, compiled=True)
+            if self.parameters.get("compile", False)
+            else eager_compute_loss
+        )
+        eager_float32_loss = self.evaluate_model(self.model, mixed_precision=False, compiled=False)
         self.model.train()
         checkpoint = next((item for item in self.checkpoints if item["step"] == self.step_number), None)
         unpublished_checkpoint = checkpoint is None
@@ -1161,21 +1182,29 @@ class Trainer:
             "model.safetensors",
         )
         artifact_loss = self.evaluate_weight_file(checkpoint_path, quantize=True)
-        tolerance = max(0.02, abs(live_loss) * 0.01)
-        compile_tolerance = max(0.02, abs(live_loss) * 0.01)
+        tolerance = max(0.02, abs(eager_float32_loss) * 0.01)
+        compile_tolerance = max(0.02, abs(eager_compute_loss) * 0.01)
+        precision_tolerance = max(0.02, abs(eager_float32_loss) * 0.01)
         if not math.isfinite(compiled_loss):
             raise ArtifactIntegrityError("compiled held-out loss is not finite")
-        if abs(compiled_loss - live_loss) > compile_tolerance:
+        if not math.isfinite(eager_compute_loss) or not math.isfinite(eager_float32_loss):
+            raise ArtifactIntegrityError("eager held-out loss is not finite")
+        if abs(compiled_loss - eager_compute_loss) > compile_tolerance:
             raise ArtifactIntegrityError(
-                f"compiled held-out loss {compiled_loss:.6f} does not match eager inference loss {live_loss:.6f} "
+                f"compiled held-out loss {compiled_loss:.6f} does not match eager compute-precision loss {eager_compute_loss:.6f} "
                 f"within tolerance {compile_tolerance:.6f}; disable compile or correct compiled execution before spending more compute"
+            )
+        if abs(eager_compute_loss - eager_float32_loss) > precision_tolerance:
+            raise ArtifactIntegrityError(
+                f"eager {self.compute_dtype} held-out loss {eager_compute_loss:.6f} does not match eager float32 inference loss "
+                f"{eager_float32_loss:.6f} within tolerance {precision_tolerance:.6f}; correct compute-precision behavior before spending more compute"
             )
         if not math.isfinite(artifact_loss):
             raise ArtifactIntegrityError("publishable checkpoint held-out loss is not finite")
-        if abs(artifact_loss - live_loss) > tolerance:
+        if abs(artifact_loss - eager_float32_loss) > tolerance:
             raise ArtifactIntegrityError(
                 f"publishable {self.architecture['parameter_dtype']} checkpoint held-out loss {artifact_loss:.6f} "
-                f"does not match eager FP32-master loss {live_loss:.6f} within tolerance {tolerance:.6f}; "
+                f"does not match eager float32 master-weight loss {eager_float32_loss:.6f} within tolerance {tolerance:.6f}; "
                 "correct checkpoint serialization or target-dtype conversion before spending more compute"
             )
         if unpublished_checkpoint:
@@ -1187,10 +1216,12 @@ class Trainer:
                 "heldout_loss": artifact_loss,
                 "heldout_perplexity": math.exp(min(artifact_loss, 80.0)),
                 "live_compiled_heldout_loss": compiled_loss,
-                "live_eager_heldout_loss": live_loss,
+                "live_eager_compute_heldout_loss": eager_compute_loss,
+                "live_eager_heldout_loss": eager_float32_loss,
                 "publishable_checkpoint_heldout_loss": artifact_loss,
-                "artifact_loss_delta": artifact_loss - live_loss,
-                "compile_loss_delta": compiled_loss - live_loss,
+                "artifact_loss_delta": artifact_loss - eager_float32_loss,
+                "compile_loss_delta": compiled_loss - eager_compute_loss,
+                "compute_precision_loss_delta": eager_compute_loss - eager_float32_loss,
             },
         }
         self.evaluations.append(item)
@@ -1198,7 +1229,7 @@ class Trainer:
             "event",
             event={
                 "kind": "evaluation",
-                "message": f"step {self.step_number} publishable held-out loss {artifact_loss:.4f} (eager {live_loss:.4f}, compiled {compiled_loss:.4f})",
+                "message": f"step {self.step_number} publishable FP32-inference held-out loss {artifact_loss:.4f} (master FP32 {eager_float32_loss:.4f}, eager compute {eager_compute_loss:.4f}, compiled compute {compiled_loss:.4f})",
                 "step": self.step_number,
                 "tokens": self.consumed_tokens,
                 "evaluation": item,
@@ -1256,9 +1287,10 @@ class Trainer:
             raise ValueError(
                 f"canonical stream produced only {self.step_number} training steps; profile requires {self.target_steps}"
             )
-        if self.parameters["evaluate_every"] > 0 and (
-            not self.evaluations or self.evaluations[-1]["step"] != self.step_number
-        ):
+        # evaluate_every=0 disables periodic evaluation, not the terminal
+        # artifact-quality gate. If a held-out set exists, every completed real
+        # run must validate and select its published inference artifact.
+        if self.evaluation_sequences and (not self.evaluations or self.evaluations[-1]["step"] != self.step_number):
             self.record_evaluation(self.final_loss)
         if self.parameters["checkpoint_every"] > 0 and (
             not self.checkpoints or self.checkpoints[-1]["step"] != self.step_number
@@ -1543,11 +1575,22 @@ def run():
     trainer.finish()
 
 
+RMSNorm = WALDO_SHARED_RMS_NORM
+Attention = WALDO_SHARED_ATTENTION
+FeedForward = WALDO_SHARED_FEED_FORWARD
+DecoderBlock = WALDO_SHARED_DECODER_BLOCK
+DecoderLM = WALDO_SHARED_DECODER_LM
+
 try:
     run()
 except Exception as error:
     traceback.print_exc(file=sys.stderr)
-    emit("error", error=str(error), error_class="artifact-integrity" if isinstance(error, ArtifactIntegrityError) else "")
+    error_class = ""
+    if isinstance(error, ArtifactIntegrityError):
+        error_class = "artifact-integrity"
+    elif isinstance(error, NumericalIntegrityError):
+        error_class = "numerical-integrity"
+    emit("error", error=str(error), error_class=error_class)
     sys.exit(1)
 finally:
     if torch.distributed.is_initialized():

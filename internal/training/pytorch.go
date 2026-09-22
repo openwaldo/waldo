@@ -15,9 +15,11 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/openwaldo/waldo/internal/pytorchruntime"
 )
 
-const PyTorchRevision = "builtin-pytorch-worker-schema-1-r14"
+const PyTorchRevision = "builtin-pytorch-worker-schema-1-r15"
 
 //go:embed workers/pytorch.py
 var pyTorchWorker []byte
@@ -44,7 +46,7 @@ func (backend PyTorch) Run(ctx context.Context, request Request) (Observation, e
 	if device == "" {
 		device = "cpu"
 	}
-	return runPythonWorker(ctx, "PyTorch", backend.Python, string(pyTorchWorker), request, device)
+	return runPythonWorker(ctx, "PyTorch", backend.Python, pytorchruntime.WithModel(pyTorchWorker), request, device)
 }
 
 type pyTorchProbe struct {
