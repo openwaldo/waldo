@@ -21,8 +21,8 @@ architecture:
   tie_embeddings: false
   qk_normalization: true
   initialization: depth-scaled
-  # Keep portable weights lossless until this architecture has passed WALDO's
-  # live-versus-publishable reduced-precision check.
+  # Keep portable weights lossless and compiled execution disabled until this
+  # architecture passes WALDO's compiled/eager/artifact equivalence checks.
   parameter_dtype: float32
   tokenizer:
     name: tiktoken/r50k_base
@@ -57,7 +57,7 @@ stages:
       gradient_accumulation_steps: 4
       compute_precision: bfloat16
       activation_checkpointing: true
-      compile: true
+      compile: false
       sequence_length: 4096
       learning_rate: 0.00011
       optimizer: adamw
@@ -101,7 +101,7 @@ stages:
       gradient_accumulation_steps: 2
       compute_precision: bfloat16
       activation_checkpointing: true
-      compile: true
+      compile: false
       sequence_length: 4096
       learning_rate: 0.00002
       optimizer: adamw
@@ -144,7 +144,7 @@ stages:
       gradient_accumulation_steps: 2
       compute_precision: bfloat16
       activation_checkpointing: true
-      compile: true
+      compile: false
       sequence_length: 4096
       learning_rate: 0.00003
       optimizer: adamw
@@ -185,7 +185,7 @@ stages:
       gradient_accumulation_steps: 2
       compute_precision: bfloat16
       activation_checkpointing: true
-      compile: true
+      compile: false
       sequence_length: 4096
       learning_rate: 0.00001
       optimizer: adamw
@@ -228,7 +228,7 @@ stages:
       gradient_accumulation_steps: 2
       compute_precision: bfloat16
       activation_checkpointing: true
-      compile: true
+      compile: false
       sequence_length: 4096
       learning_rate: 0.000008
       optimizer: adamw
@@ -265,7 +265,7 @@ stages:
       gradient_accumulation_steps: 2
       compute_precision: bfloat16
       activation_checkpointing: true
-      compile: true
+      compile: false
       sequence_length: 4096
       learning_rate: 0.000002
       optimizer: adamw

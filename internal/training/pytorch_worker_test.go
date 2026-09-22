@@ -19,7 +19,7 @@ func TestPyTorchWorkerEvaluatesArtifactAtLiveEvaluationPrecision(t *testing.T) {
 	if !strings.Contains(source, `WORKER_REVISION = "`+PyTorchRevision+`"`) || !strings.Contains(source, `TORCHTITAN_REVISION = "`+TorchTitanRevision+`"`) {
 		t.Fatalf("embedded PyTorch worker revisions do not match the Go adapters")
 	}
-	pattern := regexp.MustCompile(`evaluate_model\([^)]*mixed_precision=(True|False)\)`)
+	pattern := regexp.MustCompile(`evaluate_model\([^)]*mixed_precision=(True|False)(?:,[^)]*)?\)`)
 	matches := pattern.FindAllStringSubmatch(source, -1)
 	if len(matches) < 2 {
 		t.Fatalf("expected the worker to evaluate both the live and reloaded model, found %d call(s)", len(matches))
@@ -34,10 +34,13 @@ func TestPyTorchWorkerEvaluatesArtifactAtLiveEvaluationPrecision(t *testing.T) {
 func TestPyTorchWorkerFailsClosedOnArtifactDegradation(t *testing.T) {
 	source := string(pyTorchWorker)
 	for _, expected := range []string{
-		`"live_compiled_heldout_loss": live_loss`,
+		`"live_compiled_heldout_loss": compiled_loss`,
+		`"live_eager_heldout_loss": live_loss`,
 		`"publishable_checkpoint_heldout_loss": artifact_loss`,
+		`if abs(compiled_loss - live_loss) > compile_tolerance:`,
+		`disable compile or correct compiled execution before spending more compute`,
 		`if abs(artifact_loss - live_loss) > tolerance:`,
-		`"use parameter_dtype float32 or correct target-dtype training before spending more compute"`,
+		`"correct checkpoint serialization or target-dtype conversion before spending more compute"`,
 		`if abs(artifact_loss - candidate_loss) > tolerance:`,
 		`error_class="artifact-integrity" if isinstance(error, ArtifactIntegrityError) else ""`,
 		`"value": candidate_loss`,

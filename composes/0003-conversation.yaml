@@ -1,8 +1,8 @@
 # Conversation level 3: corrected 12B-token conversation baseline.
 # This preserves the 0002 architecture, foundation exposure, and corpus order,
 # while applying assistant-only loss and bounded conversation tuning. Its
-# portable weights remain float32 because the BF16 artifact from the measured
-# conversation3 run lost substantial held-out quality after serialization.
+# portable weights remain float32 and compiled execution stays disabled because
+# measured compiled loss did not survive the handoff to eager inference.
 # It is a private research compose pending record-level rights work for
 # Gutenberg, federal rulemaking, PLOS, and HelpSteer2.
 kind: waldo-model-compose
@@ -50,7 +50,7 @@ stages:
       gradient_accumulation_steps: 1
       compute_precision: bfloat16
       activation_checkpointing: true
-      compile: true
+      compile: false
       sequence_length: 2048
       learning_rate: 0.00013
       optimizer: adamw
@@ -93,7 +93,7 @@ stages:
       gradient_accumulation_steps: 1
       compute_precision: bfloat16
       activation_checkpointing: true
-      compile: true
+      compile: false
       sequence_length: 2048
       learning_rate: 0.00002
       optimizer: adamw
@@ -134,7 +134,7 @@ stages:
       gradient_accumulation_steps: 1
       compute_precision: bfloat16
       activation_checkpointing: true
-      compile: true
+      compile: false
       sequence_length: 2048
       learning_rate: 0.000008
       optimizer: adamw
@@ -174,7 +174,7 @@ stages:
       gradient_accumulation_steps: 1
       compute_precision: bfloat16
       activation_checkpointing: true
-      compile: true
+      compile: false
       sequence_length: 2048
       learning_rate: 0.000002
       optimizer: adamw

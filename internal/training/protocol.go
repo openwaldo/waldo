@@ -110,8 +110,15 @@ type WorkerError struct {
 func (err *WorkerError) Error() string { return err.Message }
 
 func IsNonRetryableWorkerError(err error) bool {
+	return WorkerErrorClass(err) == WorkerErrorArtifactIntegrity
+}
+
+func WorkerErrorClass(err error) string {
 	var worker *WorkerError
-	return errors.As(err, &worker) && worker.Class == WorkerErrorArtifactIntegrity
+	if errors.As(err, &worker) {
+		return worker.Class
+	}
+	return ""
 }
 
 func WriteWorkerInput(ctx context.Context, output io.Writer, begin WorkerBegin, records, evaluationRecords RecordSource) error {

@@ -119,6 +119,10 @@ func TestArtifactIntegrityFailureIsNotResumable(t *testing.T) {
 	if interruptedTrainingError(fmt.Errorf("worker: %w", integrity), progress) {
 		t.Fatal("deterministic artifact-integrity failure must fail instead of resuming")
 	}
+	run := RunRecord{State: RunFailed, Progress: progress, FailureClass: training.WorkerErrorArtifactIntegrity}
+	if resumableRunState(run, training.ResolvedParameters{Steps: 2, PlannedTokenCapacity: 128}) {
+		t.Fatal("persisted artifact-integrity failure unexpectedly became resumable")
+	}
 }
 
 func TestCheckArtifactFileDefersContentHashing(t *testing.T) {

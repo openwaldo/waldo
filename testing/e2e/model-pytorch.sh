@@ -142,6 +142,7 @@ stages:
       sequence_length: 16
       learning_rate: 0.001
       seed: 7
+      compile: true
       checkpoint_every: 1
       evaluate_every: 1
 EOF
@@ -154,6 +155,9 @@ printf '%s\n' "$summary" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*false'
 printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"pytorch"'
 printf '%s\n' "$summary" | grep -Eq '"selected_checkpoint"[[:space:]]*:[[:space:]]*\{'
 printf '%s\n' "$summary" | grep -Eq '"publishable_checkpoint_heldout_loss"[[:space:]]*:'
+printf '%s\n' "$summary" | grep -Eq '"live_compiled_heldout_loss"[[:space:]]*:'
+printf '%s\n' "$summary" | grep -Eq '"live_eager_heldout_loss"[[:space:]]*:'
+printf '%s\n' "$summary" | grep -Eq '"compile_loss_delta"[[:space:]]*:'
 printf '%s\n' "$summary" | grep -Eq '"artifact_heldout_loss"[[:space:]]*:'
 
 train_output=$("$binary" model train pytorch-smoke core/e2e/pytorch --epochs 2)

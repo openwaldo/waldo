@@ -160,8 +160,9 @@ terminal artifact, then verifies that representation against the held-out set.
 
 When held-out evaluation is configured, WALDO evaluates step 1 and every
 configured evaluation boundary. PyTorch and TorchTitan compare the live
-FP32-master model with the publishable parameter representation at each such
-boundary and fail immediately on material degradation. WALDO publishes the
+compiled model, the eager FP32-master model, and the publishable parameter
+representation at each such boundary and fail immediately on material drift
+between either boundary. WALDO publishes the
 persisted candidate with the lowest finite publishable `heldout_loss`, not
 necessarily the last optimizer step. It reloads the selected terminal artifact
 and evaluates that saved file again before completion. `RUN.json` records the

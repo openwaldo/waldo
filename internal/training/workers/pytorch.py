@@ -24,8 +24,8 @@ from torch.utils.checkpoint import checkpoint
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r13"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r24"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r14"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r25"
 IS_PRIMARY = True
 
 
@@ -599,10 +599,10 @@ class Trainer:
                 },
             )
 
-    def forward_logits(self, model, tokens, mixed_precision=True):
+    def forward_logits(self, model, tokens, mixed_precision=True, compiled=True):
         enabled = mixed_precision and self.compute_dtype != torch.float32
         with torch.autocast(device_type=self.device.type, dtype=self.compute_dtype, enabled=enabled):
-            target = self.compiled_model if model is self.model else model
+            target = self.compiled_model if compiled and model is self.model else model
             return target(tokens)
 
     def logical(self, name):
@@ -1096,7 +1096,7 @@ class Trainer:
         self.checkpoints = list(self.resume.get("checkpoints") or [self.resume["checkpoint"]])
         self.evaluations = list(self.resume.get("evaluations") or [])
 
-    def evaluate_model(self, model, mixed_precision):
+    def evaluate_model(self, model, mixed_precision, compiled=False):
         model.eval()
         total_loss = 0.0
         total_tokens = 0.0
@@ -1105,7 +1105,7 @@ class Trainer:
                 batch = self.evaluation_sequences[offset : offset + self.batch_size]
                 tokens = torch.tensor([item[0] for item in batch], dtype=torch.long, device=self.device)
                 mask = torch.tensor([item[1] for item in batch], dtype=torch.float32, device=self.device)
-                logits = self.forward_logits(model, tokens[:, :-1], mixed_precision=mixed_precision)
+                logits = self.forward_logits(model, tokens[:, :-1], mixed_precision=mixed_precision, compiled=compiled)
                 losses = functional.cross_entropy(logits.float().reshape(-1, logits.shape[-1]), tokens[:, 1:].reshape(-1), reduction="none")
                 total_loss += float((losses.reshape_as(mask) * mask).sum().detach().cpu().item())
                 total_tokens += float(mask.sum().detach().cpu().item())
@@ -1128,7 +1128,7 @@ class Trainer:
                 if missing or unexpected:
                     raise ValueError(f"weights do not match portable architecture: missing={missing}, unexpected={unexpected}")
                 artifact_model.to(device=self.device, dtype=torch.float32)
-                loss_value = self.evaluate_model(artifact_model, mixed_precision=True)
+                loss_value = self.evaluate_model(artifact_model, mixed_precision=True, compiled=False)
                 del artifact_model
             except Exception as error:
                 failure = str(error)
@@ -1147,7 +1147,8 @@ class Trainer:
     def record_evaluation(self, _training_loss):
         if not self.evaluation_sequences:
             return
-        live_loss = self.evaluate_model(self.model, mixed_precision=True)
+        compiled_loss = self.evaluate_model(self.model, mixed_precision=True, compiled=True)
+        live_loss = self.evaluate_model(self.model, mixed_precision=True, compiled=False)
         self.model.train()
         checkpoint = next((item for item in self.checkpoints if item["step"] == self.step_number), None)
         unpublished_checkpoint = checkpoint is None
@@ -1161,13 +1162,21 @@ class Trainer:
         )
         artifact_loss = self.evaluate_weight_file(checkpoint_path, quantize=True)
         tolerance = max(0.02, abs(live_loss) * 0.01)
+        compile_tolerance = max(0.02, abs(live_loss) * 0.01)
+        if not math.isfinite(compiled_loss):
+            raise ArtifactIntegrityError("compiled held-out loss is not finite")
+        if abs(compiled_loss - live_loss) > compile_tolerance:
+            raise ArtifactIntegrityError(
+                f"compiled held-out loss {compiled_loss:.6f} does not match eager inference loss {live_loss:.6f} "
+                f"within tolerance {compile_tolerance:.6f}; disable compile or correct compiled execution before spending more compute"
+            )
         if not math.isfinite(artifact_loss):
             raise ArtifactIntegrityError("publishable checkpoint held-out loss is not finite")
         if abs(artifact_loss - live_loss) > tolerance:
             raise ArtifactIntegrityError(
                 f"publishable {self.architecture['parameter_dtype']} checkpoint held-out loss {artifact_loss:.6f} "
-                f"does not match live FP32-master loss {live_loss:.6f} within tolerance {tolerance:.6f}; "
-                "use parameter_dtype float32 or correct target-dtype training before spending more compute"
+                f"does not match eager FP32-master loss {live_loss:.6f} within tolerance {tolerance:.6f}; "
+                "correct checkpoint serialization or target-dtype conversion before spending more compute"
             )
         if unpublished_checkpoint:
             self.report_checkpoint(checkpoint)
@@ -1177,9 +1186,11 @@ class Trainer:
             "metrics": {
                 "heldout_loss": artifact_loss,
                 "heldout_perplexity": math.exp(min(artifact_loss, 80.0)),
-                "live_compiled_heldout_loss": live_loss,
+                "live_compiled_heldout_loss": compiled_loss,
+                "live_eager_heldout_loss": live_loss,
                 "publishable_checkpoint_heldout_loss": artifact_loss,
                 "artifact_loss_delta": artifact_loss - live_loss,
+                "compile_loss_delta": compiled_loss - live_loss,
             },
         }
         self.evaluations.append(item)
@@ -1187,7 +1198,7 @@ class Trainer:
             "event",
             event={
                 "kind": "evaluation",
-                "message": f"step {self.step_number} publishable held-out loss {artifact_loss:.4f} (live {live_loss:.4f})",
+                "message": f"step {self.step_number} publishable held-out loss {artifact_loss:.4f} (eager {live_loss:.4f}, compiled {compiled_loss:.4f})",
                 "step": self.step_number,
                 "tokens": self.consumed_tokens,
                 "evaluation": item,

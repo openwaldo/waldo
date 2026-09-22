@@ -608,6 +608,9 @@ func resumableRunState(run RunRecord, parameters training.ResolvedParameters) bo
 	if run.State == RunInterrupted {
 		return true
 	}
+	if run.FailureClass == training.WorkerErrorArtifactIntegrity {
+		return false
+	}
 	// A checkpoint is WALDO's durable recovery boundary. Once its artifacts were
 	// verified and recorded, the error that ended the attempt does not invalidate
 	// it: runtime, transport, validation, and bookkeeping failures may all be
@@ -833,7 +836,9 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 			run.State = RunInterrupted
 		}
 		run.Error = backendErr.Error()
+		run.FailureClass = training.WorkerErrorClass(backendErr)
 		attempt.Error = run.Error
+		attempt.FailureClass = run.FailureClass
 		if err := appendTelemetry(telemetryPath, telemetryRow{Observed: now(), Started: attemptStarted, RunID: pin.ID, Stage: stage.Name, Attempt: attemptOrdinal, Event: "run", State: run.State, PlannedSteps: runBOM.Parameters.Steps, PlannedTokens: runBOM.Parameters.PlannedTokenCapacity, Message: run.Error}); err != nil {
 			backendErr = errors.Join(backendErr, telemetryError(telemetryPath, err))
 		}

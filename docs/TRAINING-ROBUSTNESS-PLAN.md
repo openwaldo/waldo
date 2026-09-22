@@ -34,17 +34,21 @@ Held-out loss alone is not a promotion gate.
 
 ## 2026-09 artifact-boundary audit
 
-The `conversation3` diagnostic exposed a lifecycle error: PyTorch trained FP32
-master parameters under BF16 autocast, but WALDO rounded checkpoints and the
-terminal artifact to BF16 before later stages and inference. The measured
-pretraining loss changed from 2.6724 live to 3.1388 after reload, and midtrain
-changed from 1.8105 to 2.3527. The previous worker merely warned and published
-the degraded artifact; selection could then report a value that was no longer
-the best recorded value.
+The `conversation3` diagnostic exposed a lifecycle error: the loss measured
+through the live compiled training graph did not survive the boundary to the
+saved model used by later stages and inference. Pretraining changed from
+2.6724 live to 3.1388 after reload, and midtrain changed from 1.8105 to 2.3527.
+The initial evidence could not distinguish BF16 rounding from compiled/eager
+execution or serialization. A subsequent float32 run removed dtype conversion
+and still measured 3.5102 compiled versus 3.8389 after reload, proving that
+reduced parameter precision was not the complete cause. The previous worker
+merely warned and published the degraded artifact; selection could then report
+a value that was no longer the best recorded value.
 
 The corrected boundary requires:
 
 - FP32 master weights in PyTorch and TorchTitan resume checkpoints;
+- separate compiled-live, eager-live, and persisted-reload measurements;
 - target-representation evaluation at step 1 and every evaluation boundary;
 - best-checkpoint selection using that publishable representation;
 - a terminal reload check for PyTorch, TorchTitan, and MLX;
@@ -53,7 +57,9 @@ The corrected boundary requires:
 - terminal, non-resumable classification for deterministic artifact-integrity
   failures.
 
-The 0003 and 0004 reference composes also keep portable parameters in float32
+The 0003 and 0004 reference composes disable compiled execution until its
+equivalence with eager inference has been demonstrated, keep portable
+parameters in float32,
 and add a final low-rate WALDO-only grounding stage with its own held-out
 selection. The audit corrected 0004's structured conversation stages from
 full-sequence causal loss to assistant-only response loss.

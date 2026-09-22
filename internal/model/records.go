@@ -205,18 +205,19 @@ func MultiNodePlanPath(root, rendezvousID string) string {
 }
 
 type RunRecord struct {
-	Kind        string                `json:"kind"`
-	Schema      int                   `json:"schema"`
-	ID          string                `json:"id"`
-	State       RunState              `json:"state"`
-	BOMSHA256   string                `json:"bom_sha256"`
-	Planned     string                `json:"planned"`
-	Started     string                `json:"started,omitempty"`
-	Finished    string                `json:"finished,omitempty"`
-	Observation *training.Observation `json:"observation,omitempty"`
-	Progress    *training.Progress    `json:"progress,omitempty"`
-	Attempts    []RunAttempt          `json:"attempts,omitempty"`
-	Error       string                `json:"error,omitempty"`
+	Kind         string                `json:"kind"`
+	Schema       int                   `json:"schema"`
+	ID           string                `json:"id"`
+	State        RunState              `json:"state"`
+	BOMSHA256    string                `json:"bom_sha256"`
+	Planned      string                `json:"planned"`
+	Started      string                `json:"started,omitempty"`
+	Finished     string                `json:"finished,omitempty"`
+	Observation  *training.Observation `json:"observation,omitempty"`
+	Progress     *training.Progress    `json:"progress,omitempty"`
+	Attempts     []RunAttempt          `json:"attempts,omitempty"`
+	Error        string                `json:"error,omitempty"`
+	FailureClass string                `json:"failure_class,omitempty"`
 }
 
 type RunAttempt struct {
@@ -225,6 +226,7 @@ type RunAttempt struct {
 	Finished            string                       `json:"finished,omitempty"`
 	State               RunState                     `json:"state"`
 	Error               string                       `json:"error,omitempty"`
+	FailureClass        string                       `json:"failure_class,omitempty"`
 	ResumeStep          int64                        `json:"resume_step,omitempty"`
 	Correction          string                       `json:"correction,omitempty"`
 	EffectiveParameters *training.ResolvedParameters `json:"effective_parameters,omitempty"`

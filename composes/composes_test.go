@@ -246,6 +246,11 @@ func TestConversationThreeCorrectsCompleteBaselineExposure(t *testing.T) {
 			t.Fatalf("restored conversation stage %d changed its curriculum", index)
 		}
 	}
+	for _, stage := range compose.Stages {
+		if stage.Parameters.Compile {
+			t.Fatalf("conversation3 stage %s enables unverified compiled execution", stage.Name)
+		}
+	}
 	if compose.Stages[0].Objective != "causal-language-modeling" || compose.Stages[1].Objective != "assistant-response-modeling" || compose.Stages[2].Objective != "assistant-response-modeling" {
 		t.Fatalf("corrected conversation objectives = %q / %q / %q", compose.Stages[0].Objective, compose.Stages[1].Objective, compose.Stages[2].Objective)
 	}
@@ -296,7 +301,7 @@ func TestConversationFourIsLargerAndKnowledgeDominant(t *testing.T) {
 	}
 	for _, stage := range compose.Stages {
 		parameters := stage.Parameters
-		if parameters.Parallelism != training.ParallelismAuto || parameters.ComputePrecision != "bfloat16" || !parameters.ActivationCheckpointing || !parameters.Compile || parameters.DistributionPolicy != "" {
+		if parameters.Parallelism != training.ParallelismAuto || parameters.ComputePrecision != "bfloat16" || !parameters.ActivationCheckpointing || parameters.Compile || parameters.DistributionPolicy != "" {
 			t.Fatalf("conversation3 candidate stage %s robustness controls = %+v", stage.Name, parameters)
 		}
 		if parameters.GradientAccumulation < 2 {

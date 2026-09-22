@@ -161,6 +161,8 @@ WALDO requirements:
 - Use lower conversation-stage learning rates and one pass to limit the held-out-loss regression observed in the initial 0003 run.
 - Keep the portable artifact in float32 until reduced-precision publication
   passes WALDO's live-versus-publishable loss check for this architecture.
+- Keep compiled execution disabled until compiled and eager held-out losses
+  agree throughout a representative run.
 - Select project grounding against its own held-out set rather than allowing
   the much larger broad SFT mixture to hide failure to learn WALDO facts.
 - Add fixed side-by-side generation and held-out evaluations.
@@ -201,6 +203,8 @@ WALDO requirements:
   markers, user prompts, and system context remain conditioning input.
 - Keep portable parameters in float32 until this larger architecture has
   passed the reduced-precision artifact-integrity gate.
+- Keep compiled execution disabled until it passes the compiled/eager
+  equivalence gate.
 - Evaluate the final WALDO grounding stage on its own held-out records.
 - A fresh model is required because conversation3 has more than twice the
   parameter capacity and context length of the 0003 conversation model as well as a corrected
