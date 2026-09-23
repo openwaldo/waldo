@@ -166,8 +166,10 @@ printf '%s\n' "$summary" | grep -Eq '"live_eager_heldout_loss"[[:space:]]*:'
 printf '%s\n' "$summary" | grep -Eq '"compile_loss_delta"[[:space:]]*:'
 printf '%s\n' "$summary" | grep -Eq '"compute_precision_loss_delta"[[:space:]]*:'
 printf '%s\n' "$summary" | grep -Eq '"artifact_heldout_loss"[[:space:]]*:'
-chat_output=$("$binary" model chat pytorch-smoke "Continue this sentence: OpenWALDO" --temperature 0 --top-p 1 --max-tokens 4)
-[ -n "$chat_output" ] || { echo "PyTorch inference produced no output" >&2; exit 1; }
+chat_output=$("$binary" --json model chat pytorch-smoke "Continue this sentence: OpenWALDO" --temperature 0 --top-p 1 --max-tokens 4)
+printf '%s\n' "$chat_output" | grep -Eq '"run_id"[[:space:]]*:[[:space:]]*"[^"]+"'
+printf '%s\n' "$chat_output" | grep -Eq '"tokens"[[:space:]]*:[[:space:]]*[0-4]'
+printf '%s\n' "$chat_output" | grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(eos|max_tokens)"'
 
 train_output=$("$binary" model train pytorch-smoke core/e2e/pytorch --epochs 2)
 printf '%s\n' "$train_output" | grep -q 'backend       pytorch@'"$revision"''
