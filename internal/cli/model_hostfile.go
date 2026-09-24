@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -274,8 +275,7 @@ type hostfileSession struct {
 	cluster      training.Cluster
 	binary       string
 	binarySHA256 string
-	remoteBinary string
-	remoteRoot   string
+	remoteRoots  map[string]string
 	resumeRoot   string
 	resumeStaged bool
 	pythonDir    string
@@ -303,13 +303,11 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 		return nil, err
 	}
 	sessionContext, cancel := context.WithCancel(ctx)
-	remoteRoot := "/tmp/waldo-launch/" + digest
 	session := &hostfileSession{
 		ctx: sessionContext, cancel: cancel, hostfile: hostfile, cluster: cluster,
-		binary: binary, binarySHA256: digest, remoteRoot: remoteRoot,
-		remoteBinary: remoteRoot + "/waldo",
-		resumeRoot:   filepath.Join(scratchRoot, "multinode", digest, cluster.RendezvousID, "resume"),
-		output:       output,
+		binary: binary, binarySHA256: digest, remoteRoots: map[string]string{},
+		resumeRoot: filepath.Join(scratchRoot, "multinode", digest, cluster.RendezvousID, "resume"),
+		output:     output,
 	}
 	local, err := inspectHostfileTorchTitan(sessionContext)
 	if err != nil {
@@ -438,27 +436,104 @@ func (session *hostfileSession) remoteCommandContext(ctx context.Context, argume
 	return command
 }
 
+// remotePrivateDirectory defines a POSIX shell function that creates a
+// directory and verifies that it and every ancestor are owned by the remote
+// user or root and cannot be modified by other users. Root-owned directories
+// that other users can write to, such as /tmp, must carry the sticky bit.
+// Group write on the user's own directories is accepted only for a user
+// private group, the default with umask 002 on many distributions. Staged
+// binaries and checkpoints are only trusted inside such a directory.
+const remotePrivateDirectory = `waldo_private_dir() {
+	mkdir -p -m 700 -- "$1" || return 1
+	waldo_dir=$(realpath -e -- "$1") || return 1
+	waldo_uid=$(id -u)
+	if [ "$(id -gn)" = "$(id -un)" ]; then
+		waldo_private_group=$(id -g)
+	else
+		waldo_private_group=
+	fi
+	while :; do
+		waldo_owner=$(stat -c %u -- "$waldo_dir") || return 1
+		if [ "$waldo_owner" = "$waldo_uid" ]; then
+			waldo_writable=/022
+			if [ -n "$waldo_private_group" ] && [ "$(stat -c %g -- "$waldo_dir")" = "$waldo_private_group" ]; then
+				waldo_writable=/002
+			fi
+			if [ -n "$(find "$waldo_dir" -maxdepth 0 -perm "$waldo_writable")" ]; then
+				echo "$waldo_dir is writable by other users" >&2
+				return 1
+			fi
+		elif [ "$waldo_owner" = 0 ]; then
+			if [ -n "$(find "$waldo_dir" -maxdepth 0 -perm /022 ! -perm -1000)" ]; then
+				echo "$waldo_dir is writable by other users and is not sticky" >&2
+				return 1
+			fi
+		else
+			echo "$waldo_dir is owned by uid $waldo_owner, not $waldo_uid" >&2
+			return 1
+		fi
+		[ "$waldo_dir" = / ] && return 0
+		waldo_dir=$(dirname -- "$waldo_dir")
+	done
+}
+`
+
+// stageBinary copies the running WALDO binary into a private per-user
+// directory on host and records that directory for later invocations.
 func (session *hostfileSession) stageBinary(host string) error {
 	file, err := os.Open(session.binary)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	temporary := session.remoteBinary + ".tmp"
-	remote := fmt.Sprintf("umask 077; mkdir -p %s; cat > %s; chmod 700 %s; test \"$(sha256sum %s | cut -d' ' -f1)\" = %s; mv -f %s %s",
-		shellQuote(session.remoteRoot), shellQuote(temporary), shellQuote(temporary), shellQuote(temporary), shellQuote(session.binarySHA256), shellQuote(temporary), shellQuote(session.remoteBinary))
+	digest := shellQuote(session.binarySHA256)
+	remote := "set -e\numask 077\n" + remotePrivateDirectory +
+		"root=" + shellQuote(remoteLaunchBase+"/waldo-launch-") + "$(id -u)/" + digest + "\n" +
+		"waldo_private_dir \"$root\"\n" +
+		"tmp=$(mktemp \"$root/.waldo.XXXXXX\")\n" +
+		"trap 'rm -f -- \"$tmp\"' EXIT\n" +
+		"cat > \"$tmp\"\n" +
+		"chmod 700 \"$tmp\"\n" +
+		"sum=$(sha256sum -- \"$tmp\" | cut -d' ' -f1)\n" +
+		"if [ \"$sum\" != " + digest + " ]; then echo \"staged WALDO SHA-256 $sum does not match \"" + digest + " >&2; exit 1; fi\n" +
+		"mv -f -- \"$tmp\" \"$root/waldo\"\n" +
+		"printf '%s\\n' \"$root\"\n"
 	command := session.remoteCommand(host, remote)
 	command.Stdin = file
-	var output strings.Builder
-	command.Stdout, command.Stderr = &output, &output
+	var stdout, stderr strings.Builder
+	command.Stdout, command.Stderr = &stdout, &stderr
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("stage WALDO on %s: %w%s", host, err, commandOutput(output.String()))
+		return fmt.Errorf("stage WALDO on %s: %w%s", host, err, commandOutput(stderr.String()))
 	}
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	root := strings.TrimSpace(lines[len(lines)-1])
+	if !remoteLaunchRoot.MatchString(strings.TrimPrefix(root, remoteLaunchBase)) || !strings.HasSuffix(root, "/"+session.binarySHA256) {
+		return fmt.Errorf("stage WALDO on %s: unexpected staging directory %q", host, root)
+	}
+	session.remoteRoots[host] = root
 	return nil
 }
 
+// remoteLaunchBase holds the per-user launch directories on secondary hosts.
+// Each user gets waldo-launch-<uid>, which must pass waldo_private_dir.
+var remoteLaunchBase = "/tmp"
+
+var remoteLaunchRoot = regexp.MustCompile(`^/waldo-launch-[0-9]+/[0-9a-f]{64}$`)
+
+func (session *hostfileSession) remoteRoot(host string) (string, error) {
+	root := session.remoteRoots[host]
+	if root == "" {
+		return "", fmt.Errorf("WALDO is not staged on %s", host)
+	}
+	return root, nil
+}
+
 func (session *hostfileSession) probeHost(host string, rank int) (training.TorchTitanHost, error) {
-	arguments := session.workerArguments(rank, true)
+	root, err := session.remoteRoot(host)
+	if err != nil {
+		return training.TorchTitanHost{}, err
+	}
+	arguments := session.workerArguments(root, rank, true)
 	command := session.remoteCommand(host, session.remoteInvocation(arguments))
 	var stdout, stderr strings.Builder
 	command.Stdout, command.Stderr = &stdout, &stderr
@@ -502,8 +577,8 @@ func compareTorchTitanHosts(primary, secondary training.TorchTitanHost) error {
 	return nil
 }
 
-func (session *hostfileSession) workerArguments(rank int, check bool) []string {
-	arguments := []string{session.remoteBinary, "--json", "model", "train-worker",
+func (session *hostfileSession) workerArguments(root string, rank int, check bool) []string {
+	arguments := []string{root + "/waldo", "--json", "model", "train-worker",
 		"--nodes", fmt.Sprintf("%d", session.cluster.Nodes),
 		"--node-rank", fmt.Sprintf("%d", rank),
 		"--rendezvous", session.cluster.Rendezvous,
@@ -514,12 +589,16 @@ func (session *hostfileSession) workerArguments(rank int, check bool) []string {
 	if check {
 		return append(arguments, "--check")
 	}
-	scratch := fmt.Sprintf("%s/runs/%s/node-%d", session.remoteRoot, session.cluster.RendezvousID, rank)
+	scratch := fmt.Sprintf("%s/runs/%s/node-%d", root, session.cluster.RendezvousID, rank)
 	return append(arguments, "--plan-stdin", "--scratch", scratch)
 }
 
 func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWorker, error) {
-	command := session.remoteCommand(host, session.remoteInvocation(session.workerArguments(rank, false)))
+	root, err := session.remoteRoot(host)
+	if err != nil {
+		return nil, err
+	}
+	command := session.remoteCommand(host, session.remoteInvocation(session.workerArguments(root, rank, false)))
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := command.StdinPipe()
 	if err != nil {
@@ -681,7 +760,10 @@ func (session *hostfileSession) stageResume(host string, artifacts []training.Ar
 	for index, artifact := range artifacts {
 		localPath := sources[index]
 		remotePath := targets[index]
-		check := fmt.Sprintf("test -f %s; test \"$(sha256sum %s | cut -d' ' -f1)\" = %s", shellQuote(remotePath), shellQuote(remotePath), shellQuote(artifact.SHA256))
+		directory := shellQuote(filepath.Dir(remotePath))
+		check := "set -e\numask 077\n" + remotePrivateDirectory +
+			"waldo_private_dir " + directory + " 2>/dev/null\n" +
+			fmt.Sprintf("test -f %s\ntest \"$(sha256sum -- %s | cut -d' ' -f1)\" = %s\n", shellQuote(remotePath), shellQuote(remotePath), shellQuote(artifact.SHA256))
 		if err := session.remoteCommand(host, check).Run(); err == nil {
 			continue
 		}
@@ -689,9 +771,14 @@ func (session *hostfileSession) stageResume(host string, artifacts []training.Ar
 		if err != nil {
 			return fmt.Errorf("stage checkpoint on %s: open %s: %w", host, artifact.Path, err)
 		}
-		temporary := remotePath + ".waldo-transfer"
-		remote := fmt.Sprintf("umask 077; mkdir -p %s; cat > %s; test \"$(sha256sum %s | cut -d' ' -f1)\" = %s; mv -f %s %s",
-			shellQuote(filepath.Dir(remotePath)), shellQuote(temporary), shellQuote(temporary), shellQuote(artifact.SHA256), shellQuote(temporary), shellQuote(remotePath))
+		remote := "set -e\numask 077\n" + remotePrivateDirectory +
+			"waldo_private_dir " + directory + "\n" +
+			"tmp=$(mktemp " + directory + "/.waldo-transfer.XXXXXX)\n" +
+			"trap 'rm -f -- \"$tmp\"' EXIT\n" +
+			"cat > \"$tmp\"\n" +
+			"sum=$(sha256sum -- \"$tmp\" | cut -d' ' -f1)\n" +
+			"if [ \"$sum\" != " + shellQuote(artifact.SHA256) + " ]; then echo \"staged checkpoint SHA-256 $sum does not match \"" + shellQuote(artifact.SHA256) + " >&2; exit 1; fi\n" +
+			"mv -f -- \"$tmp\" " + shellQuote(remotePath) + "\n"
 		command := session.remoteCommand(host, remote)
 		command.Stdin = file
 		var output strings.Builder

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -161,7 +162,7 @@ func TestProbeHostNamesMissingRuntimeInstallationTarget(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	session := hostfileSession{
-		ctx: context.Background(), remoteBinary: "/tmp/waldo", pythonDir: "/usr/bin",
+		ctx: context.Background(), remoteRoots: map[string]string{"reno-gpu-02": "/tmp/waldo-launch-1000/build"}, pythonDir: "/usr/bin",
 		cluster: training.Cluster{Nodes: 2, Rendezvous: "train-0:29500", RendezvousID: "test"},
 	}
 	_, err := session.probeHost("reno-gpu-02", 1)
@@ -271,8 +272,8 @@ case "$*" in
     exit 0
     ;;
   *)
-    cat >/dev/null
-    exit 0
+    for last; do :; done
+    exec sh -c "$last"
     ;;
 esac
 `
@@ -280,6 +281,7 @@ esac
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	useTestLaunchBase(t)
 	capabilities := training.TorchTitanHost{
 		Python: "python3", PythonVersion: "3.12", TorchVersion: "2.8", TorchTitanVersion: "0.2",
 		Accelerators: []training.Accelerator{{Manufacturer: "NVIDIA", Model: "H200", MemoryBytes: 140 << 30}},
@@ -398,14 +400,12 @@ func TestTrainingRendezvousReachability(t *testing.T) {
 
 func TestHostfileWorkerArgumentsCarryNCCLSettings(t *testing.T) {
 	session := hostfileSession{
-		remoteBinary: "/tmp/waldo-launch/build/waldo",
-		remoteRoot:   "/tmp/waldo-launch/build",
 		cluster: training.Cluster{
 			Nodes: 2, Rendezvous: "train-0:29500", RendezvousID: "session-test",
 			Interface: "ib0", HCA: "mlx5_0",
 		},
 	}
-	arguments := strings.Join(session.workerArguments(1, false), " ")
+	arguments := strings.Join(session.workerArguments("/tmp/waldo-launch-1000/build", 1, false), " ")
 	for _, expected := range []string{"--nccl-interface ib0", "--nccl-hca mlx5_0"} {
 		if !strings.Contains(arguments, expected) {
 			t.Fatalf("worker arguments %q omit %q", arguments, expected)
@@ -487,5 +487,147 @@ func TestHostfileRemoteCommandUsesFuzzballWrapperContract(t *testing.T) {
 	}
 	if command.Cancel == nil || command.WaitDelay != hostfileWorkerExitGrace {
 		t.Fatal("Fuzzball wrapper lacks bounded graceful cancellation")
+	}
+}
+
+// privateTempDir returns a temporary directory that, like its parent, is not
+// writable by other users regardless of the test process umask.
+func privateTempDir(t *testing.T) string {
+	t.Helper()
+	directory := t.TempDir()
+	for _, path := range []string{filepath.Dir(directory), directory} {
+		if err := os.Chmod(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return directory
+}
+
+func useTestLaunchBase(t *testing.T) string {
+	t.Helper()
+	base := privateTempDir(t)
+	previous := remoteLaunchBase
+	remoteLaunchBase = base
+	t.Cleanup(func() { remoteLaunchBase = previous })
+	return base
+}
+
+// useLocalSSH replaces ssh with a script that runs the remote command locally.
+func useLocalSSH(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte("#!/bin/sh\nfor last; do :; done\nexec sh -c \"$last\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func stagingSession(t *testing.T) *hostfileSession {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "waldo")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho staged\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := fileSHA256(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &hostfileSession{ctx: context.Background(), binary: binary, binarySHA256: digest, remoteRoots: map[string]string{}}
+}
+
+func TestStageBinaryUsesPrivatePerUserDirectory(t *testing.T) {
+	useLocalSSH(t)
+	base := useTestLaunchBase(t)
+	session := stagingSession(t)
+	if err := session.stageBinary("train-1"); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(base, fmt.Sprintf("waldo-launch-%d", os.Getuid()), session.binarySHA256)
+	if got := session.remoteRoots["train-1"]; got != want {
+		t.Fatalf("staging root = %q, want %q", got, want)
+	}
+	staged := filepath.Join(want, "waldo")
+	if digest, err := fileSHA256(staged); err != nil || digest != session.binarySHA256 {
+		t.Fatalf("staged binary digest = %q, %v", digest, err)
+	}
+	for _, path := range []string{filepath.Dir(want), want, staged} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("%s mode = %v, want private", path, info.Mode().Perm())
+		}
+	}
+	if err := session.stageBinary("train-1"); err != nil {
+		t.Fatalf("restaging the same binary: %v", err)
+	}
+}
+
+func TestStageBinaryRefusesDirectoryWritableByOthers(t *testing.T) {
+	useLocalSSH(t)
+	base := useTestLaunchBase(t)
+	shared := filepath.Join(base, fmt.Sprintf("waldo-launch-%d", os.Getuid()))
+	if err := os.Mkdir(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	session := stagingSession(t)
+	err := session.stageBinary("train-1")
+	if err == nil || !strings.Contains(err.Error(), "writable by other users") {
+		t.Fatalf("staging into a shared directory error = %v", err)
+	}
+	if _, exists := session.remoteRoots["train-1"]; exists {
+		t.Fatal("refused staging directory was recorded")
+	}
+}
+
+func TestStageBinaryFailsClosedOnDigestMismatch(t *testing.T) {
+	useLocalSSH(t)
+	base := useTestLaunchBase(t)
+	session := stagingSession(t)
+	session.binarySHA256 = strings.Repeat("0", 64)
+	err := session.stageBinary("train-1")
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("digest mismatch error = %v", err)
+	}
+	root := filepath.Join(base, fmt.Sprintf("waldo-launch-%d", os.Getuid()), session.binarySHA256)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("mismatched upload left %d entries in %s", len(entries), root)
+	}
+}
+
+func TestStageResumeFailsClosedOnDigestMismatch(t *testing.T) {
+	useLocalSSH(t)
+	session := stagingSession(t)
+	source := filepath.Join(t.TempDir(), "checkpoint.bin")
+	if err := os.WriteFile(source, []byte("checkpoint"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := fileSHA256(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(privateTempDir(t), "resume", "checkpoint.bin")
+	bad := training.Artifact{Path: "checkpoint.bin", SHA256: strings.Repeat("0", 64)}
+	err = session.stageResume("train-1", []training.Artifact{bad}, []string{source}, []string{target})
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("checkpoint digest mismatch error = %v", err)
+	}
+	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("mismatched checkpoint was published: %v", err)
+	}
+	good := training.Artifact{Path: "checkpoint.bin", SHA256: digest}
+	if err := session.stageResume("train-1", []training.Artifact{good}, []string{source}, []string{target}); err != nil {
+		t.Fatal(err)
+	}
+	if staged, err := fileSHA256(target); err != nil || staged != digest {
+		t.Fatalf("staged checkpoint digest = %q, %v", staged, err)
 	}
 }

@@ -56,10 +56,21 @@ discovers the visible GPU count and topology independently on every node.
 ## What WALDO installs
 
 Secondary hosts do not need WALDO installed. Rank 0 copies the exact running
-WALDO binary to a SHA-256-addressed directory under `/tmp/waldo-launch/` on
-each secondary, verifies it, and uses it for that launch. A later launch of the
-same binary safely reuses the same identity. Launcher scratch is removed after
-the worker exits.
+WALDO binary to a SHA-256-addressed directory under the per-user
+`/tmp/waldo-launch-<uid>/` on each secondary, verifies its SHA-256 before
+publishing it, and uses it for that launch. A later launch of the same binary
+safely reuses the same identity. Launcher scratch is removed after the worker
+exits.
+
+WALDO refuses to stage the binary, launcher scratch, or resume checkpoints in a
+directory that another user could modify. The directory and every ancestor
+must be owned by the remote user or root. Directories owned by the remote user
+must not be writable by other users; group write is accepted only for the
+user's private group. Root-owned directories that others can write to, such as
+`/tmp`, must be sticky. If another user already owns
+`/tmp/waldo-launch-<uid>` on a host, staging fails with the offending path;
+remove that directory as an administrator before retrying. Secondary hosts
+need a POSIX shell with GNU coreutils and findutils.
 
 WALDO does not install or modify GPU drivers, CUDA, NCCL, Python, PyTorch, or
 TorchTitan. Those machine-level runtimes must be installed before training.
