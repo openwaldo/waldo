@@ -400,8 +400,8 @@ corpora:
 | `filter.main_content` | no | Requires the canonical main-content boolean to equal the declared value. Normally `true`; older schemas default to `true`. |
 | `filter.exclude.repetitive_content` | no | Excludes rows whose schema-2 repeated-token flag equals the declared boolean. The normal policy is `true`. |
 | `filter.exclude.boilerplate_content` | no | Excludes rows whose schema-2 duplicated-structure flag equals the declared boolean. The normal policy is `true`. |
-| `filter.exclude.licenses` | no | Excludes rows whose normalized license matches any listed shell-style pattern. |
-| `licenses` | no | Matches the canonical row's normalized license. |
+| `filter.exclude.licenses` | no | Excludes rows whose normalized license, or any term of a compound license expression, matches any listed shell-style pattern. |
+| `licenses` | no | Matches the canonical row's normalized license. Compound expressions are matched term by term, as described below. |
 | `languages` | no | Matches the canonical row's language. |
 | `sources` | no | Matches either the canonical source identifier or source name. |
 | `date` | no | Selects canonical dates that overlap the inclusive `from`/`to` interval. |
@@ -418,6 +418,15 @@ rejects the row. A stage-wide
 cannot loosen the global one. Other filter fields are ANDed with the exclusion
 decision. Missing or malformed row values do not satisfy an include or date
 condition.
+
+License patterns apply to each term of a compound license expression such as
+`Apache-2.0 AND CC-BY-NC-4.0`, the form recorded for rows that declare several
+upstream licenses. Terms are separated by `AND` or `OR`. A license exclude
+rejects the row when it matches the whole expression or any term. A license
+include must match every term, unless the include pattern is itself a compound
+expression that matches the whole value. `OR` alternatives are treated like
+`AND` terms, so an alternative that is not included keeps the row out. In
+license patterns, `*` and `?` also match `/`.
 
 The older `filter.licenses.include`/`exclude` representation remains accepted.
 It cannot be combined with `filter.exclude.licenses` in the same filter.

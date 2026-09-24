@@ -67,6 +67,24 @@ func TestRecordFilterValidationAndBOMRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLicenseValueFilterAppliesToEveryExpressionTerm(t *testing.T) {
+	filter := RecordFilter{Licenses: &ValueFilter{Include: []string{"CC-*", "MIT"}, Exclude: []string{"CC-BY-NC-*"}}}
+	if err := filter.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for license, want := range map[string]bool{
+		"CC-BY-4.0 AND MIT":          true,
+		"CC-BY-NC-4.0 AND MIT":       false,
+		"CC-BY-4.0 AND GPL-3.0-only": false,
+		"MIT OR CC-BY-NC-SA-4.0":     false,
+		"":                           false,
+	} {
+		if got := filter.Allows(shard.RecordView{License: license}); got != want {
+			t.Errorf("Allows(%q) = %v, want %v", license, got, want)
+		}
+	}
+}
+
 func TestLanguageFilterCanExplicitlyIncludeUnsetRows(t *testing.T) {
 	filter := RecordFilter{Languages: &ValueFilter{Include: []string{"en"}, IncludeUnset: true}}
 	if err := filter.Validate(); err != nil {
@@ -112,6 +130,9 @@ func TestUnifiedExclusionFilterMatchesContentFlagsOrLicenses(t *testing.T) {
 	}
 	if !filter.Allows(shard.RecordView{License: "CC0-1.0"}) {
 		t.Fatal("unassessed record should not match a boolean exclusion")
+	}
+	if filter.Allows(shard.RecordView{License: "Apache-2.0 AND CC-BY-NC-4.0", EmailAddresses: &absent, RepetitiveContent: &absent, BoilerplateContent: &absent}) {
+		t.Fatal("compound license with an excluded term was allowed")
 	}
 	legacy := RecordFilter{Exclude: &ExclusionFilter{Licenses: []string{"CC-*"}}, Licenses: &ValueFilter{Exclude: []string{"CC0-*"}}}
 	if err := legacy.Validate(); err == nil || !strings.Contains(err.Error(), "cannot be combined") {

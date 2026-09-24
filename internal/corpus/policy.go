@@ -10,7 +10,13 @@ package corpus
 import (
 	"fmt"
 	"path"
+	"regexp"
+	"strings"
 )
+
+// licenseOperator separates the terms of an SPDX-style license expression,
+// such as the "A AND B" form produced for multi-license records.
+var licenseOperator = regexp.MustCompile(`(?i)\s+(?:AND|OR)\s+`)
 
 type LicensePolicy struct {
 	Include []string `json:"include,omitempty" yaml:"include,omitempty"`
@@ -27,25 +33,84 @@ func NewLicensePolicy(include, exclude []string) (LicensePolicy, error) {
 	return policy, nil
 }
 
+// Allows reports whether a license expression satisfies the policy. An
+// exclude pattern rejects the expression when it matches the whole expression
+// or any of its terms. Include patterns must cover every term, unless an
+// include pattern is itself a compound expression matching the whole value.
 func (p LicensePolicy) Allows(license string) bool {
-	for _, pattern := range p.Exclude {
-		if matches(pattern, license) {
-			return false
-		}
+	if licenseExcluded(p.Exclude, license) {
+		return false
 	}
-	if len(p.Include) == 0 {
-		return true
-	}
-	for _, pattern := range p.Include {
-		if matches(pattern, license) {
+	return len(p.Include) == 0 || licenseIncluded(p.Include, license)
+}
+
+// licenseExcluded reports whether any pattern matches the whole license
+// expression or one of its terms, so a restricted term cannot hide behind a
+// more permissive one.
+func licenseExcluded(patterns []string, license string) bool {
+	terms := licenseTerms(license)
+	for _, pattern := range patterns {
+		if matchLicense(pattern, license) {
 			return true
+		}
+		for _, term := range terms {
+			if matchLicense(pattern, term) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-func matches(pattern, value string) bool {
-	matched, _ := path.Match(pattern, value)
+// licenseIncluded reports whether every term of the license expression is
+// matched by some pattern. A pattern matches the whole expression only when
+// the expression is a single term or the pattern is itself a compound
+// expression; otherwise a wildcard such as "CC-*" would span an operator and
+// admit unlisted terms. OR terms are treated like AND terms: an alternative
+// that is not included keeps the expression out.
+func licenseIncluded(patterns []string, license string) bool {
+	terms := licenseTerms(license)
+	for _, pattern := range patterns {
+		if (len(terms) <= 1 || licenseOperator.MatchString(pattern)) && matchLicense(pattern, license) {
+			return true
+		}
+	}
+	if len(terms) == 0 {
+		return false
+	}
+	for _, term := range terms {
+		included := false
+		for _, pattern := range patterns {
+			if matchLicense(pattern, term) {
+				included = true
+				break
+			}
+		}
+		if !included {
+			return false
+		}
+	}
+	return true
+}
+
+// licenseTerms splits a license expression on AND/OR operators. Grouping
+// parentheses are dropped and WITH exceptions stay attached to their license.
+func licenseTerms(license string) []string {
+	parts := licenseOperator.Split(license, -1)
+	terms := make([]string, 0, len(parts))
+	for _, part := range parts {
+		term := strings.TrimSpace(strings.Trim(strings.TrimSpace(part), "()"))
+		if term != "" {
+			terms = append(terms, term)
+		}
+	}
+	return terms
+}
+
+// matchLicense applies a shell-style pattern in which '*' and '?' also match
+// '/', because license declarations preserved verbatim may contain URLs.
+func matchLicense(pattern, value string) bool {
+	matched, _ := path.Match(strings.ReplaceAll(pattern, "/", "\x00"), strings.ReplaceAll(value, "/", "\x00"))
 	return matched
 }
 

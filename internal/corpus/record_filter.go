@@ -198,7 +198,7 @@ func (filter RecordFilter) Allows(record shard.RecordView) bool {
 	if filter.Exclude != nil && filter.Exclude.Matches(record) {
 		return false
 	}
-	if filter.Licenses != nil && !filter.Licenses.Allows(record.License) {
+	if filter.Licenses != nil && !filter.Licenses.AllowsLicense(record.License) {
 		return false
 	}
 	if filter.Languages != nil && !filter.Languages.Allows(record.Language) {
@@ -217,12 +217,7 @@ func (filter ExclusionFilter) Matches(record shard.RecordView) bool {
 	if filter.BoilerplateContent != nil && record.BoilerplateContent != nil && *filter.BoilerplateContent == *record.BoilerplateContent {
 		return true
 	}
-	for _, pattern := range filter.Licenses {
-		if matched, _ := path.Match(pattern, record.License); matched {
-			return true
-		}
-	}
-	return false
+	return licenseExcluded(filter.Licenses, record.License)
 }
 
 // ContentAssessmentExclusions returns the assessment fields whose true or
@@ -258,6 +253,16 @@ func (filter RecordFilter) addContentAssessmentExclusions(fields map[string]bool
 
 func (filter ValueFilter) Allows(value string) bool {
 	return filter.AllowsAny(value)
+}
+
+// AllowsLicense applies the filter to a license expression with the same
+// term semantics as LicensePolicy: any excluded term rejects the record and
+// includes must cover every term.
+func (filter ValueFilter) AllowsLicense(license string) bool {
+	if licenseExcluded(filter.Exclude, license) {
+		return false
+	}
+	return len(filter.Include) == 0 || licenseIncluded(filter.Include, license)
 }
 
 func (filter ValueFilter) AllowsAny(values ...string) bool {

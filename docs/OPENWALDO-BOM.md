@@ -40,6 +40,9 @@ file hash.
   unavailable or dirty.
 - `paths` is the sorted, de-duplicated user selection.
 - `license_policy` records include and exclude globs; excludes take precedence.
+  Globs apply to each term of a compound license expression: any excluded term
+  rejects the license, and includes must cover every term (see the record
+  filter rules in `MODEL-COMPOSE.md`).
 - `manifests` records each selected manifest's hash and resolved corpus-level
   facts, including format, record schema, conversion recipe, upstream sources,
   structured processing declarations, modality measures, and exact totals
