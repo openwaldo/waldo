@@ -81,7 +81,7 @@ func verifyDirectory(root, dir string, result *Verification) error {
 	seen := map[string]bool{}
 	names := make([]string, 0, len(index.Entries))
 	for _, entry := range index.Entries {
-		if entry.Name == "" || entry.Name == "." || entry.Name == ".." || filepath.Base(entry.Name) != entry.Name {
+		if !ValidEntryName(entry.Name) {
 			return fmt.Errorf("%s: invalid entry name %q", path, entry.Name)
 		}
 		if seen[entry.Name] {
@@ -96,23 +96,16 @@ func verifyDirectory(root, dir string, result *Verification) error {
 
 	result.Directories++
 	for _, entry := range index.Entries {
-		entryPath := filepath.Join(dir, entry.Name)
-		info, err := os.Stat(entryPath)
+		entryPath, err := EntryPath(dir, entry)
 		if err != nil {
-			return fmt.Errorf("%s: indexed entry %q: %w", path, entry.Name, err)
+			return fmt.Errorf("%s: %w", path, err)
 		}
 		switch entry.Type {
 		case "dir":
-			if !info.IsDir() {
-				return fmt.Errorf("%s: entry %q is declared as a directory but is a file", path, entry.Name)
-			}
 			if err := verifyDirectory(root, entryPath, result); err != nil {
 				return err
 			}
 		case "manifest":
-			if info.IsDir() {
-				return fmt.Errorf("%s: entry %q is declared as a manifest but is a directory", path, entry.Name)
-			}
 			manifest, err := LoadManifest(entryPath)
 			if err != nil {
 				return err

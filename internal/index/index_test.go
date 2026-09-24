@@ -467,3 +467,92 @@ func writeFile(t *testing.T, path, contents string) {
 		t.Fatal(err)
 	}
 }
+
+func TestIndexWalkersRejectUnsafeEntries(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, root string)
+		want  string
+	}{
+		{
+			name: "current directory entry",
+			setup: func(t *testing.T, root string) {
+				writeFile(t, filepath.Join(root, "alpha", "index.json"), `{
+  "kind": "index", "schema": 1, "path": "alpha",
+  "entries": [{"name": ".", "type": "dir"}, {"name": "books.json", "type": "manifest"}]
+}`)
+			},
+			want: `invalid entry name "."`,
+		},
+		{
+			name: "parent traversal entry",
+			setup: func(t *testing.T, root string) {
+				writeFile(t, filepath.Join(filepath.Dir(root), "outside.json"), `{"kind": "manifest", "schema": 1, "name": "outside"}`)
+				writeFile(t, filepath.Join(root, "alpha", "index.json"), `{
+  "kind": "index", "schema": 1, "path": "alpha",
+  "entries": [{"name": "../../outside.json", "type": "manifest"}]
+}`)
+			},
+			want: `invalid entry name "../../outside.json"`,
+		},
+		{
+			name: "symbolic link directory",
+			setup: func(t *testing.T, root string) {
+				writeFile(t, filepath.Join(root, "index.json"), `{
+  "kind": "index", "schema": 1, "path": "",
+  "entries": [{"name": "alpha", "type": "dir"}, {"name": "loop", "type": "dir"}]
+}`)
+				if err := os.Symlink(".", filepath.Join(root, "loop")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: `indexed entry "loop" is a symbolic link`,
+		},
+		{
+			name: "symbolic link manifest",
+			setup: func(t *testing.T, root string) {
+				outside := filepath.Join(t.TempDir(), "books.json")
+				data, err := os.ReadFile(filepath.Join(root, "alpha", "books.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, outside, string(data))
+				if err := os.Remove(filepath.Join(root, "alpha", "books.json")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Join(root, "alpha", "books.json")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: `indexed entry "books.json" is a symbolic link`,
+		},
+		{
+			name: "symbolic link index metadata",
+			setup: func(t *testing.T, root string) {
+				outside := filepath.Join(t.TempDir(), "index.json")
+				writeFile(t, outside, `{"kind": "index", "schema": 1, "path": "alpha", "entries": []}`)
+				if err := os.Remove(filepath.Join(root, "alpha", "index.json")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Join(root, "alpha", "index.json")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "index metadata must be a regular file",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := fixtureIndex(t)
+			test.setup(t, root)
+			target := Target{Root: root, Abs: root}
+			err := WalkCorpora(target, func(Corpus) error { return nil })
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("WalkCorpora() error = %v, want %q", err, test.want)
+			}
+			if _, err := Verify(target); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Verify() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
