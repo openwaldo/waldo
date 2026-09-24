@@ -184,16 +184,16 @@ current_weights=$(find "$models/pytorch-smoke/runs" -type f -name model.safetens
 current_checkpoint=$(find "$models/pytorch-smoke/runs" -type f -path '*/checkpoints/step-*/model.safetensors' -print | sort | tail -1)
 [ -s "$current_checkpoint" ] || { echo "real PyTorch checkpoint weights were not produced" >&2; exit 1; }
 
-if "$binary" model export pytorch-smoke "$huggingface_export" --format huggingface --allow-incomplete >"$root/huggingface-export.log" 2>&1; then
+if "$binary" model export pytorch-smoke "$huggingface_export" --format huggingface --allow-incomplete >"$work/huggingface-export.log" 2>&1; then
   echo "Hugging Face export unexpectedly discarded qk_normalization" >&2
   exit 1
 fi
-grep -q 'cannot preserve WALDO qk_normalization' "$root/huggingface-export.log"
-if "$binary" model export pytorch-smoke "$gguf_export" --format gguf --allow-incomplete >"$root/gguf-export.log" 2>&1; then
+grep -q 'cannot preserve WALDO qk_normalization' "$work/huggingface-export.log"
+if "$binary" model export pytorch-smoke "$gguf_export" --format gguf --allow-incomplete >"$work/gguf-export.log" 2>&1; then
   echo "GGUF export unexpectedly discarded qk_normalization" >&2
   exit 1
 fi
-grep -q 'cannot preserve WALDO qk_normalization' "$root/gguf-export.log"
+grep -q 'cannot preserve WALDO qk_normalization' "$work/gguf-export.log"
 "$torch_python" - "$current_weights" <<'PY'
 import json
 import struct
