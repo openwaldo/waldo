@@ -24,6 +24,10 @@ func TestNormalizeLicense(t *testing.T) {
 		"Community Data License Agreement - Permissive 1.0 - https://cdla.dev/": "CDLA-Permissive-1.0",
 		"ISC License": "ISC",
 		"MIT License": "MIT",
+		"GPL-3.0-only; docs: https://creativecommons.org/licenses/by/4.0/":                         "GPL-3.0-only; docs: https://creativecommons.org/licenses/by/4.0/",
+		"https://creativecommons.org/licenses/by/4.0/ AND GPL-3.0-only":                            "https://creativecommons.org/licenses/by/4.0/ AND GPL-3.0-only",
+		"Creative Commons - Attribution - https://creativecommons.org/licenses/by/4.0/ or GPL-2.0": "Creative Commons - Attribution - https://creativecommons.org/licenses/by/4.0/ or GPL-2.0",
+		"GPL-2.0 - https://creativecommons.org/licenses/by/4.0/":                                   "GPL-2.0 - https://creativecommons.org/licenses/by/4.0/",
 	} {
 		if got := NormalizeLicense(input); got != wanted {
 			t.Errorf("NormalizeLicense(%q) = %q, want %q", input, got, wanted)

@@ -11,7 +11,11 @@ import (
 	"strings"
 )
 
-var creativeCommonsURL = regexp.MustCompile(`(?i)https?://creativecommons\.org/(?:licenses/([a-z-]+)/([0-9.]+)|publicdomain/zero/([0-9.]+))/?(?:legalcode/?)?(?:[?#][^[:space:]]*)?`)
+// creativeCommonsURL matches a whole declaration that is only a Creative
+// Commons URL, optionally preceded by a descriptive Creative Commons label.
+// It is anchored so text that merely mentions a CC URL next to other terms is
+// preserved verbatim instead of collapsing into a single CC identifier.
+var creativeCommonsURL = regexp.MustCompile(`(?i)^(?:Creative\s+Commons(?:(?:\s*-\s*|\s+)(?:Attribution|Share-?Alike|Non-?Commercial|No-?Deriv(?:ative)?s|Zero|Public|Domain|Universal|Dedication|International|Licen[cs]e|[0-9]+(?:\.[0-9]+)*))*\s*-\s*)?https?://creativecommons\.org/(?:licenses/([a-z-]+)/([0-9.]+)|publicdomain/zero/([0-9.]+))/?(?:legalcode/?)?(?:[?#][^[:space:]]*)?$`)
 var creativeCommonsName = regexp.MustCompile(`(?i)^CC[ _-]*(BY(?:[ _-]*(?:NC|ND|SA)){0,2}|ZERO|0)[ _-]*([0-9]+(?:\.[0-9]+)?)$`)
 
 // NormalizeLicense canonicalizes recognized Creative Commons identifiers.
