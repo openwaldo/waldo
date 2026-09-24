@@ -94,8 +94,9 @@ Before another multi-day model run:
    estimated training FLOPs, MFU, gradient norm, and skipped/non-finite steps.
 4. Pin the hardware, software, compose, corpus BOM, tokenizer, seed, and
    evaluation BOM in one comparison report.
-5. Run `./testing/training-acceptance.sh` on a Linux GPU host. A skipped backend
-   is a failure in this release gate, not a passing test.
+5. Run `./testing/training-acceptance.sh --hostfile PATH --corpus
+   SMALL_INDEX_PATH` on the actual Linux GPU hosts. A skipped backend or omitted
+   hostfile test is not sufficient for a multi-host production run.
 
 Exit gate: estimates agree with observed peak memory within 15%, token counts
 are exact, and resumed and uninterrupted golden runs pass.

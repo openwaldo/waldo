@@ -166,8 +166,8 @@ WALDO requirements:
 - Select project grounding against its own held-out set rather than allowing
   the much larger broad SFT mixture to hide failure to learn WALDO facts.
 - Add fixed side-by-side generation and held-out evaluations.
-- Pass `./testing/training-acceptance.sh` on the target Linux GPU software
-  stack before starting the full run.
+- Pass `./testing/training-acceptance.sh --hostfile PATH --corpus
+  SMALL_INDEX_PATH` on the target Linux GPU hosts before starting the full run.
 
 ## Conversation level 4 (`0004-conversation.yaml`)
 
