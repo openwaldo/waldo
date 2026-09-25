@@ -26,7 +26,7 @@ fi
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
-revision=$(sed -n 's/.*MLXRevision = "\(.*\)".*/\1/p' "$repo_root/internal/training/mlx.go")
+revision=$(awk '{ for (field = 1; field <= NF; field++) if ($field == "MLXRevision" && $(field + 1) == "=") { value = $(field + 2); gsub(/^"|"$/, "", value); print value; exit } }' "$repo_root/internal/training/mlx.go")
 [ -n "$revision" ] || { echo "could not read MLXRevision from internal/training/mlx.go" >&2; exit 1; }
 temporary_base=${TMPDIR:-/tmp}
 work=$(mktemp -d "$temporary_base/waldo-mlx-e2e.XXXXXX")

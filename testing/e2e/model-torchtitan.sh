@@ -28,7 +28,7 @@ fi
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
-revision=$(sed -n 's/.*TorchTitanRevision = "\(.*\)".*/\1/p' "$repo_root/internal/training/torchtitan.go")
+revision=$(awk '{ for (field = 1; field <= NF; field++) if ($field == "TorchTitanRevision" && $(field + 1) == "=") { value = $(field + 2); gsub(/^"|"$/, "", value); print value; exit } }' "$repo_root/internal/training/torchtitan.go")
 [ -n "$revision" ] || { echo "could not read TorchTitanRevision from internal/training/torchtitan.go" >&2; exit 1; }
 local_gpus=$("$titan_python" -c 'import torch; print(torch.cuda.device_count())')
 [ "$local_gpus" -gt 0 ] || { echo "TorchTitan E2E did not find a CUDA GPU" >&2; exit 1; }

@@ -28,7 +28,7 @@ fi
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
-revision=$(sed -n 's/.*PyTorchRevision = "\(.*\)".*/\1/p' "$repo_root/internal/training/pytorch.go")
+revision=$(awk '{ for (field = 1; field <= NF; field++) if ($field == "PyTorchRevision" && $(field + 1) == "=") { value = $(field + 2); gsub(/^"|"$/, "", value); print value; exit } }' "$repo_root/internal/training/pytorch.go")
 [ -n "$revision" ] || { echo "could not read PyTorchRevision from internal/training/pytorch.go" >&2; exit 1; }
 temporary_base=${TMPDIR:-/tmp}
 work=$(mktemp -d "$temporary_base/waldo-pytorch-e2e.XXXXXX")
