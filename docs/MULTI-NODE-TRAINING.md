@@ -335,7 +335,8 @@ The repository's opt-in multi-node hardware test exercises rendezvous and FSDP2
 on two GPUs in one Linux host. A real hostfile smoke test additionally validates
 SSH launch, routing, firewall, and inter-host NCCL transport.
 
-Run that real test against the production hostfile and a small existing corpus:
+Run that real test against the production hostfile and a small existing
+structured-conversation corpus:
 
 ```console
 ./testing/training-acceptance.sh \

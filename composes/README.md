@@ -167,7 +167,8 @@ WALDO requirements:
   the much larger broad SFT mixture to hide failure to learn WALDO facts.
 - Add fixed side-by-side generation and held-out evaluations.
 - Pass `./testing/training-acceptance.sh --hostfile PATH --corpus
-  SMALL_INDEX_PATH` on the target Linux GPU hosts before starting the full run.
+  SMALL_CONVERSATION_INDEX_PATH` on the target Linux GPU hosts before starting
+  the full run.
 
 ## Conversation level 4 (`0004-conversation.yaml`)
 

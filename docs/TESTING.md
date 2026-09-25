@@ -50,7 +50,8 @@ It is not a substitute for the two-host acceptance test in
 hostfile parsing, SSH staging, routing, firewall, and inter-host NCCL.
 
 Before a production multi-host run, execute the required acceptance gate with
-the real hostfile and a deliberately small existing indexed corpus:
+the real hostfile and a deliberately small existing structured-conversation
+corpus:
 
 ```bash
 ./testing/training-acceptance.sh \

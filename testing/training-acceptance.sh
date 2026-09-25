@@ -18,12 +18,12 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     --corpus)
-      [ "$#" -ge 2 ] || { echo "--corpus requires a small indexed corpus path" >&2; exit 2; }
+      [ "$#" -ge 2 ] || { echo "--corpus requires a small structured-conversation index path" >&2; exit 2; }
       corpus=$2
       shift 2
       ;;
     -h|--help)
-      echo "usage: $0 [--hostfile PATH --corpus INDEX_PATH]"
+      echo "usage: $0 [--hostfile PATH --corpus CONVERSATION_INDEX_PATH]"
       echo ""
       echo "Without a hostfile, validates local PyTorch and TorchTitan execution."
       echo "With a hostfile, also validates the real SSH multi-host training path."

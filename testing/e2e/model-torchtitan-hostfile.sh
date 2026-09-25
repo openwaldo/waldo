@@ -6,7 +6,7 @@
 
 set -eu
 
-[ "$#" -eq 2 ] || { echo "usage: $0 HOSTFILE SMALL_INDEX_PATH" >&2; exit 2; }
+[ "$#" -eq 2 ] || { echo "usage: $0 HOSTFILE SMALL_CONVERSATION_INDEX_PATH" >&2; exit 2; }
 hostfile=$1
 corpus=$2
 
@@ -79,9 +79,12 @@ architecture:
     name: byte
     revision: builtin-byte-schema-1
 stages:
-  - name: pretrain
-    type: pre-training
-    objective: causal-language-modeling
+  - name: conversation-smoke
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
     corpora:
       - $corpus
     parameters:
@@ -95,7 +98,10 @@ stages:
       evaluate_every: 5
   - name: refine
     type: fine-tuning
-    objective: causal-language-modeling
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
     corpora:
       - $corpus
     parameters:
@@ -109,6 +115,7 @@ stages:
       evaluate_every: 5
 EOF
 
+"$binary" model forecast "$compose" >/dev/null
 "$binary" model train "$model_name" "$compose" --hostfile "$hostfile"
 
 summary=$("$binary" --json model summary "$model_name")
@@ -116,7 +123,7 @@ printf '%s\n' "$summary" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*false'
 printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"torchtitan"'
 printf '%s\n' "$summary" | grep -Eq '"nodes"[[:space:]]*:[[:space:]]*'"$nodes"
 printf '%s\n' "$summary" | grep -Eq '"world_size"[[:space:]]*:[[:space:]]*'"$world_size"
-printf '%s\n' "$summary" | grep -Eq '"stage"[[:space:]]*:[[:space:]]*"pretrain"'
+printf '%s\n' "$summary" | grep -Eq '"stage"[[:space:]]*:[[:space:]]*"conversation-smoke"'
 printf '%s\n' "$summary" | grep -Eq '"stage"[[:space:]]*:[[:space:]]*"refine"'
 printf '%s\n' "$summary" | grep -Eq '"publishable_checkpoint_heldout_loss"[[:space:]]*:'
 printf '%s\n' "$summary" | grep -Eq '"live_eager_compute_heldout_loss"[[:space:]]*:'
