@@ -49,6 +49,22 @@ It is not a substitute for the two-host acceptance test in
 [Multi-host training](MULTI-NODE-TRAINING.md), which additionally exercises
 hostfile parsing, SSH staging, routing, firewall, and inter-host NCCL.
 
+Before a production multi-host run, execute the required acceptance gate with
+the real hostfile and a deliberately small existing structured-conversation
+corpus:
+
+```bash
+./testing/training-acceptance.sh \
+  --hostfile ~/hostfile \
+  --corpus post-train/sft/waldo-project-v1
+```
+
+The hostfile test uses the configured index, lookaside, caches, credentials,
+NCCL settings, and model root. It creates a uniquely named two-stage model with
+10 optimizer steps per stage,
+removes it after success, and preserves it plus its temporary compose after a
+failure. It does not ingest or publish test corpus objects.
+
 ## Live tests
 
 Live tests are never run by `testing/all.sh`. Their environment variables are

@@ -169,8 +169,14 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	if err := os.WriteFile(filepath.Join(temporary, "EU-BOM.json"), options.EUBOM, 0o644); err != nil {
 		return "", err
 	}
+	if len(options.Attribution) == 0 {
+		return "", fmt.Errorf("ATTRIBUTION.md is empty")
+	}
+	if err := os.WriteFile(filepath.Join(temporary, "ATTRIBUTION.md"), options.Attribution, 0o644); err != nil {
+		return "", err
+	}
 	format := "gguf"
-	roles := map[string]string{"model.gguf": "weights", "EU-BOM.json": "regulatory-disclosure"}
+	roles := map[string]string{"model.gguf": "weights", "EU-BOM.json": "regulatory-disclosure", "ATTRIBUTION.md": "training-data-attribution"}
 	if ollama {
 		format = "ollama"
 		modelfile, err := ollamaModelfile(inspection)
@@ -570,6 +576,9 @@ func modelGGUFMetadata(record model.ModelRecord) ([]ggufMetadata, error) {
 	architecture := record.Architecture
 	if err := architecture.Validate(); err != nil {
 		return nil, fmt.Errorf("GGUF architecture: %w", err)
+	}
+	if err := validateStandardLlamaArchitecture(architecture, "GGUF/Ollama"); err != nil {
+		return nil, err
 	}
 	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
 		return nil, fmt.Errorf("GGUF export currently requires byte@builtin-byte-schema-1 with vocabulary_size 259")

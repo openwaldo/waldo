@@ -239,6 +239,29 @@ func verifyModelArtifacts(inspection Inspection) error {
 	return nil
 }
 
+// VerifyCurrentModelArtifacts verifies the published artifacts from the most
+// recent completed run. Checkpoints are intentionally excluded: completion is
+// about the model artifact that WALDO will load, not obsolete recovery state.
+func VerifyCurrentModelArtifacts(inspection Inspection) error {
+	for index := len(inspection.Runs) - 1; index >= 0; index-- {
+		run := inspection.Runs[index]
+		if run.State != RunComplete {
+			continue
+		}
+		if run.Observation == nil || len(run.Observation.Artifacts) == 0 || index >= len(inspection.Model.Runs) {
+			return fmt.Errorf("run %s has no published model artifacts", run.ID)
+		}
+		runDirectory := filepath.Join(inspection.Path, "runs", runDirectoryName(inspection.Model.Runs[index]))
+		for _, artifact := range run.Observation.Artifacts {
+			if err := VerifyArtifactFile(filepath.Join(runDirectory, filepath.FromSlash(artifact.Path)), artifact); err != nil {
+				return fmt.Errorf("run %s: %w", run.ID, err)
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("model has no completed run artifacts")
+}
+
 func copyTree(source, destination string) error {
 	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {

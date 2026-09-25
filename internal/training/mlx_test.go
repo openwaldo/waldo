@@ -36,6 +36,32 @@ func TestMLXResolverSelectsFirstUsableRuntime(t *testing.T) {
 	}
 }
 
+func TestMLXWorkerPublishesBestEvaluatedCheckpoint(t *testing.T) {
+	source := string(mlxWorker)
+	if !strings.Contains(source, `WORKER_REVISION = "`+MLXRevision+`"`) {
+		t.Fatalf("embedded MLX worker revision does not match Go adapter %q", MLXRevision)
+	}
+	for _, expected := range []string{
+		`selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"])`,
+		`self.model.load_weights(selected_path)`,
+		`"selected_checkpoint": selection`,
+		`selected checkpoint step {selected_step}`,
+		`self.model.load_weights(weights_path)`,
+		`if abs(artifact_loss - live_loss) > tolerance:`,
+		`"value": live_loss`,
+		`safety_steps = {1}`,
+		`if self.evaluation_sequences and (not self.evaluations or self.evaluations[-1]["step"] != self.step_number):`,
+		`error_class = "artifact-integrity"`,
+		`error_class = "numerical-integrity"`,
+		`non-finite training loss at optimizer step`,
+		`non-finite gradient norm at optimizer step`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("MLX worker omits best-checkpoint publication behavior %q", expected)
+		}
+	}
+}
+
 func TestMLXResolverFailsClosed(t *testing.T) {
 	valid := json.RawMessage(`{"family":"decoder-transformer","vocabulary_size":259,"tokenizer":{"name":"byte","revision":"builtin-byte-schema-1"}}`)
 	if _, err := (MLXResolver{OS: "linux", Arch: "amd64"}).Resolve(context.Background(), ResolveRequest{Architecture: valid}); err == nil || !strings.Contains(err.Error(), "Apple Silicon") {

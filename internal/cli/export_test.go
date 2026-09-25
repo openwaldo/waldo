@@ -373,7 +373,7 @@ func TestModelExportRequiresDisclosureAndPublishesBothBOMs(t *testing.T) {
 	if code := Run([]string{"model", "export", "release", destination, "--allow-incomplete"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("model export code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
-	for _, name := range []string{"BOM.json", "EU-BOM.json"} {
+	for _, name := range []string{"BOM.json", "EU-BOM.json", "ATTRIBUTION.md"} {
 		if _, err := os.Stat(filepath.Join(destination, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
 		}

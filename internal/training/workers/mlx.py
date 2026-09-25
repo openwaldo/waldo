@@ -16,11 +16,19 @@ import traceback
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
-from mlx.utils import tree_flatten, tree_unflatten
+from mlx.utils import tree_flatten, tree_map, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r8"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r15"
+
+
+class ArtifactIntegrityError(ValueError):
+    pass
+
+
+class NumericalIntegrityError(ValueError):
+    pass
 
 
 def emit(kind, **payload):
@@ -88,11 +96,12 @@ def commit_directory(temporary, destination):
 
 
 class Attention(nn.Module):
-    def __init__(self, hidden, heads, kv_heads):
+    def __init__(self, hidden, heads, kv_heads, qk_normalization=False):
         super().__init__()
         self.heads = heads
         self.kv_heads = kv_heads
         self.head_dim = hidden // heads
+        self.qk_normalization = qk_normalization
         kv_width = self.head_dim * kv_heads
         self.q_proj = nn.Linear(hidden, hidden, bias=False)
         self.k_proj = nn.Linear(hidden, kv_width, bias=False)
@@ -107,6 +116,9 @@ class Attention(nn.Module):
         val = self.v_proj(value).reshape(batch, length, self.kv_heads, self.head_dim).transpose(0, 2, 1, 3)
         query = self.rope(query)
         key = self.rope(key)
+        if self.qk_normalization:
+            query = query * mx.rsqrt(mx.mean(query * query, axis=-1, keepdims=True) + 1e-6)
+            key = key * mx.rsqrt(mx.mean(key * key, axis=-1, keepdims=True) + 1e-6)
         attended = mx.fast.scaled_dot_product_attention(
             query, key, val, scale=self.head_dim ** -0.5, mask="causal"
         )
@@ -126,10 +138,10 @@ class FeedForward(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, hidden, intermediate, heads, kv_heads, dropout):
+    def __init__(self, hidden, intermediate, heads, kv_heads, dropout, qk_normalization):
         super().__init__()
         self.attention_norm = nn.RMSNorm(hidden, eps=1e-5)
-        self.attention = Attention(hidden, heads, kv_heads)
+        self.attention = Attention(hidden, heads, kv_heads, qk_normalization)
         self.ffn_norm = nn.RMSNorm(hidden, eps=1e-5)
         self.feed_forward = FeedForward(hidden, intermediate)
         self.residual_dropout = nn.Dropout(dropout)
@@ -142,6 +154,7 @@ class DecoderBlock(nn.Module):
 class DecoderLM(nn.Module):
     def __init__(self, architecture):
         super().__init__()
+        self.architecture = architecture
         vocabulary = architecture["vocabulary_size"]
         hidden = architecture["hidden_size"]
         self.tie_embeddings = architecture["tie_embeddings"]
@@ -153,12 +166,27 @@ class DecoderLM(nn.Module):
                 architecture["attention_heads"],
                 architecture["key_value_heads"],
                 architecture.get("dropout", 0.0),
+                architecture.get("qk_normalization", False),
             )
             for _ in range(architecture["layers"])
         ]
         self.norm = nn.RMSNorm(hidden, eps=1e-5)
         if not self.tie_embeddings:
             self.output = nn.Linear(hidden, vocabulary, bias=False)
+
+    def initialize(self):
+        normal = nn.init.normal(mean=0.0, std=0.02)
+        self.embedding.weight = normal(self.embedding.weight)
+        for layer in self.layers:
+            for projection in (layer.attention.q_proj, layer.attention.k_proj, layer.attention.v_proj, layer.attention.o_proj, layer.feed_forward.gate, layer.feed_forward.up, layer.feed_forward.down):
+                projection.weight = normal(projection.weight)
+        if not self.tie_embeddings:
+            self.output.weight = normal(self.output.weight)
+        if self.architecture.get("initialization", "normal") == "depth-scaled":
+            residual = nn.init.normal(mean=0.0, std=0.02 / math.sqrt(2 * len(self.layers)))
+            for layer in self.layers:
+                layer.attention.o_proj.weight = residual(layer.attention.o_proj.weight)
+                layer.feed_forward.down.weight = residual(layer.feed_forward.down.weight)
 
     def __call__(self, tokens):
         value = self.embedding(tokens)
@@ -200,13 +228,19 @@ class Trainer:
         self.begin = begin
         self.architecture = begin["architecture"]
         self.parameters = begin["parameters"]
+        if self.parameters.get("activation_checkpointing", False):
+            raise ValueError("MLX backend does not implement activation_checkpointing")
+        if self.parameters.get("compile", False):
+            raise ValueError("MLX backend does not implement the PyTorch compile control")
         self.artifact_directory = artifact_directory
         self.artifact_prefix = artifact_prefix.replace(os.sep, "/").strip("/")
         self.sequence_length = self.parameters["sequence_length"]
-        self.batch_size = self.parameters["batch_size"]
+        self.global_batch_size = self.parameters["batch_size"]
+        self.gradient_accumulation_steps = self.parameters["gradient_accumulation_steps"]
+        self.batch_size = self.global_batch_size // self.gradient_accumulation_steps
         self.target_steps = self.parameters["steps"]
         self.step_number = 0
-        self.replay_steps = 0
+        self.replay_micro_batches = 0
         self.consumed_tokens = 0
         self.token_buffer = []
         self.loss_buffer = []
@@ -221,7 +255,16 @@ class Trainer:
         self.final_loss = None
         self.started = time.perf_counter()
         self.last_report = self.started
+        self.last_step_finished = self.started
+        self.data_wait_seconds = 0.0
+        self.skipped_steps = 0
         self.last_report_tokens = 0
+        self.accumulation_number = 0
+        self.accumulated_gradients = None
+        self.accumulated_loss_sum = 0.0
+        self.accumulated_tokens = 0
+        self.accumulated_consumption = {}
+        self.accumulated_compute_seconds = 0.0
 
         tokenizer = begin["tokenizer"]
         architecture_tokenizer = self.architecture["tokenizer"]
@@ -230,16 +273,23 @@ class Trainer:
         self.tokenizer = FramingTokenizer(tokenizer)
         mx.random.seed(self.parameters["seed"])
         self.model = DecoderLM(self.architecture)
+        self.model.initialize()
+        self.parameter_count = sum(value.size for _, value in tree_flatten(self.model.parameters()))
         self.model.train()
         self.initialization = begin.get("initialization")
         if self.initialization is not None:
             self.model.load_weights(self.initialization["path"])
+        requested_precision = self.parameters.get("compute_precision", "auto")
         dtype_name = self.architecture["parameter_dtype"]
+        if requested_precision not in ("auto", dtype_name):
+            raise ValueError("MLX compute_precision must be auto or match parameter_dtype")
         dtype = {"float32": mx.float32, "float16": mx.float16, "bfloat16": mx.bfloat16}[dtype_name]
         if dtype != mx.float32:
             self.model.apply(lambda value: value.astype(dtype))
         mx.eval(self.model.parameters())
         optimizer_parameters = self.parameters["optimizer"]
+        if optimizer_parameters["name"] != "adamw":
+            raise ValueError("MLX backend currently supports only the adamw optimizer")
         self.optimizer = optim.AdamW(
             learning_rate=self.parameters["learning_rate"],
             betas=(optimizer_parameters["beta1"], optimizer_parameters["beta2"]),
@@ -250,6 +300,10 @@ class Trainer:
         if self.resume is not None:
             self.restore_checkpoint(self.resume)
         self.loss_and_grad = nn.value_and_grad(self.model, self.loss)
+        reset_peak_memory = getattr(mx, "reset_peak_memory", None)
+        if reset_peak_memory is not None:
+            reset_peak_memory()
+        self.last_step_finished = time.perf_counter()
 
     def logical(self, name):
         return "/".join(part for part in (self.artifact_prefix, name) if part)
@@ -260,6 +314,13 @@ class Trainer:
         warmup = schedule["warmup_steps"]
         if warmup > 0 and step <= warmup:
             return base * step / warmup
+        if schedule["name"] == "warmup-stable-warmdown":
+            warmdown = schedule.get("warmdown_steps", 0)
+            stable_end = self.target_steps - warmdown
+            if warmdown == 0 or step <= stable_end:
+                return base
+            progress = min(1.0, max(0.0, (step - stable_end) / warmdown))
+            return base * (1.0 - progress * (1.0 - schedule["minimum_rate_ratio"]))
         decay_steps = max(1, self.target_steps - warmup)
         progress = min(1.0, max(0.0, (step - warmup) / decay_steps))
         ratio = schedule["minimum_rate_ratio"] + (1.0 - schedule["minimum_rate_ratio"]) * 0.5 * (1.0 + math.cos(math.pi * progress))
@@ -268,7 +329,7 @@ class Trainer:
     def loss(self, model, inputs, targets, mask):
         logits = model(inputs)
         losses = nn.losses.cross_entropy(logits, targets, reduction="none")
-        return (losses * mask).sum() / mask.sum()
+        return (losses * mask).sum()
 
     def add_record(self, record):
         if self.step_number >= self.target_steps:
@@ -318,44 +379,91 @@ class Trainer:
         if len(self.batch) >= self.batch_size:
             self.train_batch()
 
-    def train_batch(self):
+    def train_batch(self, final=False):
         if not self.batch or self.step_number >= self.target_steps:
             self.batch = []
             return
-        if self.replay_steps > 0:
-            self.replay_steps -= 1
+        if self.replay_micro_batches > 0:
+            self.replay_micro_batches -= 1
             self.batch = []
+            self.last_step_finished = time.perf_counter()
             return
         step_started = time.perf_counter()
+        self.data_wait_seconds += max(0.0, step_started - self.last_step_finished)
+        if self.accumulation_number == 0:
+            self.accumulated_gradients = None
+            self.accumulated_loss_sum = 0.0
+            self.accumulated_tokens = 0
+            self.accumulated_consumption = {}
+            self.accumulated_compute_seconds = 0.0
         tokens = mx.array([item[0] for item in self.batch], dtype=mx.int32)
         mask = mx.array([item[1] for item in self.batch], dtype=mx.float32)
         inputs = tokens[:, :-1]
         targets = tokens[:, 1:]
         next_step = self.step_number + 1
+        report_every = max(1, self.target_steps // 100)
+        should_report = next_step == 1 or next_step == self.target_steps or next_step % report_every == 0
         current_learning_rate = self.learning_rate(next_step)
         self.optimizer.learning_rate = current_learning_rate
-        mx.random.seed(self.parameters["seed"] ^ next_step)
+        micro_seed = next_step if self.gradient_accumulation_steps == 1 else next_step * 1_000_003 + self.accumulation_number
+        mx.random.seed(self.parameters["seed"] ^ micro_seed)
         loss, gradients = self.loss_and_grad(self.model, inputs, targets, mask)
-        self.optimizer.update(self.model, gradients)
-        mx.eval(self.model.parameters(), self.optimizer.state, loss)
+        mx.eval(loss, gradients)
         if GPU_THROTTLE < 1:
-            # mx.eval already drained the GPU, so this never pauses mid command-buffer.
             time.sleep((time.perf_counter() - step_started) * (1 / GPU_THROTTLE - 1))
-        loss_value = float(loss.item())
         valid_tokens = int(mask.sum().item())
-        self.step_number = next_step
-        self.consumed_tokens += valid_tokens
+        if not math.isfinite(float(loss.item())):
+            raise NumericalIntegrityError(f"non-finite training loss at optimizer step {next_step}; no optimizer update was applied")
+        if valid_tokens <= 0 and self.accumulated_tokens == 0:
+            raise ValueError("gradient accumulation micro-batch has no supervised token targets")
+        if self.accumulated_gradients is None:
+            self.accumulated_gradients = gradients
+        else:
+            self.accumulated_gradients = tree_map(lambda left, right: left + right, self.accumulated_gradients, gradients)
+        self.accumulated_loss_sum += float(loss.item())
+        self.accumulated_tokens += valid_tokens
         for item in self.batch:
             for corpus, count in item[2].items():
-                self.consumed_by_corpus[corpus] = self.consumed_by_corpus.get(corpus, 0) + count
-        self.final_loss = loss_value
+                self.accumulated_consumption[corpus] = self.accumulated_consumption.get(corpus, 0) + count
         self.batch = []
+        self.accumulation_number += 1
+        self.accumulated_compute_seconds += max(time.perf_counter() - step_started, 1e-9)
+        if self.accumulation_number < self.gradient_accumulation_steps and not final:
+            self.last_step_finished = time.perf_counter()
+            return
+
+        averaged_gradients = tree_map(lambda gradient: gradient / self.accumulated_tokens, self.accumulated_gradients)
+        # Validate every optimizer update before mutating model or optimizer
+        # state. Delayed sampling can let one bad gradient poison a long run.
+        squared_norm = mx.array(0.0)
+        for _, gradient in tree_flatten(averaged_gradients):
+            squared_norm = squared_norm + mx.sum(gradient.astype(mx.float32) ** 2)
+        gradient_norm = mx.sqrt(squared_norm)
+        mx.eval(gradient_norm)
+        gradient_norm_value = float(gradient_norm.item())
+        if not math.isfinite(gradient_norm_value):
+            raise NumericalIntegrityError(f"non-finite gradient norm at optimizer step {next_step}; no optimizer update was applied")
+        update_started = time.perf_counter()
+        self.optimizer.update(self.model, averaged_gradients)
+        mx.eval(self.model.parameters(), self.optimizer.state)
+        self.accumulated_compute_seconds += max(time.perf_counter() - update_started, 1e-9)
+        loss_value = self.accumulated_loss_sum / self.accumulated_tokens
+        valid_tokens = self.accumulated_tokens
+        step_seconds = max(self.accumulated_compute_seconds, 1e-9)
+        self.step_number = next_step
+        self.consumed_tokens += valid_tokens
+        for corpus, count in self.accumulated_consumption.items():
+            self.consumed_by_corpus[corpus] = self.consumed_by_corpus.get(corpus, 0) + count
+        self.final_loss = loss_value
+        self.accumulation_number = 0
+        self.accumulated_gradients = None
         now = time.perf_counter()
         elapsed = max(now - self.started, 1e-9)
         throughput = self.consumed_tokens / elapsed
         eta = int(max(0.0, (self.target_steps - self.step_number) * elapsed / self.step_number))
-        report_every = max(1, self.target_steps // 100)
-        if self.step_number == 1 or self.step_number == self.target_steps or self.step_number % report_every == 0:
+        if should_report:
+            peak_memory = int(getattr(mx, "get_peak_memory", lambda: 0)())
+            step_flops = 6 * self.parameter_count * valid_tokens
             emit(
                 "event",
                 event={
@@ -366,15 +474,27 @@ class Trainer:
                     "loss": loss_value,
                     "learning_rate": current_learning_rate,
                     "tokens_per_second": throughput,
+                    "duration_seconds": step_seconds,
+                    "data_wait_seconds": self.data_wait_seconds,
+                    "peak_memory_bytes": peak_memory,
+                    "training_flops": 6 * self.parameter_count * self.consumed_tokens,
+                    "achieved_tflops": step_flops / step_seconds / 1e12,
+                    "gradient_norm": gradient_norm_value,
+                    "skipped_steps": self.skipped_steps,
                     "eta_seconds": eta,
                 },
             )
-        checkpoint_every = self.parameters["checkpoint_every"]
-        if checkpoint_every > 0 and self.step_number % checkpoint_every == 0:
-            self.save_checkpoint()
         evaluate_every = self.parameters["evaluate_every"]
-        if evaluate_every > 0 and self.step_number % evaluate_every == 0:
+        safety_steps = {1}
+        evaluate_due = bool(self.evaluation_sequences) and (
+            self.step_number in safety_steps or (evaluate_every > 0 and self.step_number % evaluate_every == 0)
+        )
+        if evaluate_due:
             self.record_evaluation(loss_value)
+        checkpoint_every = self.parameters["checkpoint_every"]
+        if checkpoint_every > 0 and self.step_number % checkpoint_every == 0 and not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints):
+            self.save_checkpoint()
+        self.last_step_finished = time.perf_counter()
 
     def save_weights(self, path, kind, step):
         weights = dict(tree_flatten(self.model.parameters()))
@@ -478,12 +598,11 @@ class Trainer:
         self.step_number = resume["step"]
         self.consumed_tokens = resume["tokens"]
         self.consumed_by_corpus = state.get("consumption", {})
-        self.replay_steps = resume["step"]
-        self.checkpoints = [resume["checkpoint"]]
+        self.replay_micro_batches = resume["step"] * self.gradient_accumulation_steps
+        self.checkpoints = list(resume.get("checkpoints") or [resume["checkpoint"]])
+        self.evaluations = list(resume.get("evaluations") or [])
 
-    def record_evaluation(self, _training_loss):
-        if not self.evaluation_sequences:
-            return
+    def evaluate_model(self):
         self.model.eval()
         total_loss = 0.0
         total_tokens = 0.0
@@ -500,14 +619,22 @@ class Trainer:
             mx.eval(loss_sum, token_count)
             total_loss += float(loss_sum.item())
             total_tokens += float(token_count.item())
-        loss_value = total_loss / total_tokens
         self.model.train()
+        return total_loss / total_tokens
+
+    def record_evaluation(self, _training_loss):
+        if not self.evaluation_sequences:
+            return
+        loss_value = self.evaluate_model()
         item = {
             "step": self.step_number,
             "tokens": self.consumed_tokens,
             "metrics": {"heldout_loss": loss_value, "heldout_perplexity": math.exp(min(loss_value, 80.0))},
         }
         self.evaluations.append(item)
+        earlier = [evaluation["metrics"]["heldout_loss"] for evaluation in self.evaluations[:-1] if evaluation["step"] > 0]
+        if self.step_number > 0 and (not earlier or loss_value < min(earlier)) and not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints):
+            self.save_checkpoint()
         emit(
             "event",
             event={
@@ -530,23 +657,59 @@ class Trainer:
             target_mask = self.loss_buffer[1 : self.sequence_length + 1]
             self.add_sequence(self.token_buffer[: self.sequence_length + 1], target_mask, self.corpus_buffer[1 : self.sequence_length + 1])
         if self.step_number < self.target_steps and self.batch:
-            self.train_batch()
+            self.train_batch(final=True)
+        elif self.step_number < self.target_steps and self.accumulation_number > 0:
+            padding = [self.tokenizer.pad_id] * (self.sequence_length + 1)
+            zero_mask = [0.0] * self.sequence_length
+            self.batch = [(padding, zero_mask, {})]
+            self.train_batch(final=True)
         if self.step_number != self.target_steps:
             raise ValueError(
                 f"canonical stream produced only {self.step_number} training steps; profile requires {self.target_steps}"
             )
+        # evaluate_every=0 disables periodic evaluation, not the terminal
+        # artifact-quality gate. If a held-out set exists, every completed real
+        # run must validate and select its published inference artifact.
+        if self.evaluation_sequences and (not self.evaluations or self.evaluations[-1]["step"] != self.step_number):
+            self.record_evaluation(self.final_loss)
         if self.parameters["checkpoint_every"] > 0 and (
             not self.checkpoints or self.checkpoints[-1]["step"] != self.step_number
         ):
             self.save_checkpoint()
-        if self.parameters["evaluate_every"] > 0 and (
-            not self.evaluations or self.evaluations[-1]["step"] != self.step_number
-        ):
-            self.record_evaluation(self.final_loss)
 
         weights_name = "model.safetensors"
         weights_path = os.path.join(self.artifact_directory, weights_name)
-        self.save_weights(weights_path, "waldo-mlx-model", self.step_number)
+        evaluated_checkpoints = {checkpoint["step"]: checkpoint for checkpoint in self.checkpoints}
+        candidates = [evaluation for evaluation in self.evaluations if evaluation["step"] in evaluated_checkpoints]
+        selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"]) if candidates else None
+        selected_checkpoint = None if selected_evaluation is None else evaluated_checkpoints[selected_evaluation["step"]]
+        selected_step = self.step_number
+        selection = None
+        if selected_checkpoint is not None:
+            selected_step = selected_checkpoint["step"]
+            selected_path = os.path.join(self.artifact_directory, "checkpoints", f"step-{selected_step:08d}", "model.safetensors")
+            self.model.load_weights(selected_path)
+            mx.eval(self.model.parameters())
+        self.save_weights(weights_path, "waldo-mlx-model", selected_step)
+        if selected_evaluation is not None:
+            live_loss = selected_evaluation["metrics"]["heldout_loss"]
+            self.model.load_weights(weights_path)
+            mx.eval(self.model.parameters())
+            artifact_loss = self.evaluate_model()
+            tolerance = max(0.02, abs(live_loss) * 0.01)
+            if not math.isfinite(artifact_loss):
+                raise ArtifactIntegrityError("saved artifact held-out loss is not finite")
+            if abs(artifact_loss - live_loss) > tolerance:
+                raise ArtifactIntegrityError(
+                    f"saved artifact held-out loss {artifact_loss:.6f} does not match selected checkpoint "
+                    f"loss {live_loss:.6f} within tolerance {tolerance:.6f}"
+                )
+            selected_evaluation["metrics"]["live_compiled_heldout_loss"] = live_loss
+            selected_evaluation["metrics"]["artifact_heldout_loss"] = artifact_loss
+            selected_evaluation["metrics"]["artifact_heldout_perplexity"] = math.exp(min(artifact_loss, 80.0))
+            selected_evaluation["metrics"]["artifact_loss_delta"] = artifact_loss - live_loss
+            selection = {"step": selected_evaluation["step"], "tokens": selected_evaluation["tokens"], "metric": "heldout_loss", "value": live_loss}
+            emit("event", event={"kind": "log", "message": f"selected checkpoint step {selected_step} and verified the model artifact at held-out loss {artifact_loss:.4f}", "step": selected_evaluation["step"], "tokens": selected_evaluation["tokens"]})
         config_name = "config.json"
         config_path = os.path.join(self.artifact_directory, config_name)
         write_json(
@@ -590,6 +753,7 @@ class Trainer:
                 "final_loss": self.final_loss,
                 "checkpoints": self.checkpoints,
                 "evaluations": self.evaluations,
+                "selected_checkpoint": selection,
                 "artifacts": outputs,
                 "consumption": [
                     {"corpus": corpus, "token_targets": targets}
@@ -645,5 +809,10 @@ try:
     run()
 except Exception as error:
     traceback.print_exc(file=sys.stderr)
-    emit("error", error=str(error))
+    error_class = ""
+    if isinstance(error, ArtifactIntegrityError):
+        error_class = "artifact-integrity"
+    elif isinstance(error, NumericalIntegrityError):
+        error_class = "numerical-integrity"
+    emit("error", error=str(error), error_class=error_class)
     sys.exit(1)

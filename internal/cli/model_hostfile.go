@@ -25,8 +25,10 @@ import (
 	"time"
 
 	"github.com/openwaldo/waldo/internal/config"
+	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/training"
+	"golang.org/x/term"
 )
 
 func runModelTrainHostfile(commandContext Context, args []string, path string, stdout, stderr io.Writer) error {
@@ -59,6 +61,12 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 	if err != nil {
 		return err
 	}
+	if complete, err := runCompletedComposeNoop(commandContext, args, stdout, stderr); err != nil {
+		return err
+	} else if complete {
+		fmt.Fprintln(stderr, "multi-host            complete; no training stages required")
+		return nil
+	}
 	if hostfile.Wrapper == "" {
 		hostfile.Wrapper, err = loadFuzzballSSHWrapper()
 		if err != nil {
@@ -81,11 +89,25 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 	if hostfile.Source == "fuzzball" {
 		fmt.Fprintf(stderr, "multi-host topology  discovered %d Fuzzball nodes; remote launch uses %s\n", len(hostfile.Hosts), hostfile.Wrapper)
 	}
+	cacheRoot, err := config.EffectiveCacheRoot(configuration)
+	if err != nil {
+		return fmt.Errorf("resolve multi-host node-local cache root: %w", err)
+	}
 	scratchRoot, err := config.EffectiveScratchRoot(configuration)
 	if err != nil {
-		return fmt.Errorf("resolve multi-host checkpoint staging root: %w", err)
+		return fmt.Errorf("resolve multi-host node-local scratch root: %w", err)
 	}
-	session, err := startHostfileSession(commandContext.Execution, hostfile, cluster, scratchRoot, stderr)
+	cache, err := lookaside.NewCache(cacheRoot, nil,
+		lookaside.WithMirrors(configuration.Lookaside.Mirrors),
+		lookaside.WithPersistentStorage(scratchRoot, config.EffectiveCacheMaxBytes(configuration)),
+	)
+	if err != nil {
+		return fmt.Errorf("resolve multi-host node-local cache: %w", err)
+	}
+	if err := cache.EnsureScratch(); err != nil {
+		return fmt.Errorf("prepare multi-host node-local cache: %w", err)
+	}
+	session, err := startHostfileSession(commandContext.Execution, hostfile, cluster, cache, stderr)
 	if err != nil {
 		return err
 	}
@@ -97,7 +119,11 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 		Cleanup: func() {},
 	}
 	trainErr := runModelTrainWithCluster(commandContext, args, cluster, handoff, stdout, stderr)
-	return session.finish(trainErr)
+	finishErr := session.finish(trainErr)
+	if finishErr == nil && !session.workersStarted {
+		fmt.Fprintln(stderr, "multi-host            complete; no training stages required")
+	}
+	return finishErr
 }
 
 type trainingHostfile struct {
@@ -268,28 +294,38 @@ type hostfileStageReady struct {
 }
 
 type hostfileSession struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	hostfile     trainingHostfile
-	cluster      training.Cluster
-	binary       string
-	binarySHA256 string
-	remoteBinary string
-	remoteRoot   string
-	resumeRoot   string
-	resumeStaged bool
-	pythonDir    string
-	workers      []*hostfileWorker
-	output       io.Writer
-	outputMu     sync.Mutex
-	publishMu    sync.Mutex
+	ctx             context.Context
+	cancel          context.CancelFunc
+	hostfile        trainingHostfile
+	cluster         training.Cluster
+	binary          string
+	binarySHA256    string
+	remoteBinary    string
+	remoteRoot      string
+	resumeRoot      string
+	resumeStaged    bool
+	pythonDir       string
+	cacheRoot       string
+	cacheScratch    string
+	cacheMaxBytes   int64
+	cacheMirrors    []string
+	workers         []*hostfileWorker
+	workersStarted  bool
+	output          io.Writer
+	outputTerminal  bool
+	remoteBarActive bool
+	outputMu        sync.Mutex
+	publishMu       sync.Mutex
 }
 
 const hostfileWorkerExitGrace = 10 * time.Second
 
-var hostfileStageReadyTimeout = 30 * time.Second
+var hostfileStageReadyTimeout = 24 * time.Hour
 
-func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluster training.Cluster, scratchRoot string, output io.Writer) (*hostfileSession, error) {
+func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluster training.Cluster, cache *lookaside.Cache, output io.Writer) (*hostfileSession, error) {
+	if cache == nil {
+		return nil, fmt.Errorf("multi-host launch requires a node-local cache configuration")
+	}
 	binary, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("locate current WALDO executable: %w", err)
@@ -303,13 +339,14 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 		return nil, err
 	}
 	sessionContext, cancel := context.WithCancel(ctx)
-	remoteRoot := "/tmp/waldo-launch/" + digest
+	remoteRoot := filepath.Join(cache.Scratch(), "multinode", digest, cluster.RendezvousID)
 	session := &hostfileSession{
 		ctx: sessionContext, cancel: cancel, hostfile: hostfile, cluster: cluster,
 		binary: binary, binarySHA256: digest, remoteRoot: remoteRoot,
 		remoteBinary: remoteRoot + "/waldo",
-		resumeRoot:   filepath.Join(scratchRoot, "multinode", digest, cluster.RendezvousID, "resume"),
-		output:       output,
+		resumeRoot:   filepath.Join(remoteRoot, "resume"),
+		cacheRoot:    cache.Root(), cacheScratch: cache.Scratch(), cacheMaxBytes: cache.MaxBytes(), cacheMirrors: cache.Mirrors(),
+		output: output, outputTerminal: terminalWriter(output),
 	}
 	local, err := inspectHostfileTorchTitan(sessionContext)
 	if err != nil {
@@ -355,14 +392,6 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 	if err := rendezvousListener.Close(); err != nil {
 		session.abort()
 		return nil, fmt.Errorf("close rank 0 rendezvous preflight listener: %w", err)
-	}
-	for rank, host := range hostfile.Hosts[1:] {
-		worker, err := session.startWorker(host, rank+1)
-		if err != nil {
-			session.abort()
-			return nil, err
-		}
-		session.workers = append(session.workers, worker)
 	}
 	return session, nil
 }
@@ -515,11 +544,20 @@ func (session *hostfileSession) workerArguments(rank int, check bool) []string {
 		return append(arguments, "--check")
 	}
 	scratch := fmt.Sprintf("%s/runs/%s/node-%d", session.remoteRoot, session.cluster.RendezvousID, rank)
-	return append(arguments, "--plan-stdin", "--scratch", scratch)
+	arguments = append(arguments,
+		"--plan-stdin", "--scratch", scratch,
+		"--cache-root", session.cacheRoot,
+		"--cache-scratch", session.cacheScratch,
+		"--cache-max-bytes", fmt.Sprintf("%d", session.cacheMaxBytes),
+	)
+	for _, mirror := range session.cacheMirrors {
+		arguments = append(arguments, "--cache-mirror", mirror)
+	}
+	return arguments
 }
 
 func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWorker, error) {
-	command := session.remoteCommand(host, session.remoteInvocation(session.workerArguments(rank, false)))
+	command := session.remoteCommand(host, session.remoteWorkerInvocation(rank, session.workerArguments(rank, false)))
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := command.StdinPipe()
 	if err != nil {
@@ -552,17 +590,48 @@ func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWor
 	return worker, nil
 }
 
+func (session *hostfileSession) secondaryHosts() []string {
+	if len(session.hostfile.Hosts) < 2 {
+		return nil
+	}
+	return session.hostfile.Hosts[1:]
+}
+
+func (session *hostfileSession) startWorkers() error {
+	if session.workersStarted {
+		return nil
+	}
+	for rank, host := range session.secondaryHosts() {
+		worker, err := session.startWorker(host, rank+1)
+		if err != nil {
+			return err
+		}
+		session.workers = append(session.workers, worker)
+	}
+	session.workersStarted = true
+	return nil
+}
+
 func (session *hostfileSession) remoteInvocation(arguments []string) string {
 	path := strings.Join([]string{session.pythonDir, "/usr/local/bin", "/usr/bin", "/bin"}, ":")
 	return "PATH=" + shellQuote(path) + " " + joinRemoteArguments(arguments)
 }
 
+func (session *hostfileSession) workerPIDPath(rank int) string {
+	return filepath.Join(session.remoteRoot, fmt.Sprintf("worker-%d.pid", rank))
+}
+
+func (session *hostfileSession) remoteWorkerInvocation(rank int, arguments []string) string {
+	path := strings.Join([]string{session.pythonDir, "/usr/local/bin", "/usr/bin", "/bin"}, ":")
+	pidPath := shellQuote(session.workerPIDPath(rank))
+	return fmt.Sprintf("umask 077; env PATH=%s %s <&0 & child=$!; printf '%%s\\n' \"$child\" > %s; trap 'kill -TERM \"$child\" 2>/dev/null || true; wait \"$child\"; exit 143' HUP INT TERM; wait \"$child\"; status=$?; rm -f -- %s; exit \"$status\"",
+		shellQuote(path), joinRemoteArguments(arguments), pidPath, pidPath)
+}
+
 func (session *hostfileSession) copyWorkerOutput(host string, source io.Reader) {
 	scanner := bufio.NewScanner(source)
 	for scanner.Scan() {
-		session.outputMu.Lock()
-		fmt.Fprintf(session.output, "[%s] %s\n", host, scanner.Text())
-		session.outputMu.Unlock()
+		session.writeWorkerLine(host, scanner.Text())
 	}
 }
 
@@ -575,15 +644,43 @@ func (session *hostfileSession) copyWorkerStdout(worker *hostfileWorker, source 
 			worker.ready <- ready
 			continue
 		}
-		session.outputMu.Lock()
-		fmt.Fprintf(session.output, "[%s] %s\n", worker.host, line)
-		session.outputMu.Unlock()
+		session.writeWorkerLine(worker.host, line)
 	}
+}
+
+func terminalWriter(output io.Writer) bool {
+	type fileDescriptor interface{ Fd() uintptr }
+	writer, ok := output.(fileDescriptor)
+	return ok && term.IsTerminal(int(writer.Fd()))
+}
+
+func (session *hostfileSession) writeWorkerLine(host, line string) {
+	session.outputMu.Lock()
+	defer session.outputMu.Unlock()
+	if session.outputTerminal && strings.HasPrefix(line, "  materialize [") {
+		fmt.Fprintf(session.output, "\r\x1b[K[%s] %s", host, line)
+		session.remoteBarActive = !strings.Contains(line, "] 100%")
+		if !session.remoteBarActive {
+			fmt.Fprintln(session.output)
+		}
+		return
+	}
+	if session.remoteBarActive {
+		fmt.Fprintln(session.output)
+		session.remoteBarActive = false
+	}
+	fmt.Fprintf(session.output, "[%s] %s\n", host, line)
 }
 
 func (session *hostfileSession) publish(plan model.MultiNodePlan) error {
 	session.publishMu.Lock()
 	defer session.publishMu.Unlock()
+	if err := session.startWorkers(); err != nil {
+		return err
+	}
+	if err := session.prepareInitialization(&plan); err != nil {
+		return err
+	}
 	rendezvousListener, err := listenHostfileRendezvous(session.cluster.Rendezvous)
 	if err != nil {
 		return fmt.Errorf("prepare rank 0 rendezvous for stage %d/%d: %w", plan.StageOrdinal, plan.StageCount, err)
@@ -628,6 +725,33 @@ func (session *hostfileSession) publish(plan model.MultiNodePlan) error {
 	return nil
 }
 
+func (session *hostfileSession) prepareInitialization(plan *model.MultiNodePlan) error {
+	if plan.Initialization == nil {
+		return nil
+	}
+	if plan.Initialization.Path == "" {
+		return fmt.Errorf("stage initialization for run %s: source path is missing", plan.RunID)
+	}
+	artifact := plan.Initialization.Artifact
+	target := filepath.Join(session.remoteRoot, "initialization", plan.RunID, filepath.Base(artifact.Path))
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return fmt.Errorf("create local initialization staging directory: %w", err)
+	}
+	if err := ensureLocalResumeLink(plan.Initialization.Path, target, artifact); err != nil {
+		return fmt.Errorf("stage initialization for run %s: %w", plan.RunID, err)
+	}
+	for _, worker := range session.workers {
+		session.outputMu.Lock()
+		fmt.Fprintf(session.output, "multi-host initialize staging %s on %s\n", humanBytes(artifact.Bytes), worker.host)
+		session.outputMu.Unlock()
+		if err := session.stageResume(worker.host, []training.Artifact{artifact}, []string{plan.Initialization.Path}, []string{target}); err != nil {
+			return err
+		}
+	}
+	plan.InitializationPath = target
+	return nil
+}
+
 func (session *hostfileSession) prepareResume(runID string, resume *training.ResumePoint) error {
 	if resume == nil || len(resume.Paths) != len(resume.Checkpoint.Artifacts) || len(resume.Paths) == 0 {
 		return fmt.Errorf("checkpoint metadata is incomplete")
@@ -649,11 +773,11 @@ func (session *hostfileSession) prepareResume(runID string, resume *training.Res
 	for _, artifact := range resume.Checkpoint.Artifacts {
 		total += artifact.Bytes
 	}
-	for _, worker := range session.workers {
+	for _, host := range session.secondaryHosts() {
 		session.outputMu.Lock()
-		fmt.Fprintf(session.output, "multi-host resume     staging checkpoint step %d (%s) on %s\n", resume.Step, humanBytes(total), worker.host)
+		fmt.Fprintf(session.output, "multi-host resume     staging checkpoint step %d (%s) on %s\n", resume.Step, humanBytes(total), host)
 		session.outputMu.Unlock()
-		if err := session.stageResume(worker.host, resume.Checkpoint.Artifacts, sources, targets); err != nil {
+		if err := session.stageResume(host, resume.Checkpoint.Artifacts, sources, targets); err != nil {
 			return err
 		}
 	}
@@ -710,6 +834,7 @@ func (session *hostfileSession) stageResume(host string, artifacts []training.Ar
 
 func (session *hostfileSession) finish(primaryErr error) error {
 	if primaryErr != nil {
+		session.stopRemoteWorkers()
 		session.cancel()
 	}
 	for _, worker := range session.workers {
@@ -722,7 +847,7 @@ func (session *hostfileSession) finish(primaryErr error) error {
 			workerErrors = append(workerErrors, fmt.Sprintf("%s: %v", worker.host, worker.err))
 		}
 	}
-	session.cleanupResumeStaging()
+	session.cleanupStaging()
 	session.cancel()
 	if len(workerErrors) > 0 && (primaryErr == nil || errors.Is(primaryErr, context.Canceled)) {
 		return fmt.Errorf("secondary training workers failed: %s", strings.Join(workerErrors, "; "))
@@ -731,6 +856,17 @@ func (session *hostfileSession) finish(primaryErr error) error {
 		return primaryErr
 	}
 	return nil
+}
+
+func (session *hostfileSession) stopRemoteWorkers() {
+	for _, worker := range session.workers {
+		pidPath := session.workerPIDPath(worker.rank)
+		remote := fmt.Sprintf("if test -r %s; then IFS= read -r pid < %s; case \"$pid\" in ''|*[!0-9]*) exit 1;; esac; kill -TERM \"$pid\" 2>/dev/null || true; fi",
+			shellQuote(pidPath), shellQuote(pidPath))
+		ctx, cancel := context.WithTimeout(context.Background(), hostfileWorkerExitGrace)
+		_ = session.remoteCommandContext(ctx, worker.host, remote).Run()
+		cancel()
+	}
 }
 
 func (session *hostfileSession) cleanupResumeStaging() {
@@ -742,24 +878,48 @@ func (session *hostfileSession) cleanupResumeStaging() {
 		fmt.Fprintf(session.output, "warning: clean local multi-host checkpoint staging: %v\n", err)
 		session.outputMu.Unlock()
 	}
-	for _, worker := range session.workers {
+	for _, host := range session.secondaryHosts() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		command := session.remoteCommandContext(ctx, worker.host, "rm -rf -- "+shellQuote(session.resumeRoot))
+		command := session.remoteCommandContext(ctx, host, "rm -rf -- "+shellQuote(session.resumeRoot))
 		err := command.Run()
 		cancel()
 		if err != nil {
 			session.outputMu.Lock()
-			fmt.Fprintf(session.output, "warning: clean multi-host checkpoint staging on %s: %v\n", worker.host, err)
+			fmt.Fprintf(session.output, "warning: clean multi-host checkpoint staging on %s: %v\n", host, err)
+			session.outputMu.Unlock()
+		}
+	}
+}
+
+func (session *hostfileSession) cleanupStaging() {
+	if err := os.RemoveAll(session.remoteRoot); err != nil {
+		session.outputMu.Lock()
+		fmt.Fprintf(session.output, "warning: clean local multi-host launch staging: %v\n", err)
+		session.outputMu.Unlock()
+	}
+	for _, host := range session.secondaryHosts() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		command := session.remoteCommandContext(ctx, host, "rm -rf -- "+shellQuote(session.remoteRoot))
+		err := command.Run()
+		cancel()
+		if err != nil {
+			session.outputMu.Lock()
+			fmt.Fprintf(session.output, "warning: clean multi-host launch staging on %s: %v\n", host, err)
 			session.outputMu.Unlock()
 		}
 	}
 }
 
 func (session *hostfileSession) abort() {
+	session.stopRemoteWorkers()
 	session.cancel()
 	for _, worker := range session.workers {
 		_ = worker.stdin.Close()
 	}
+	for _, worker := range session.workers {
+		<-worker.done
+	}
+	session.cleanupStaging()
 }
 
 func joinRemoteArguments(arguments []string) string {

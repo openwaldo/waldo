@@ -8,6 +8,21 @@ corpus recipe, training process, and evaluation gates.
 Runtime estimates cover training after data and the environment are ready.
 They are planning ranges until replaced by observed WALDO run evidence.
 
+The numbered ladder also owns the measured capability-per-FLOP comparison.
+`0000-canary.yaml` and `0001-babble.yaml` are the systems gates,
+`0002-conversation.yaml` records the undertrained 2.4B-token experiment,
+`0003-conversation.yaml` is the corrected 12B-token comparison baseline, and
+`0004-conversation.yaml` is the larger `conversation3` candidate. Do not run
+the larger candidate until the correctness, data-plane, batch-semantics, and
+evaluation gates in the [training robustness plan](../docs/TRAINING-ROBUSTNESS-PLAN.md)
+pass. Corpus and license differences are tracked in the
+[compose corpus licensing audit](../docs/COMPOSE-CORPUS-LICENSE-AUDIT.md) and
+[nanochat coverage audit](../docs/NANOCHAT-CORPUS-COVERAGE.md).
+
+Every conversational rung includes the compact `waldo-project-v1` corpus so
+models learn stable facts about WALDO and the responsibilities of open-source
+AI without treating WALDO as the assistant's identity.
+
 Stages are weight-changing operations and execute strictly in YAML order. Keep
 broad foundation data first, domain or technical adaptation next, conversation
 training after that, and narrow assistant, alignment, or tool-use training
@@ -60,7 +75,12 @@ WALDO requirements:
 | Builds from | Random initialization using the canary-proven pipeline |
 | Model type | Small dense monolithic foundation; approximately 76M parameters |
 | Recommended hardware | 1x NVIDIA H100 80 GB |
-| Approximate runtime | 1-2 hours for 1.57B tokens |
+| Approximate runtime | Measure from promoted G0 evidence for the 600M-token ceiling |
+
+This systems-gate compose is for private research while Gutenberg and PLOS
+record-level rights are under review. It intentionally omits the
+`distributable` policy, retains full corpus provenance, and must not be used as
+evidence that its resulting model can be distributed.
 
 Success criteria:
 
@@ -81,15 +101,15 @@ WALDO requirements:
 - Current dense training.
 - Fixed generation tests in addition to held-out loss.
 
-## Conversation level 1 (`0002-conversation1.yaml`)
+## Conversation level 2 (`0002-conversation.yaml`)
 
 | Field | Plan |
 | --- | --- |
-| Status | Existing known-good compose preserved |
+| Status | Completed 2.4B-token experiment; materially undertrained and not the known-good baseline |
 | Builds from | New larger initialization using the babbling model's proven recipe and tests |
 | Model type | Dense monolithic foundation plus conversation SFT; approximately 337M parameters |
 | Recommended hardware | 1x 8-GPU NVIDIA H100 SXM system |
-| Approximate runtime | 4-8 hours for approximately 12B pretraining tokens plus SFT |
+| Approximate runtime | Measure from promoted G1 evidence for the 2.4B-token ceiling |
 
 Success criteria:
 
@@ -107,55 +127,62 @@ Corpus requirements:
 
 WALDO requirements:
 
-- Assistant-response modeling and assistant-only loss masks (supported).
+- Causal conversation modeling is retained in 0002 as the historical comparison point.
 - Add fixed conversation tests.
 - Replay foundation regression tests.
-
-## Conversation level 2 (`0002-conversation2.yaml`)
-
-| Field | Plan |
-| --- | --- |
-| Status | Compatible extension of conversation1 with a stronger technical curriculum |
-| Builds from | The same approximately 337M-parameter architecture and tokenizer as conversation1 |
-| Model type | Dense conversation model with technical knowledge midtraining and expanded conversation SFT |
-| Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
-| Approximate runtime | Approximately 3 days for a fresh run, or about 16 hours for its 3.4B newly declared tokens when extending a compatible checkpoint |
-
-Success criteria:
-
-- Improves instruction following and multi-turn coherence over conversation1.
-- Correctly answers basic factual questions about operating systems, Linux,
-  programming, and systems administration.
-- Preserves the baseline's directness, correction handling, and no-tool behavior.
-
-Corpus requirements:
-
-- Cosmopedia v2 and Stack Exchange lead the technical knowledge mixture.
-- Linux/GNU and cloud-native source, repository documentation, and a bounded
-  amount of Linux, Git, and Python development discussion provide concrete
-  systems vocabulary.
-- Tulu 3, Smol-SmolTalk, and UltraChat provide broader assistant supervision.
-- The validated Interaction Contract and HelpSteer2 stage remains last.
-
-WALDO requirements:
-
-- Architecture-compatible continuation and completed-path skipping.
-- Fixed side-by-side conversation evaluations.
-- Promote only when it beats conversation1 without material regression.
 
 ## Conversation level 3 (`0003-conversation.yaml`)
 
 | Field | Plan |
 | --- | --- |
-| Status | Larger successor created after conversation2 exposed a model-capacity ceiling |
-| Builds from | Random initialization with the complete, known-good conversation1 recipe embedded first |
-| Model type | Approximately 681M-parameter dense model, 4,096-token context, technical knowledge midtraining, and expanded conversation SFT |
-| Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
-| Approximate runtime | Approximately 7-10 days for the roughly 22B-token curriculum; replace this estimate with measured evidence after the first run |
+| Status | Corrected 12B-token comparison baseline; rerun under a fresh model name after artifact-integrity fixes |
+| Builds from | Fresh random initialization; same core architecture and first three corpus stages as 0002, with lossless float32 portable weights |
+| Model type | Dense monolithic foundation plus conversation SFT; approximately 337M parameters |
+| Recommended hardware | 1x 8-GPU NVIDIA H100 SXM system |
+| Approximate runtime | Measure directly; approximately five times the pretraining exposure of 0002 |
 
 Success criteria:
 
-- Improves instruction following and multi-turn coherence over conversation2.
+- Restore direct answers, basic factual grounding, and simple constraint following.
+- Preserve prior-turn context and correction handling.
+- Avoid the repetition collapse observed in the 2.4B-token run.
+- Beat 0002 on fixed foundation and conversation evaluations.
+
+Corpus requirements:
+
+- The exact 0002 corpus selection and weights for its first three stages.
+- 12B pretraining tokens, one bounded pass over each broad conversation stage,
+  then five low-rate passes over the compact WALDO project grounding corpus.
+
+WALDO requirements:
+
+- Train under a fresh model name; do not append pretraining after 0002 post-training.
+- Apply assistant-only response loss during both conversation stages.
+- Use lower conversation-stage learning rates and one pass to limit the held-out-loss regression observed in the initial 0003 run.
+- Keep the portable artifact in float32 until reduced-precision publication
+  passes WALDO's live-versus-publishable loss check for this architecture.
+- Keep compiled execution disabled until compiled and eager held-out losses
+  agree throughout a representative run.
+- Select project grounding against its own held-out set rather than allowing
+  the much larger broad SFT mixture to hide failure to learn WALDO facts.
+- Add fixed side-by-side generation and held-out evaluations.
+- Pass `./testing/training-acceptance.sh --hostfile PATH --corpus
+  SMALL_CONVERSATION_INDEX_PATH` on the target Linux GPU hosts before starting
+  the full run.
+
+## Conversation level 4 (`0004-conversation.yaml`)
+
+| Field | Plan |
+| --- | --- |
+| Status | Larger candidate; blocked on systems, evaluation, and corpus gates |
+| Builds from | Random initialization with the restored 0003 curriculum embedded first |
+| Model type | Approximately 758M-parameter dense model, 4,096-token context, technical knowledge midtraining, expanded assistant-only SFT, and isolated WALDO grounding |
+| Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
+| Approximate runtime | Determine from promoted G1/G2 evidence for the roughly 6.1B-token curriculum |
+
+Success criteria:
+
+- Clearly improves instruction following, knowledge, and multi-turn coherence over the restored 0003 model.
 - Correctly answers basic factual questions about operating systems, Linux, programming, and systems administration.
 - Improves familiarity with software development, systems, debugging, review, and technical documentation.
 - Preserves the baseline's directness, correction handling, and no-tool behavior.
@@ -164,22 +191,31 @@ Success criteria:
 Corpus requirements:
 
 - Cosmopedia v2 educational material, Stack Exchange technical Q&A, PLOS, and
-  Wikimedia form the majority of the 18B-token foundation mixture.
+  Wikimedia form the majority of the 5B-token foundation mixture.
 - Linux/GNU and cloud-native source, repository documentation, and a bounded
   amount of Linux, Git, and Python development discussion provide concrete
-  systems vocabulary in a separate 3B-token stage. Known non-English rows are
+  systems vocabulary in a separate 1B-token stage. Known non-English rows are
   excluded; legacy rows without language metadata are retained.
 - Tulu 3, Smol-SmolTalk, and UltraChat provide broader assistant supervision.
-- The validated Interaction Contract and HelpSteer2 stage remains last so
-  narrow behavior tuning is not overwritten by broader training.
+- The validated Interaction Contract and HelpSteer2 behavior anchor follows
+  broad SFT and immediately precedes the narrow project-grounding stage.
 
 WALDO requirements:
 
-- A fresh model is required because conversation3 has roughly twice the
-  parameter capacity and context length of conversation1/conversation2 as well
-  as a corrected stage order.
+- Use assistant-only loss for every structured conversation stage; role
+  markers, user prompts, and system context remain conditioning input.
+- Keep portable parameters in float32 until this larger architecture has
+  passed the reduced-precision artifact-integrity gate.
+- Keep compiled execution disabled until it passes the compiled/eager
+  equivalence gate.
+- Evaluate the final WALDO grounding stage on its own held-out records.
+- A fresh model is required because conversation3 has more than twice the
+  parameter capacity and context length of the 0003 conversation model as well as a corrected
+  stage order.
 - Fixed side-by-side conversation evaluations.
 - Promote only when it beats the previous rung without material regression.
+- Train this compose under a fresh model name; the numeric compose prefix
+  describes its ladder position, not its model artifact name.
 
 ## Tool-use model (`holding/tool-use.yaml`)
 
@@ -453,12 +489,10 @@ WALDO requirements:
 ## Next steps
 
 - Freeze the language, conversation, and tool evaluation sets.
-- Run `0002-conversation1` as the known-good baseline.
-- Use `0002-conversation2` for an architecture-compatible continuation or a
-  fresh side-by-side comparison with conversation1.
-- Train `0003-conversation` under a new model name and compare it with both
-  337M-parameter conversation models. Its larger architecture cannot reuse
-  their weights.
+- Preserve `conversation1` as the 2.4B-token diagnostic result.
+- Train `0003-conversation` as `conversation2` and compare it with conversation1.
+- Train `0004-conversation` as `conversation3` only after the restored baseline
+  passes. Its larger architecture cannot reuse the earlier weights.
 - Keep tool-use training on hold until a conversation checkpoint is promoted,
   then update and revalidate `holding/tool-use.yaml` against that parent.
 - Build the capable dense foundation, assistant, reasoning, and agent rungs.

@@ -32,7 +32,7 @@ staging="$work/staging"
 models="$work/models"
 model_export="$work/model-export"
 input="$work/training"
-input_profile="$work/input-profile.yaml"
+raw_input="$input/raw"
 compose="$work/model.yaml"
 disclosure="$work/eu-gpai.json"
 provider="$work/provider.json"
@@ -40,8 +40,8 @@ export WALDO_CONFIG="$work/config.json"
 
 echo "testing: complete fake-model lifecycle"
 (cd "$repo_root" && GOCACHE="$work/go-cache" go build -o "$binary" ./cmd/waldo)
-mkdir -p "$input"
-cat > "$input/records.jsonl" <<'EOF'
+mkdir -p "$raw_input"
+cat > "$raw_input/records.jsonl" <<'EOF'
 {"text":"Contact test@example.org; this assessed row must be excluded.","metadata":{"namespace":0}}
 {"text":"alpha beta gamma delta epsilon zeta eta theta alpha beta gamma delta epsilon zeta eta theta alpha beta gamma delta epsilon zeta eta theta alpha beta gamma delta epsilon zeta eta theta alpha beta gamma delta epsilon zeta eta theta alpha beta gamma delta epsilon zeta eta theta alpha beta gamma delta epsilon zeta eta theta","metadata":{"namespace":0}}
 {"text":"Repeated navigation footer line.\nRepeated navigation footer line.\nRepeated navigation footer line.\nRepeated navigation footer line.\nRepeated navigation footer line.\nRepeated navigation footer line.\nRepeated navigation footer line.\nRepeated navigation footer line.","metadata":{"namespace":0}}
@@ -49,12 +49,29 @@ cat > "$input/records.jsonl" <<'EOF'
 {"text":"A separate record reserved for deterministic evaluation.","metadata":{"namespace":0}}
 {"text":"Auxiliary discussion that must be excluded by main-content classification.","metadata":{"namespace":1}}
 EOF
-cat > "$input_profile" <<'EOF'
-type: record-map
-main_content:
-  metadata.namespace: 0
-fields:
-  text: [text]
+file_bytes=$(wc -c < "$raw_input/records.jsonl" | tr -d ' ')
+if command -v sha256sum >/dev/null 2>&1; then
+  file_sha=$(sha256sum "$raw_input/records.jsonl" | awk '{print $1}')
+  tree_sha=$(printf '%s\t%s\t%s\n' "$file_sha" "$file_bytes" records.jsonl | sha256sum | awk '{print $1}')
+else
+  file_sha=$(shasum -a 256 "$raw_input/records.jsonl" | awk '{print $1}')
+  tree_sha=$(printf '%s\t%s\t%s\n' "$file_sha" "$file_bytes" records.jsonl | shasum -a 256 | awk '{print $1}')
+fi
+cat > "$input/manifest.json" <<EOF
+{
+  "kind":"waldo-source-directory",
+  "schema":1,
+  "retrieved_at":"2026-09-13T00:00:00Z",
+  "corpus":{"id":"model-e2e","title":"Model-E2E-Corpus","description":"Disposable fake-model input."},
+  "sources":[{
+    "id":"model-e2e","path":"","license":"CC0-1.0",
+    "source":{"name":"model-e2e","version":"fixture-1","url":"https://example.invalid/model-e2e","category":"public-dataset","license_evidence":{"declaration":"CC0-1.0"}},
+    "input":{"format":"jsonl","type":"record-map","main_content":{"metadata.namespace":0},"fields":{"text":["text"]}},
+    "artifacts":[]
+  }],
+  "fetcher":{"name":"model-e2e"},
+  "raw":{"path":"raw","file_count":1,"byte_count":$file_bytes,"tree_sha256":"$tree_sha"}
+}
 EOF
 
 "$binary" index init "$index_root"
@@ -82,14 +99,7 @@ EOF
 "$binary" config set disclosure.provider "$provider"
 
 destination="$index_root/core/e2e/model-corpus"
-"$binary" index ingest "$input" "$destination" \
-  --title Model-E2E-Corpus \
-  --description Disposable-fake-model-input \
-  --license CC0-1.0 \
-  --source https://example.invalid/model-e2e \
-  --source-category public-dataset \
-  --language en \
-  --input-profile "$input_profile"
+"$binary" index ingest "$input" "$destination"
 
 contribution=""
 for candidate in "$staging"/*/contribution; do
@@ -199,9 +209,23 @@ checkpoint_count=$(find "$models/smoke/runs" -type f -name 'step-*.json' -print 
 [ "$checkpoint_count" -eq 1 ] || { echo "found $checkpoint_count fake checkpoints, want 1" >&2; exit 1; }
 
 repeat_output=$("$binary" model train smoke "$compose" --audit)
-printf '%s\n' "$repeat_output" | grep -q 'unchanged; all selected corpora were already completed'
+printf '%s\n' "$repeat_output" | grep -q 'unchanged; verified all 1 stages of compose'
 run_count=$(find "$models/smoke/runs" -type f -name RUN.json -print | wc -l | tr -d ' ')
 [ "$run_count" -eq 1 ] || { echo "completed corpus was trained again" >&2; exit 1; }
+
+changed_compose="$work/model-changed.yaml"
+sed 's/steps: 2/steps: 3/' "$compose" > "$changed_compose"
+if "$binary" model train smoke "$changed_compose" >"$work/changed.out" 2>&1; then
+  echo "changed compose was incorrectly treated as complete" >&2
+  exit 1
+fi
+grep -q 'completed run BOMs do not match compose' "$work/changed.out" || {
+  echo "changed compose did not report its completion mismatch" >&2
+  cat "$work/changed.out" >&2
+  exit 1
+}
+run_count=$(find "$models/smoke/runs" -type f -name RUN.json -print | wc -l | tr -d ' ')
+[ "$run_count" -eq 1 ] || { echo "changed compose added an unexpected run" >&2; exit 1; }
 
 "$binary" model init manual --preset 10m >/dev/null
 "$binary" model train manual core/e2e/model-corpus >/dev/null

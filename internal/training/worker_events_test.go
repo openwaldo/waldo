@@ -6,10 +6,48 @@
 package training
 
 import (
+	"math"
 	"regexp"
 	"strings"
 	"testing"
 )
+
+func TestWorkerEventRejectsInvalidEfficiencyTelemetry(t *testing.T) {
+	invalid := []Event{
+		{Kind: "progress", DurationSeconds: -1},
+		{Kind: "progress", DataWaitSeconds: math.Inf(1)},
+		{Kind: "progress", TrainingFLOPs: math.NaN()},
+		{Kind: "progress", ModelFLOPUtilization: -0.01},
+		{Kind: "progress", SkippedSteps: -1},
+	}
+	for _, event := range invalid {
+		if err := event.Validate(); err == nil {
+			t.Fatalf("invalid event accepted: %+v", event)
+		}
+	}
+	gradient := math.Inf(1)
+	if err := (Event{Kind: "progress", GradientNorm: &gradient}).Validate(); err == nil {
+		t.Fatal("invalid gradient norm accepted")
+	}
+}
+
+func TestEmbeddedWorkersEmitEfficiencyTelemetry(t *testing.T) {
+	for name, source := range map[string]string{"pytorch": string(pyTorchWorker), "mlx": string(mlxWorker)} {
+		for _, field := range []string{
+			`"duration_seconds"`,
+			`"data_wait_seconds"`,
+			`"peak_memory_bytes"`,
+			`"training_flops"`,
+			`"achieved_tflops"`,
+			`"gradient_norm"`,
+			`"skipped_steps"`,
+		} {
+			if !strings.Contains(source, field) {
+				t.Errorf("%s worker omits telemetry field %s", name, field)
+			}
+		}
+	}
+}
 
 func TestEmbeddedWorkerEmitsOnlyRecognizedEventKinds(t *testing.T) {
 	kindPattern := regexp.MustCompile(`"kind":\s*"([a-z_]+)"`)
@@ -47,5 +85,26 @@ func TestEmbeddedWorkerEmitsOnlyRecognizedFrameKinds(t *testing.T) {
 		if err := frame.Validate(); err != nil && strings.Contains(err.Error(), "unsupported worker output kind") {
 			t.Errorf("embedded worker emits frame kind %q that the Go driver rejects: %v", kind, err)
 		}
+	}
+}
+
+func TestWorkerArtifactIntegrityErrorIsTypedAndNonRetryable(t *testing.T) {
+	var observed error
+	err := ReadWorkerOutput(strings.NewReader(`{"kind":"error","schema":1,"error":"artifact degraded","error_class":"artifact-integrity"}`+"\n"), func(frame WorkerOutputFrame) error {
+		observed = &WorkerError{Message: frame.Error, Class: frame.ErrorClass}
+		return observed
+	})
+	if err == nil || !IsNonRetryableWorkerError(err) || !IsNonRetryableWorkerError(observed) {
+		t.Fatalf("typed worker error = %v / %v", err, observed)
+	}
+	numerical := &WorkerError{Message: "loss is non-finite", Class: WorkerErrorNumericalIntegrity}
+	if !IsNonRetryableWorkerError(numerical) {
+		t.Fatalf("numerical-integrity error must not resume: %v", numerical)
+	}
+	if err := (WorkerOutputFrame{Kind: "error", Schema: 1, Error: "x", ErrorClass: WorkerErrorNumericalIntegrity}).Validate(); err != nil {
+		t.Fatalf("numerical-integrity error frame rejected: %v", err)
+	}
+	if err := (WorkerOutputFrame{Kind: "error", Schema: 1, Error: "x", ErrorClass: "unknown"}).Validate(); err == nil {
+		t.Fatal("unsupported worker error class was accepted")
 	}
 }

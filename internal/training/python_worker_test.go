@@ -174,6 +174,19 @@ wait "$rank"
 	}
 }
 
+func TestWorkerReportsRecordProducerFailureBeforeGenericEOF(t *testing.T) {
+	command := exec.Command("/bin/sh", "-c", `cat >/dev/null; printf '%s\n' '{"kind":"error","schema":1,"error":"worker input ended without begin/end framing"}'`)
+	_, err := runWorkerCommand(context.Background(), "test", command, Request{
+		ArtifactDirectory: t.TempDir(),
+		Records: recordSourceFunc(func(context.Context, func(Record) error) error {
+			return errors.New("prepared stream produced 10 of 20 required sequences")
+		}),
+	})
+	if err == nil || !strings.Contains(err.Error(), "prepared stream produced 10 of 20 required sequences") {
+		t.Fatalf("worker error = %v", err)
+	}
+}
+
 func TestWorkerTargetStopsUpstreamRecordStream(t *testing.T) {
 	command := exec.Command(os.Args[0], "-test.run=TestWorkerTargetHelper")
 	command.Env = append(os.Environ(), "WALDO_WORKER_TARGET_HELPER=1")
