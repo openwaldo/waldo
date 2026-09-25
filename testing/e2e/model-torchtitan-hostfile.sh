@@ -6,6 +6,75 @@
 
 set -eu
 
+write_compose() {
+  output=$1
+  selected_corpus=$2
+  global_batch=$3
+  cat > "$output" <<EOF
+kind: waldo-model-compose
+schema: 1
+interaction:
+  template: user-assistant-v1
+architecture:
+  family: decoder-transformer
+  context_tokens: 64
+  vocabulary_size: 259
+  hidden_size: 64
+  intermediate_size: 192
+  layers: 2
+  attention_heads: 4
+  key_value_heads: 2
+  dropout: 0.1
+  qk_normalization: true
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    name: byte
+    revision: builtin-byte-schema-1
+stages:
+  - name: conversation-smoke
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    corpora:
+      - $selected_corpus
+    parameters:
+      steps: 10
+      batch_size: $global_batch
+      sequence_length: 64
+      learning_rate: 0.001
+      seed: 7
+      compile: false
+      checkpoint_every: 5
+      evaluate_every: 5
+  - name: refine
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    corpora:
+      - $selected_corpus
+    parameters:
+      steps: 10
+      batch_size: $global_batch
+      sequence_length: 64
+      learning_rate: 0.0005
+      seed: 8
+      compile: false
+      checkpoint_every: 5
+      evaluate_every: 5
+EOF
+}
+
+if [ "${1:-}" = "--render-compose" ]; then
+  [ "$#" -eq 4 ] || { echo "usage: $0 --render-compose CORPUS WORLD_SIZE OUTPUT" >&2; exit 2; }
+  write_compose "$4" "$2" "$3"
+  exit 0
+fi
+
 [ "$#" -eq 2 ] || { echo "usage: $0 HOSTFILE SMALL_CONVERSATION_INDEX_PATH" >&2; exit 2; }
 hostfile=$1
 corpus=$2
@@ -59,61 +128,7 @@ trap cleanup EXIT HUP INT TERM
 echo "testing: real $nodes-node/$world_size-GPU TorchTitan hostfile lifecycle using $corpus"
 (cd "$repo_root" && GOCACHE="$work/go-cache" go build -o "$binary" ./cmd/waldo)
 
-cat > "$compose" <<EOF
-kind: waldo-model-compose
-schema: 1
-architecture:
-  family: decoder-transformer
-  context_tokens: 64
-  vocabulary_size: 259
-  hidden_size: 64
-  intermediate_size: 192
-  layers: 2
-  attention_heads: 4
-  key_value_heads: 2
-  dropout: 0.1
-  qk_normalization: true
-  tie_embeddings: true
-  parameter_dtype: float32
-  tokenizer:
-    name: byte
-    revision: builtin-byte-schema-1
-stages:
-  - name: conversation-smoke
-    type: fine-tuning
-    objective: assistant-response-modeling
-    conversation:
-      template: user-assistant-v1
-      supervised_roles: [assistant]
-    corpora:
-      - $corpus
-    parameters:
-      steps: 10
-      batch_size: $world_size
-      sequence_length: 64
-      learning_rate: 0.001
-      seed: 7
-      compile: false
-      checkpoint_every: 5
-      evaluate_every: 5
-  - name: refine
-    type: fine-tuning
-    objective: assistant-response-modeling
-    conversation:
-      template: user-assistant-v1
-      supervised_roles: [assistant]
-    corpora:
-      - $corpus
-    parameters:
-      steps: 10
-      batch_size: $world_size
-      sequence_length: 64
-      learning_rate: 0.0005
-      seed: 8
-      compile: false
-      checkpoint_every: 5
-      evaluate_every: 5
-EOF
+write_compose "$compose" "$corpus" "$world_size"
 
 "$binary" model forecast "$compose" >/dev/null
 "$binary" model train "$model_name" "$compose" --hostfile "$hostfile"
