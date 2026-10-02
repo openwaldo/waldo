@@ -1,5 +1,10 @@
-# Conversation level 2: the proven conversation1 recipe extended with a
-# knowledge-first technical curriculum and broader assistant supervision.
+# Conversation level 3: corrected 12B-token conversation baseline.
+# This preserves the 0002 architecture, foundation exposure, and corpus order,
+# while applying assistant-only loss and bounded conversation tuning. Its
+# portable weights remain float32 and compiled execution stays disabled because
+# measured compiled loss did not survive the handoff to eager inference.
+# It is a private research compose pending record-level rights work for
+# Gutenberg, federal rulemaking, PLOS, and HelpSteer2.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -15,7 +20,7 @@ architecture:
   key_value_heads: 4
   dropout: 0.1
   tie_embeddings: true
-  parameter_dtype: bfloat16
+  parameter_dtype: float32
   tokenizer:
     name: tiktoken/r50k_base
     revision: tiktoken-r50k-base
@@ -39,10 +44,17 @@ stages:
         weight: 2
     parameters:
       profile: causal-pretrain-weighted
+      parallelism: auto
       tokens: 11999969280
       batch_size: 16
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: false
       sequence_length: 2048
       learning_rate: 0.00013
+      optimizer: adamw
+      schedule: cosine
       seed: 42
       weight_decay: 0.15
       warmup_steps: 3662
@@ -52,49 +64,10 @@ stages:
       evaluate_every: 18310
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
-  # Teach durable technical concepts before conversational adaptation. Large,
-  # explanatory corpora lead the mixture; code and development discussions
-  # provide concrete systems vocabulary without dominating it.
-  - name: technical-knowledge-midtrain
-    type: pre-training
-    objective: causal-language-modeling
-    filter:
-      main_content: true
-      languages:
-        include: [en]
-        include_unset: true
-      exclude:
-        repetitive_content: true
-        boilerplate_content: true
-    corpora:
-      - {path: core/synthetic/cosmopedia-v2, weight: 8}
-      - {path: core/common-pile/stackexchange, weight: 8}
-      - {path: code/copyleft/linux-core, weight: 3}
-      - {path: code/permissive/linux-core, weight: 2}
-      - {path: community/linux-kernel-mailing-list, weight: 2}
-      - {path: code/stack-v2-html, weight: 1}
-      - {path: code/cloud-native-core, weight: 1}
-      - {path: community/git-mailing-list, weight: 1}
-      - {path: community/python-mailing-lists, weight: 1}
-    parameters:
-      profile: causal-pretrain-weighted
-      tokens: 3000000000
-      batch_size: 8
-      sequence_length: 2048
-      learning_rate: 0.00002
-      seed: 45
-      weight_decay: 0.08
-      warmup_steps: 1831
-      shuffle_buffer_records: 65536
-      shuffle_buffer_bytes: 1073741824
-      checkpoint_every: 9155
-      evaluate_every: 9155
-      evaluation_max_records: 1024
-      evaluation_max_bytes: 33554432
 
   - name: conversational-midtrain
     type: fine-tuning
-    objective: causal-language-modeling
+    objective: assistant-response-modeling
     conversation:
       template: user-assistant-v1
       supervised_roles: [assistant]
@@ -114,10 +87,17 @@ stages:
         weight: 2
     parameters:
       profile: causal-pretrain-weighted
-      epochs: 3
+      parallelism: auto
+      epochs: 1
       batch_size: 8
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: false
       sequence_length: 2048
-      learning_rate: 0.00004
+      learning_rate: 0.00002
+      optimizer: adamw
+      schedule: cosine
       seed: 43
       weight_decay: 0.08
       warmup_steps: 305
@@ -128,45 +108,9 @@ stages:
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
 
-  - name: expanded-conversation-sft
-    type: fine-tuning
-    objective: assistant-response-modeling
-    conversation:
-      template: user-assistant-v1
-      supervised_roles: [assistant]
-    filter:
-      main_content: true
-      exclude:
-        repetitive_content: true
-        boilerplate_content: true
-    corpora:
-      - path: post-train/sft/tulu3
-        weight: 6
-      - path: post-train/sft/smol-smoltalk
-        weight: 2
-      - path: post-train/sft/ultrachat-200k
-        weight: 2
-    parameters:
-      profile: causal-pretrain-weighted
-      tokens: 400000000
-      batch_size: 8
-      sequence_length: 2048
-      learning_rate: 0.00001
-      seed: 46
-      weight_decay: 0.04
-      warmup_steps: 1221
-      shuffle_buffer_records: 32768
-      shuffle_buffer_bytes: 536870912
-      checkpoint_every: 2441
-      evaluate_every: 2441
-      evaluation_max_records: 1024
-      evaluation_max_bytes: 33554432
-
-  # Finish with the same bounded behavior anchor that made conversation1
-  # useful. Narrow alignment belongs after broad and technical learning.
   - name: post-train
     type: fine-tuning
-    objective: causal-language-modeling
+    objective: assistant-response-modeling
     conversation:
       template: user-assistant-v1
       supervised_roles: [assistant]
@@ -180,18 +124,67 @@ stages:
         weight: 8
       - path: post-train/sft/helpsteer2
         weight: 3
+      - path: post-train/sft/waldo-project-v1
+        weight: 1
     parameters:
       profile: causal-pretrain-weighted
-      epochs: 3
+      parallelism: auto
+      epochs: 1
       batch_size: 8
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: false
       sequence_length: 2048
-      learning_rate: 0.000015
+      learning_rate: 0.000008
+      optimizer: adamw
+      schedule: cosine
       seed: 44
       weight_decay: 0.05
-      warmup_steps: 96
+      warmup_steps: 32
       shuffle_buffer_records: 16384
       shuffle_buffer_bytes: 268435456
       checkpoint_every: 160
       evaluate_every: 160
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
+
+  # Keep project identity separate from the broad behavior mixture so held-out
+  # selection measures whether the final artifact actually learned it. The
+  # low learning rate and small bounded repetition limit collateral forgetting.
+  - name: project-grounding
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/waldo-project-v1
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      epochs: 5
+      batch_size: 8
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: false
+      sequence_length: 2048
+      learning_rate: 0.000002
+      optimizer: adamw
+      schedule: cosine
+      seed: 45
+      weight_decay: 0
+      warmup_steps: 10
+      shuffle_buffer_records: 4096
+      shuffle_buffer_bytes: 134217728
+      checkpoint_every: 20
+      evaluate_every: 20
+      evaluation_max_records: 256
+      evaluation_max_bytes: 8388608

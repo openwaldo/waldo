@@ -20,7 +20,10 @@ const TelemetryFilename = "TELEMETRY.csv"
 var telemetryHeader = []string{
 	"observed_utc", "elapsed_seconds", "run_id", "stage", "attempt",
 	"event", "state", "step", "planned_steps", "tokens", "planned_tokens", "loss",
-	"heldout_loss", "heldout_perplexity", "learning_rate", "tokens_per_second", "eta_seconds", "message",
+	"heldout_loss", "heldout_perplexity", "learning_rate", "tokens_per_second",
+	"duration_seconds", "data_wait_seconds", "peak_memory_bytes", "training_flops",
+	"achieved_tflops", "model_flop_utilization", "gradient_norm", "skipped_steps",
+	"eta_seconds", "message",
 }
 
 type telemetryRow struct {
@@ -68,11 +71,17 @@ func telemetryRecord(row telemetryRow) []string {
 	if elapsed < 0 {
 		elapsed = 0
 	}
-	values := []string{
-		formatTime(row.Observed), strconv.FormatFloat(elapsed, 'f', 3, 64), row.RunID, row.Stage,
-		strconv.Itoa(row.Attempt), row.Event, string(row.State), "", strconv.FormatInt(row.PlannedSteps, 10),
-		"", strconv.FormatInt(row.PlannedTokens, 10), "", "", "", "", "", "", row.Message,
-	}
+	values := make([]string, len(telemetryHeader))
+	values[0] = formatTime(row.Observed)
+	values[1] = strconv.FormatFloat(elapsed, 'f', 3, 64)
+	values[2] = row.RunID
+	values[3] = row.Stage
+	values[4] = strconv.Itoa(row.Attempt)
+	values[5] = row.Event
+	values[6] = string(row.State)
+	values[8] = strconv.FormatInt(row.PlannedSteps, 10)
+	values[10] = strconv.FormatInt(row.PlannedTokens, 10)
+	values[25] = row.Message
 	if row.Training == nil {
 		return values
 	}
@@ -92,8 +101,27 @@ func telemetryRecord(row telemetryRow) []string {
 	if event.TokensPerSecond > 0 {
 		values[15] = strconv.FormatFloat(event.TokensPerSecond, 'g', -1, 64)
 	}
-	values[16] = optionalInt(event.ETASeconds)
+	values[16] = optionalFloat(event.DurationSeconds)
+	values[17] = optionalFloat(event.DataWaitSeconds)
+	if event.PeakMemoryBytes > 0 {
+		values[18] = strconv.FormatUint(event.PeakMemoryBytes, 10)
+	}
+	values[19] = optionalFloat(event.TrainingFLOPs)
+	values[20] = optionalFloat(event.AchievedTFLOPS)
+	values[21] = optionalFloat(event.ModelFLOPUtilization)
+	if event.GradientNorm != nil {
+		values[22] = strconv.FormatFloat(*event.GradientNorm, 'g', -1, 64)
+	}
+	values[23] = optionalInt(event.SkippedSteps)
+	values[24] = optionalInt(event.ETASeconds)
 	return values
+}
+
+func optionalFloat(value float64) string {
+	if value == 0 {
+		return ""
+	}
+	return strconv.FormatFloat(value, 'g', -1, 64)
 }
 
 func optionalInt(value int64) string {

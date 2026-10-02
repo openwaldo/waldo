@@ -114,6 +114,37 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 	if steps <= 0 || parameters.BatchSize <= 0 || parameters.SequenceLength <= 0 || parameters.LearningRate <= 0 || math.IsNaN(parameters.LearningRate) || math.IsInf(parameters.LearningRate, 0) {
 		return ResolvedParameters{}, fmt.Errorf("steps, batch_size, sequence_length, and learning_rate must be finite and positive")
 	}
+	optimizerName := parameters.Optimizer
+	if optimizerName == "" {
+		optimizerName = "adamw"
+	}
+	if optimizerName != "adamw" && optimizerName != "muon-adamw" {
+		return ResolvedParameters{}, fmt.Errorf("unsupported optimizer %q", optimizerName)
+	}
+	scheduleName := parameters.Schedule
+	if scheduleName == "" {
+		scheduleName = "cosine"
+	}
+	if scheduleName != "cosine" && scheduleName != "warmup-stable-warmdown" {
+		return ResolvedParameters{}, fmt.Errorf("unsupported learning-rate schedule %q", scheduleName)
+	}
+	gradientAccumulation := parameters.GradientAccumulation
+	if gradientAccumulation == 0 {
+		gradientAccumulation = 1
+	}
+	if gradientAccumulation < 1 || gradientAccumulation > parameters.BatchSize || parameters.BatchSize%gradientAccumulation != 0 {
+		return ResolvedParameters{}, fmt.Errorf("gradient_accumulation_steps must be positive, no greater than batch_size, and divide batch_size exactly")
+	}
+	computePrecision := parameters.ComputePrecision
+	if computePrecision == "" {
+		computePrecision = "auto"
+	}
+	if computePrecision != "auto" && computePrecision != "float32" && computePrecision != "float16" && computePrecision != "bfloat16" {
+		return ResolvedParameters{}, fmt.Errorf("compute_precision must be auto, float32, float16, or bfloat16")
+	}
+	if parameters.DistributionPolicy != "" && parameters.DistributionPolicy != "distributable" {
+		return ResolvedParameters{}, fmt.Errorf("distribution_policy must be distributable when set")
+	}
 	epochs := parameters.Epochs
 	if epochs == 0 {
 		epochs = 1
@@ -149,6 +180,24 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 	}
 	if warmup < 0 || warmup > steps {
 		return ResolvedParameters{}, fmt.Errorf("warmup_steps must be in 0..steps")
+	}
+	warmdown := int64(0)
+	if parameters.WarmdownSteps != nil {
+		warmdown = *parameters.WarmdownSteps
+	} else if scheduleName == "warmup-stable-warmdown" {
+		warmdown = (steps - warmup) / 2
+	}
+	if warmdown < 0 || warmdown > steps || warmup+warmdown > steps {
+		return ResolvedParameters{}, fmt.Errorf("warmup_steps plus warmdown_steps must fit within training steps")
+	}
+	minimumRateRatio := 0.1
+	if parameters.MinimumRateRatio != nil {
+		minimumRateRatio = *parameters.MinimumRateRatio
+	} else if scheduleName == "warmup-stable-warmdown" {
+		minimumRateRatio = 0
+	}
+	if minimumRateRatio < 0 || minimumRateRatio > 1 || math.IsNaN(minimumRateRatio) || math.IsInf(minimumRateRatio, 0) {
+		return ResolvedParameters{}, fmt.Errorf("minimum_learning_rate_ratio must be finite and in 0..1")
 	}
 	if checkpointEvery < 0 || checkpointEvery > steps {
 		return ResolvedParameters{}, fmt.Errorf("checkpoint_every must be in 0..steps")
@@ -222,15 +271,33 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 	}
 	return ResolvedParameters{
 		Profile: profile, ProfileSchema: profileSchema,
-		Epochs: epochs, RequestedTokens: requestedTokens, Steps: steps, BatchSize: parameters.BatchSize,
-		SequenceLength: parameters.SequenceLength, LearningRate: parameters.LearningRate,
+		Epochs: epochs, RequestedTokens: requestedTokens, Steps: steps, BatchSize: parameters.BatchSize, GradientAccumulation: gradientAccumulation,
+		ComputePrecision: computePrecision, ActivationCheckpointing: parameters.ActivationCheckpointing, Compile: parameters.Compile,
+		DistributionPolicy: parameters.DistributionPolicy,
+		SequenceLength:     parameters.SequenceLength, LearningRate: parameters.LearningRate,
 		Seed: parameters.Seed, PlannedTokenCapacity: capacity,
-		Optimizer:       Optimizer{Name: "adamw", WeightDecay: weightDecay, Beta1: 0.9, Beta2: 0.95, Epsilon: 1e-8},
-		Schedule:        Schedule{Name: "cosine", WarmupSteps: warmup, MinimumRateRatio: 0.1},
+		Optimizer:       Optimizer{Name: optimizerName, WeightDecay: weightDecay, Beta1: 0.9, Beta2: 0.95, Epsilon: 1e-8},
+		Schedule:        Schedule{Name: scheduleName, WarmupSteps: warmup, WarmdownSteps: warmdown, MinimumRateRatio: minimumRateRatio},
 		Data:            DataPlan{Order: order, ShuffleBufferRecords: shuffleBuffer, ShuffleBufferBytes: shuffleBufferBytes, Packing: "continuous-eos-v1", CorpusWeights: weights},
 		Evaluation:      &EvaluationPolicy{Selection: selection, Fraction: evaluationFraction, MaxRecords: evaluationMaxRecords, MaxBytes: evaluationMaxBytes},
 		CheckpointEvery: checkpointEvery, EvaluateEvery: evaluateEvery,
 	}, nil
+}
+
+// ValidateBatchTopology ensures every rank receives the same number of unique
+// sequences in each physical micro-batch.
+func ValidateBatchTopology(parameters ResolvedParameters, worldSize int) error {
+	if worldSize < 1 {
+		return fmt.Errorf("training world size must be positive")
+	}
+	if parameters.GradientAccumulation < 1 || parameters.BatchSize%parameters.GradientAccumulation != 0 {
+		return fmt.Errorf("resolved gradient accumulation does not divide the global batch")
+	}
+	globalMicroBatch := parameters.BatchSize / parameters.GradientAccumulation
+	if globalMicroBatch < int64(worldSize) || globalMicroBatch%int64(worldSize) != 0 {
+		return fmt.Errorf("global micro-batch %d (batch_size %d / gradient_accumulation_steps %d) must be divisible by world size %d", globalMicroBatch, parameters.BatchSize, parameters.GradientAccumulation, worldSize)
+	}
+	return nil
 }
 
 // CanonicalProfile maps deprecated numbered profile names to their

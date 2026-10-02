@@ -169,6 +169,14 @@ objects and can make a later resume download them again. The original
 `lookaside status` command remains available as a compatibility alias for
 `lookaside cache status`.
 
+Successful commands purge their used objects by default. Repeated experiments
+can retain them within the configured LRU bound:
+
+```bash
+waldo config set lookaside.cache.retain-completed true
+waldo config set lookaside.cache.max-size 30GiB
+```
+
 `waldo lookaside mirror` is reserved but not implemented.
 
 For S3 publication, configure the destination and store bucket-scoped

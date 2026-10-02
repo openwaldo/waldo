@@ -99,14 +99,17 @@ func TestConfigNCCLKeysRoundTrip(t *testing.T) {
 }
 
 func TestValidateDistributedBatchSize(t *testing.T) {
-	if err := validateDistributedBatchSize("stage pretrain", 16, 4); err != nil {
+	if err := validateDistributedBatchSize("stage pretrain", 16, 2, 4); err != nil {
 		t.Fatal(err)
 	}
 	for _, batch := range []int64{2, 10} {
-		err := validateDistributedBatchSize("stage pretrain", batch, 4)
-		if err == nil || !strings.Contains(err.Error(), "stage pretrain global batch size") {
+		err := validateDistributedBatchSize("stage pretrain", batch, 1, 4)
+		if err == nil || !strings.Contains(err.Error(), "stage pretrain global micro-batch size") {
 			t.Fatalf("batch %d error = %v", batch, err)
 		}
+	}
+	if err := validateDistributedBatchSize("stage pretrain", 16, 8, 4); err == nil {
+		t.Fatal("accepted a physical micro-batch smaller than the world size")
 	}
 }
 
@@ -197,6 +200,18 @@ func multiNodePlanForTest(t *testing.T, bom corpus.BOM, architecture string) mod
 	}
 }
 
+func TestPlannedStageRejectsMissingDistributionEvidenceBeforeMaterialization(t *testing.T) {
+	bom := seedMultiNodeCorpus(t)
+	stage := model.Stage{
+		Name: "pretrain", Type: "pre-training", Objective: "causal-language-modeling",
+		Parameters: training.Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, DistributionPolicy: corpus.DistributionPolicyDistributable},
+	}
+	err := reviewPlannedStageDistribution(stage, bom)
+	if err == nil || !strings.Contains(err.Error(), "distributable corpus gate") || !strings.Contains(err.Error(), "upstream license evidence") {
+		t.Fatalf("distribution review error = %v", err)
+	}
+}
+
 func TestSecondaryTrainingRequestFromPlan(t *testing.T) {
 	bom := seedMultiNodeCorpus(t)
 	cache, err := lookaside.DefaultCache()
@@ -256,6 +271,13 @@ func TestSecondaryTrainingRequestFromPlan(t *testing.T) {
 		}
 		if request.Resume == nil || request.Resume.Step != 1 || !reflect.DeepEqual(request.Resume.Paths, []string{path}) {
 			t.Fatalf("secondary resume = %+v", request.Resume)
+		}
+		request, err = secondaryTrainingRequest(Context{Execution: context.Background()}, plan, t.TempDir(), cache, t.TempDir(), io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if request.Resume == nil || request.Resume.Step != 1 || !reflect.DeepEqual(request.Resume.Paths, []string{path}) {
+			t.Fatalf("node-local secondary resume = %+v", request.Resume)
 		}
 	})
 

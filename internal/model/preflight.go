@@ -178,17 +178,18 @@ func resolveCorpusWeights(declared map[string]uint64, paths []string) (map[strin
 }
 
 func composePlan(name string, compose Compose) (Plan, error) {
-	architectureHash, err := canonicalHash(compose.Architecture)
+	architecture := composeModelArchitecture(compose.Architecture)
+	architectureHash, err := canonicalHash(architecture)
 	if err != nil {
 		return Plan{}, err
 	}
-	forecast, err := compose.Architecture.Forecast()
+	forecast, err := architecture.Forecast()
 	if err != nil {
 		return Plan{}, err
 	}
 	plan := Plan{
 		Kind: "waldo-model-plan", Schema: PlanSchema, Name: name,
-		ArchitectureSHA256: architectureHash, Architecture: compose.Architecture,
+		ArchitectureSHA256: architectureHash, Architecture: architecture,
 		Interaction: compose.Interaction, Forecast: forecast,
 	}
 	if compose.Base != nil {
@@ -202,6 +203,13 @@ func composePlan(name string, compose Compose) (Plan, error) {
 		}
 	}
 	return plan, nil
+}
+
+func composeModelArchitecture(architecture Architecture) Architecture {
+	if architecture.Tokenizer.Artifact != nil {
+		architecture.Tokenizer.Training = nil
+	}
+	return architecture
 }
 
 func forecastPlanForCompose(compose Compose) (Plan, error) {

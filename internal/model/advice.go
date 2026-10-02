@@ -34,26 +34,28 @@ type Advice struct {
 }
 
 type AdviceRun struct {
-	ID                 string                      `json:"id"`
-	Stage              string                      `json:"stage"`
-	Ordinal            int                         `json:"ordinal"`
-	State              RunState                    `json:"state"`
-	Backend            string                      `json:"backend,omitempty"`
-	Step               int64                       `json:"step,omitempty"`
-	PlannedSteps       int64                       `json:"planned_steps,omitempty"`
-	ProgressPercent    float64                     `json:"progress_percent,omitempty"`
-	ConsumedTokens     int64                       `json:"consumed_tokens,omitempty"`
-	PlannedTokens      int64                       `json:"planned_tokens,omitempty"`
-	Loss               *float64                    `json:"loss,omitempty"`
-	HeldoutLoss        *float64                    `json:"heldout_loss,omitempty"`
-	InitialHeldoutLoss *float64                    `json:"initial_heldout_loss,omitempty"`
-	LearningRate       float64                     `json:"learning_rate,omitempty"`
-	TokensPerSecond    float64                     `json:"tokens_per_second,omitempty"`
-	ETASeconds         int64                       `json:"eta_seconds,omitempty"`
-	LastObserved       string                      `json:"last_observed_utc,omitempty"`
-	Error              string                      `json:"error,omitempty"`
-	Parameters         training.ResolvedParameters `json:"parameters"`
-	Corpus             AdviceCorpus                `json:"corpus"`
+	ID                  string                      `json:"id"`
+	Stage               string                      `json:"stage"`
+	Ordinal             int                         `json:"ordinal"`
+	State               RunState                    `json:"state"`
+	Backend             string                      `json:"backend,omitempty"`
+	Step                int64                       `json:"step,omitempty"`
+	PlannedSteps        int64                       `json:"planned_steps,omitempty"`
+	ProgressPercent     float64                     `json:"progress_percent,omitempty"`
+	ConsumedTokens      int64                       `json:"consumed_tokens,omitempty"`
+	PlannedTokens       int64                       `json:"planned_tokens,omitempty"`
+	Loss                *float64                    `json:"loss,omitempty"`
+	HeldoutLoss         *float64                    `json:"heldout_loss,omitempty"`
+	InitialHeldoutLoss  *float64                    `json:"initial_heldout_loss,omitempty"`
+	SelectedStep        int64                       `json:"selected_step,omitempty"`
+	SelectedHeldoutLoss *float64                    `json:"selected_heldout_loss,omitempty"`
+	LearningRate        float64                     `json:"learning_rate,omitempty"`
+	TokensPerSecond     float64                     `json:"tokens_per_second,omitempty"`
+	ETASeconds          int64                       `json:"eta_seconds,omitempty"`
+	LastObserved        string                      `json:"last_observed_utc,omitempty"`
+	Error               string                      `json:"error,omitempty"`
+	Parameters          training.ResolvedParameters `json:"parameters"`
+	Corpus              AdviceCorpus                `json:"corpus"`
 }
 
 type AdviceCorpus struct {
@@ -149,6 +151,17 @@ func BuildAdvice(inspection Inspection, now time.Time) (Advice, error) {
 		}
 		if !sample.Observed.IsZero() {
 			current.LastObserved = sample.Observed.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	if run.Observation != nil && run.Observation.SelectedCheckpoint != nil {
+		selected := run.Observation.SelectedCheckpoint
+		last := current.HeldoutLoss
+		value := selected.Value
+		current.SelectedStep = selected.Step
+		current.SelectedHeldoutLoss = &value
+		current.HeldoutLoss = &value
+		if last != nil && *last > value {
+			result.Findings = append(result.Findings, fmt.Sprintf("the last optimizer step held-out loss was %.1f%% worse than the selected checkpoint at step %d", 100*(*last/value-1), selected.Step))
 		}
 	}
 	if current.PlannedSteps > 0 {

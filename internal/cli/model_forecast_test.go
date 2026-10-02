@@ -165,10 +165,22 @@ func TestWriteModelForecastUsesApprovedCompactColumns(t *testing.T) {
 func TestWriteModelForecastIdentifiesEpochDerivedWork(t *testing.T) {
 	report := model.ResourceForecast{ApproximateParameters: 10, PlannedTokens: 1000, EpochDerivedStages: []string{"midtrain", "post-train"}}
 	var output bytes.Buffer
-	writeModelForecast(&output, report, model.HostForecast{Ready: true, Execution: training.Execution{Host: training.Host{OS: "linux", Architecture: "amd64"}}}, false)
+	writeModelForecast(&output, report, model.HostForecast{Ready: true, Execution: training.Execution{Host: training.Host{OS: "linux", Architecture: "amd64"}}}, false, nil)
 	for _, want := range []string{"at least 1.0K plus 2 epoch-derived stage(s)", "midtrain, post-train resolve during training preflight"} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("forecast output missing %q: %q", want, output.String())
+		}
+	}
+}
+
+func TestWriteModelForecastReportsEmbeddingDominatedArchitecture(t *testing.T) {
+	report := model.ResourceForecast{ApproximateParameters: 16_014_336, PlannedTokens: 5_000_000}
+	architecture := model.Architecture{VocabularySize: 50_259, HiddenSize: 256, TieEmbeddings: true}
+	var output bytes.Buffer
+	writeModelForecast(&output, report, model.HostForecast{Ready: true}, false, &architecture)
+	for _, want := range []string{"TOKEN I/O:", "12.9M", "80.3% of parameters", "exceed 50% of model capacity"} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("forecast missing %q:\n%s", want, output.String())
 		}
 	}
 }
@@ -185,7 +197,7 @@ func TestWriteModelForecastRecommendsRemoteComputeWithoutCatalogFit(t *testing.T
 		Execution:      training.Execution{Host: training.Host{OS: "linux", Architecture: "amd64"}},
 	}
 	var output bytes.Buffer
-	writeModelForecast(&output, report, host, true)
+	writeModelForecast(&output, report, host, true, nil)
 	for _, want := range []string{"READY:       no", "REASON:", "RECOMMEND:   use remote compute", "HOST COMPARISON", "NOTE:        no configuration"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("forecast output missing %q:\n%s", want, output.String())

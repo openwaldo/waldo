@@ -24,8 +24,17 @@ when its stage, corpus BOM, resolved parameters, evaluation set, backend, and
 execution environment still match. The run ID and immutable `RUN-BOM.json`
 do not change. `RUN.json` records each execution attempt and keeps verified
 partial progress distinct from a terminal observation. The deterministic
-record stream is replayed without optimization through the checkpoint step,
-then training continues with restored state.
+record stream is positioned at the checkpoint boundary, then training continues
+with restored state. Backends without a seekable prepared stream replay the
+prefix without optimization. Multi-node node-local prepared streams skip the
+already-trained prefix before worker handoff.
+
+Any attempt that ends after WALDO has durably recorded a complete compatible
+checkpoint is recoverable, regardless of whether the immediate cause was an
+operator interruption, worker failure, transport failure, or terminal
+bookkeeping failure. WALDO retains the failed attempt and error in history but
+classifies the run as interrupted so the exact invocation can resume it. A
+failure without a verified checkpoint remains terminal.
 
 Checkpoint runtime state is backend-specific and can resume only under the
 same pinned backend revision. Terminal model weights remain portable through
@@ -35,6 +44,9 @@ WALDO's shared Safetensors contract.
 
 - Ctrl-C and other context interruptions retain useful, auditable work.
 - Resume cannot silently reset optimizer or scheduler behavior.
+- The real-backend lifecycle gate interrupts MLX immediately after a durable
+  checkpoint and requires resumed terminal tensors to be bit-identical to an
+  uninterrupted control run.
 - Corrupt, incomplete, mismatched, or path-escaping checkpoint bundles fail
   before a trainer starts.
 - ADR 0031 applies this same-run recovery contract to durable model-compose

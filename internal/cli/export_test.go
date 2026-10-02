@@ -57,7 +57,7 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	manifest := fmt.Sprintf(`{
   "kind": "manifest", "schema": 1, "name": "books", "title": "Books",
   "description": "Small books.", "license": "CC0-1.0",
-  "sources": [{"name": "source", "source": "Fixture", "url": "https://example.test", "sha256": %q}],
+  "sources": [{"name": "source", "source": "Fixture", "version": "fixture-1", "url": "https://example.test", "category": "public-dataset", "sha256": %q, "license_evidence": {"declaration": "CC0-1.0"}}],
   "converted_by": {"tool": "test", "version": "1", "profile": "text", "recipe": "test/v1", "tokenizer": "byte"},
   "shards": [{"url": %q, "sha256": %q, "sources": ["source"], "docs": 1, "tokens": 3, "bytes": %d}]
 }`, strings.Repeat("a", 64), source, digest, len(content))
@@ -115,12 +115,12 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	}
 
 	compose := filepath.Join(t.TempDir(), "smoke.yaml")
-	composeData := fmt.Sprintf(`kind: waldo-model-compose
+	composeData := `kind: waldo-model-compose
 schema: 1
 architecture:
   family: decoder-transformer
   context_tokens: 128
-  vocabulary_size: 256
+  vocabulary_size: 274
   hidden_size: 64
   intermediate_size: 192
   layers: 2
@@ -129,21 +129,27 @@ architecture:
   tie_embeddings: true
   parameter_dtype: float32
   tokenizer:
-    name: byte
-    revision: sha256:fixture
+    training:
+      algorithm: byte-bpe-v1
+      sample_bytes: 18
+      seed: 7
+      max_token_inflation: 1.0
+      distribution_policy: distributable
+      corpora:
+        - books
 stages:
   - name: pretrain
     type: pre-training
     objective: causal-language-modeling
     corpora:
-      - %q
+      - books
     parameters:
       steps: 2
       batch_size: 1
       sequence_length: 64
       learning_rate: 0.001
       seed: 7
-`, filepath.Join(root, "books"))
+`
 	if err := os.WriteFile(compose, []byte(composeData), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +158,7 @@ stages:
 	if code := Run([]string{"model", "train", "smoke", compose}, &stdout, &stderr); code != 0 {
 		t.Fatalf("compose-driven model train code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "trained model smoke") || !strings.Contains(stderr.String(), "preflight/pretrain") {
+	if !strings.Contains(stdout.String(), "trained model smoke") || !strings.Contains(stderr.String(), "tokenizer               selected sha256:") || !strings.Contains(stderr.String(), "preflight/pretrain") {
 		t.Fatalf("compose-driven model train stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
 	runBOMs, err := filepath.Glob(filepath.Join(models, "smoke", "runs", "*", "RUN-BOM.json"))
@@ -373,7 +379,7 @@ func TestModelExportRequiresDisclosureAndPublishesBothBOMs(t *testing.T) {
 	if code := Run([]string{"model", "export", "release", destination, "--allow-incomplete"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("model export code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
-	for _, name := range []string{"BOM.json", "EU-BOM.json"} {
+	for _, name := range []string{"BOM.json", "EU-BOM.json", "ATTRIBUTION.md"} {
 		if _, err := os.Stat(filepath.Join(destination, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
 		}

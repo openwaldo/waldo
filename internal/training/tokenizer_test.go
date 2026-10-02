@@ -12,7 +12,59 @@ import (
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/record"
+	waldotokenizer "github.com/openwaldo/waldo/internal/tokenizer"
 )
+
+func TestResolveTokenizerSpecUsesEmbeddedTrainedArtifact(t *testing.T) {
+	artifact, err := waldotokenizer.TrainByteBPE(
+		[]waldotokenizer.Sample{{ID: "one", Text: "hello hello world"}},
+		300,
+		1024,
+		strings.Repeat("a", 64),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := TokenizerSpec{
+		Name: artifact.Name, Revision: artifact.Revision,
+		VocabularySize: artifact.VocabularySize,
+		PadID:          artifact.PadID, BOSID: artifact.BOSID, EOSID: artifact.EOSID,
+		Artifact: &artifact,
+	}
+	resolved, codec, err := ResolveTokenizerSpec(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := "hello world"
+	if resolved.Revision != artifact.Revision || codec.Decode(codec.Encode(text)) != text {
+		t.Fatalf("resolved = %+v, round trip = %q", resolved, codec.Decode(codec.Encode(text)))
+	}
+
+	missing := spec
+	missing.Artifact = nil
+	if _, _, err := ResolveTokenizerSpec(missing); err == nil || !strings.Contains(err.Error(), "embedded artifact") {
+		t.Fatalf("missing artifact error = %v", err)
+	}
+	mismatch := spec
+	mismatch.VocabularySize++
+	if _, _, err := ResolveTokenizerSpec(mismatch); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("mismatched artifact error = %v", err)
+	}
+}
+
+func TestValidateArchitectureTokenizerAllowsDeclaredTrainingOnlyForForecast(t *testing.T) {
+	raw := json.RawMessage(`{"vocabulary_size":16000,"tokenizer":{"training":{"algorithm":"byte-bpe-v1"}}}`)
+	if err := ValidateArchitectureTokenizer(raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArchitectureTokenizer(raw); err == nil {
+		t.Fatalf("unresolved execution error = %v", err)
+	}
+	invalid := json.RawMessage(`{"vocabulary_size":16000,"tokenizer":{"training":{"algorithm":"unknown"}}}`)
+	if err := ValidateArchitectureTokenizer(invalid); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("invalid training algorithm error = %v", err)
+	}
+}
 
 func TestCL100KTokenizerRoundTripAndSpecialFraming(t *testing.T) {
 	spec, codec, err := ResolveTokenizer("tiktoken/cl100k_base", TiktokenCL100KRevision, TiktokenCL100KVocabulary)

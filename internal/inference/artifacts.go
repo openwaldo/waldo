@@ -8,10 +8,12 @@ package inference
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/model"
@@ -95,7 +97,33 @@ func ResolveArtifacts(inspection model.Inspection) (Artifacts, error) {
 	if result.Weights == "" || result.Configuration == "" || result.Tokenizer == "" {
 		return Artifacts{}, fmt.Errorf("model %q current run %q must provide weights, configuration, and tokenizer artifacts", inspection.Model.Name, selected.ID)
 	}
+	if err := verifyRunConfiguration(result.Configuration, inspection.Model.ArchitectureSHA256, inspection.Model.Architecture); err != nil {
+		return Artifacts{}, fmt.Errorf("model %q current run %q: %w", inspection.Model.Name, selected.ID, err)
+	}
 	return result, nil
+}
+
+func verifyRunConfiguration(path, architectureSHA256 string, architecture model.Architecture) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read runtime configuration: %w", err)
+	}
+	var configuration struct {
+		Kind               string             `json:"kind"`
+		Schema             int                `json:"schema"`
+		ArchitectureSHA256 string             `json:"architecture_sha256"`
+		Architecture       model.Architecture `json:"architecture"`
+	}
+	if err := json.Unmarshal(data, &configuration); err != nil {
+		return fmt.Errorf("decode runtime configuration: %w", err)
+	}
+	if configuration.Schema != 1 || (configuration.Kind != "waldo-mlx-model-config" && configuration.Kind != "waldo-pytorch-model-config" && configuration.Kind != "waldo-torchtitan-model-config") {
+		return fmt.Errorf("unsupported runtime configuration %q schema %d", configuration.Kind, configuration.Schema)
+	}
+	if configuration.ArchitectureSHA256 != architectureSHA256 || !reflect.DeepEqual(configuration.Architecture, architecture) {
+		return fmt.Errorf("runtime configuration architecture does not match the immutable model architecture")
+	}
+	return nil
 }
 
 func resolveModelPath(root, logical string) (string, error) {

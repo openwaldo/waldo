@@ -59,6 +59,12 @@ There is no single Python architecture file shared by every runtime:
 The generated Python file is a runtime binding, not a copy of WALDO's training
 worker. GGUF and Ollama do not need or include Python architecture code.
 
+These derived packages currently bind to standard Llama implementations.
+WALDO therefore rejects Hugging Face, MLX-LM, GGUF, and Ollama export when the
+managed architecture enables parameter-free `qk_normalization`; those runtimes
+would otherwise accept the same tensor shapes while producing different
+logits. Use the native `waldo` package until an exact portable binding exists.
+
 ## Prerequisites and selection
 
 The model name resolves beneath the configured `model.root`, which defaults to
@@ -136,6 +142,16 @@ and planned work. It also hash-pins the run's `PREFLIGHT.json`, containing the
 exact held-out row IDs and deterministic epoch-to-step result used by the run.
 Runtime observations are recorded separately so the plan cannot be rewritten
 after execution.
+
+### `ATTRIBUTION.md`
+
+Every model export includes a deterministic training-data attribution notice.
+It is generated only from the immutable corpus BOMs of completed runs and
+lists their declared licenses, recorded preservation obligations, source URLs,
+versions or source digests, upstream license declarations, and license-evidence
+URLs. Export fails if any recorded training corpus no longer passes WALDO's
+distributable policy. Imported models with no WALDO training runs instead point
+the reader to their origin BOM.
 
 ### Managed `MODEL-BOM.json`
 

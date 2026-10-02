@@ -21,7 +21,7 @@ import (
 	"github.com/openwaldo/waldo/internal/mlxruntime"
 )
 
-const MLXRevision = "builtin-mlx-worker-schema-1-r8"
+const MLXRevision = "builtin-mlx-worker-schema-1-r15"
 
 //go:embed workers/mlx.py
 var mlxWorker []byte
@@ -86,7 +86,7 @@ func (resolver MLXResolver) Resolve(ctx context.Context, request ResolveRequest)
 	if architecture.Family != "decoder-transformer" {
 		return Selection{}, fmt.Errorf("MLX backend does not support architecture family %q", architecture.Family)
 	}
-	if _, _, err := ResolveTokenizer(architecture.Tokenizer.Name, architecture.Tokenizer.Revision, architecture.VocabularySize); err != nil {
+	if err := ValidateArchitectureTokenizer(request.Architecture); err != nil {
 		return Selection{}, fmt.Errorf("MLX backend: %w", err)
 	}
 	candidates := resolver.Candidates

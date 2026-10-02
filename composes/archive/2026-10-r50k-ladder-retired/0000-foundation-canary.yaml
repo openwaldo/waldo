@@ -1,0 +1,58 @@
+# Gate 0: prove the complete foundation-training path with minimal spend.
+# PressBooks is one assessed shard (about 181 MB and 126M reference tokens),
+# so this gate does not materialize the full qualification corpus mixture.
+# This is a private research compose; distribution_policy is intentionally unset.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 512
+  vocabulary_size: 50259
+  hidden_size: 256
+  intermediate_size: 768
+  layers: 4
+  attention_heads: 4
+  key_value_heads: 2
+  dropout: 0.0
+  qk_normalization: true
+  initialization: depth-scaled
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    name: tiktoken/r50k_base
+    revision: tiktoken-r50k-base
+stages:
+  - name: foundation-pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: core/common-pile/pressbooks
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      tokens: 5000000
+      batch_size: 32
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: false
+      compile: false
+      sequence_length: 512
+      learning_rate: 0.0003
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
+      seed: 42
+      weight_decay: 0.1
+      warmup_steps: 15
+      warmdown_steps: 61
+      shuffle_buffer_records: 8192
+      shuffle_buffer_bytes: 268435456
+      checkpoint_every: 50
+      evaluate_every: 50
+      evaluation_max_records: 128
+      evaluation_max_bytes: 4194304

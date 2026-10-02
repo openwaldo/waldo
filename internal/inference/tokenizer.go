@@ -22,14 +22,9 @@ func loadTokenizer(path string) (training.TokenizerSpec, training.TokenCodec, er
 		return training.TokenizerSpec{}, nil, err
 	}
 	var artifact struct {
-		Kind           string `json:"kind"`
-		Schema         int    `json:"schema"`
-		Name           string `json:"name"`
-		Revision       string `json:"revision"`
-		VocabularySize int    `json:"vocabulary_size"`
-		PadID          int    `json:"pad_id"`
-		BOSID          int    `json:"bos_id"`
-		EOSID          int    `json:"eos_id"`
+		Kind   string `json:"kind"`
+		Schema int    `json:"schema"`
+		training.TokenizerSpec
 	}
 	if err := json.Unmarshal(data, &artifact); err != nil {
 		return training.TokenizerSpec{}, nil, err
@@ -37,7 +32,7 @@ func loadTokenizer(path string) (training.TokenizerSpec, training.TokenCodec, er
 	if artifact.Schema != 1 || (artifact.Kind != "waldo-tokenizer" && artifact.Kind != "waldo-byte-tokenizer") {
 		return training.TokenizerSpec{}, nil, fmt.Errorf("unsupported WALDO tokenizer artifact")
 	}
-	spec, codec, err := training.ResolveTokenizer(artifact.Name, artifact.Revision, uint64(artifact.VocabularySize))
+	spec, codec, err := training.ResolveTokenizerSpec(artifact.TokenizerSpec)
 	if err != nil {
 		return training.TokenizerSpec{}, nil, err
 	}

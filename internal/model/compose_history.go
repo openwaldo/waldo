@@ -90,6 +90,17 @@ func ArchiveCompose(modelPath string, compose Compose, sourceName string) (strin
 	return path, nil
 }
 
+// PersistCompletedCompose restores the complete requested compose as the
+// model's canonical current compose after its completed runs have been
+// verified. This is used when an older interrupted retry persisted only the
+// remaining stages before WALDO's durable compose normalization was fixed.
+func PersistCompletedCompose(modelPath string, compose Compose, sourceName string) error {
+	if _, err := ArchiveCompose(modelPath, compose, sourceName); err != nil {
+		return err
+	}
+	return writeJSONAtomic(filepath.Join(modelPath, "COMPOSE.json"), compose)
+}
+
 func composeSlug(sourceName string) string {
 	name := strings.ToLower(strings.TrimSpace(filepath.Base(sourceName)))
 	for _, extension := range []string{".yaml", ".yml", ".json"} {

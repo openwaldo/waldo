@@ -1,4 +1,7 @@
-# Conversation level 1: broad language, dialogue adaptation, and reviewed interaction tuning.
+# Conversation level 2: bounded 2.4B-token capability experiment.
+# This is a private research compose pending record-level rights work for
+# Gutenberg, federal rulemaking, PLOS, and HelpSteer2. Its model artifacts
+# must not be represented or released as distributable.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -38,17 +41,24 @@ stages:
         weight: 2
     parameters:
       profile: causal-pretrain-weighted
-      tokens: 11999969280
+      parallelism: auto
+      tokens: 2199977984
       batch_size: 16
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
       sequence_length: 2048
       learning_rate: 0.00013
+      optimizer: adamw
+      schedule: cosine
       seed: 42
       weight_decay: 0.15
-      warmup_steps: 3662
+      warmup_steps: 1343
       shuffle_buffer_records: 65536
       shuffle_buffer_bytes: 2147483648
-      checkpoint_every: 18310
-      evaluate_every: 18310
+      checkpoint_every: 6714
+      evaluate_every: 6714
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
 
@@ -74,17 +84,24 @@ stages:
         weight: 2
     parameters:
       profile: causal-pretrain-weighted
-      epochs: 3
+      parallelism: auto
+      tokens: 149995520
       batch_size: 8
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
       sequence_length: 2048
       learning_rate: 0.00004
+      optimizer: adamw
+      schedule: cosine
       seed: 43
       weight_decay: 0.08
-      warmup_steps: 305
+      warmup_steps: 183
       shuffle_buffer_records: 32768
       shuffle_buffer_bytes: 536870912
-      checkpoint_every: 1017
-      evaluate_every: 1017
+      checkpoint_every: 916
+      evaluate_every: 916
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
 
@@ -104,18 +121,27 @@ stages:
         weight: 8
       - path: post-train/sft/helpsteer2
         weight: 3
+      - path: post-train/sft/waldo-project-v1
+        weight: 1
     parameters:
       profile: causal-pretrain-weighted
-      epochs: 3
+      parallelism: auto
+      tokens: 49987584
       batch_size: 8
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: true
       sequence_length: 2048
       learning_rate: 0.000015
+      optimizer: adamw
+      schedule: cosine
       seed: 44
       weight_decay: 0.05
-      warmup_steps: 96
+      warmup_steps: 61
       shuffle_buffer_records: 16384
       shuffle_buffer_bytes: 268435456
-      checkpoint_every: 160
-      evaluate_every: 160
+      checkpoint_every: 305
+      evaluate_every: 305
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432

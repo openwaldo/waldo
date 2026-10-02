@@ -26,6 +26,7 @@ import (
 
 type Options struct {
 	EUBOM        []byte
+	Attribution  []byte
 	Finalize     func(string) error
 	Quantization *Quantization
 	Report       func(string)
@@ -96,6 +97,9 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	_ = ctx
 	record := inspection.Model
 	record.Interaction = inspection.EffectiveInteraction()
+	if err := validateStandardLlamaArchitecture(record.Architecture, format); err != nil {
+		return "", err
+	}
 	artifacts, err := inference.ResolveArtifacts(inspection)
 	if err != nil {
 		return "", err
@@ -129,6 +133,7 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 		return "", err
 	}
 	files := map[string][]byte{
+		"ATTRIBUTION.md":            options.Attribution,
 		"EU-BOM.json":               options.EUBOM,
 		"generation_config.json":    []byte(huggingFaceGenerationConfig),
 		"special_tokens_map.json":   []byte(huggingFaceSpecialTokens),
@@ -165,7 +170,7 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 		"generation_config.json": "generation-configuration",
 		"tokenizer_config.json":  "tokenizer", "special_tokens_map.json": "tokenizer",
 		"tokenization_openwaldo.py": "tokenizer-code", "architecture.py": "architecture-code",
-		"README.md": "documentation", "EU-BOM.json": "regulatory-disclosure",
+		"README.md": "documentation", "EU-BOM.json": "regulatory-disclosure", "ATTRIBUTION.md": "training-data-attribution",
 	}
 	if interactionTemplate != "" {
 		roles["chat_template.jinja"] = "interaction-template"
@@ -188,6 +193,13 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	}
 	committed = true
 	return absolute, nil
+}
+
+func validateStandardLlamaArchitecture(architecture model.Architecture, format string) error {
+	if architecture.QKNormalization {
+		return fmt.Errorf("%s export cannot preserve WALDO qk_normalization; use the native waldo export until this runtime has an exact architecture implementation", format)
+	}
+	return nil
 }
 
 func huggingFaceTokenizerConfiguration(record model.ModelRecord) (map[string]any, string, error) {
