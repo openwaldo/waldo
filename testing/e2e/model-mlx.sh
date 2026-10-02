@@ -162,6 +162,32 @@ printf '%s\n' "$chat" | grep -Eq '"tokens"[[:space:]]*:[[:space:]]*[0-2]'
 printf '%s\n' "$chat" | grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(eos|max_tokens)"'
 
 "$binary" model export mlx-smoke "$huggingface_export" --format huggingface --allow-incomplete >/dev/null
+
+# Pull the Hugging Face export back through a static hub and chat with the pulled origin.
+hub="$work/hub"
+hub_revision=0123456789abcdef0123456789abcdef01234567
+mkdir -p "$hub/api/models/e2e/mlx-smoke/revision" "$hub/e2e/mlx-smoke/resolve/$hub_revision"
+cp "$huggingface_export"/* "$hub/e2e/mlx-smoke/resolve/$hub_revision/"
+"$mlx_python" - "$hub/e2e/mlx-smoke/resolve/$hub_revision" "$hub_revision" > "$hub/api/models/e2e/mlx-smoke/revision/main" <<'PY'
+import json
+import os
+import sys
+
+root, revision = sys.argv[1:]
+files = sorted(name for name in os.listdir(root) if os.path.isfile(os.path.join(root, name)))
+print(json.dumps({"id": "e2e/mlx-smoke", "sha": revision,
+                  "siblings": [{"rfilename": name, "size": os.path.getsize(os.path.join(root, name))} for name in files]}))
+PY
+hub_port=$("$mlx_python" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+"$mlx_python" -m http.server "$hub_port" --bind 127.0.0.1 --directory "$hub" >/dev/null 2>&1 &
+hub_pid=$!
+until "$mlx_python" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$hub_port/api/models/e2e/mlx-smoke/revision/main')" 2>/dev/null; do sleep 0.2; done
+HF_ENDPOINT="http://127.0.0.1:$hub_port" HF_TOKEN= "$binary" model pull mlx-pulled huggingface://e2e/mlx-smoke@main >/dev/null
+kill "$hub_pid"
+pulled_chat=$("$binary" --json model chat mlx-pulled "OpenWALDO" --max-tokens 2 --temperature 0 --seed 7)
+printf '%s\n' "$pulled_chat" | grep -Eq '"source_type"[[:space:]]*:[[:space:]]*"origin"'
+printf '%s\n' "$pulled_chat" | grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(eos|max_tokens)"'
+
 "$binary" model export mlx-smoke "$mlx_export" --format mlx --allow-incomplete >/dev/null
 "$binary" model export mlx-smoke "$gguf_export" --format gguf --allow-incomplete >/dev/null
 "$binary" model export mlx-smoke "$ollama_export" --format ollama --allow-incomplete >/dev/null
@@ -256,4 +282,4 @@ else
   echo "testing: calibrated GGUF export skipped (llama-quantize and llama-imatrix not both installed)"
 fi
 
-echo "E2E MLX model passed: trained, resumed, generated, and exported Hugging Face, MLX, GGUF, and Ollama packages"
+echo "E2E MLX model passed: trained, resumed, generated, chatted with a pulled copy, and exported Hugging Face, MLX, GGUF, and Ollama packages"

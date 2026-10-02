@@ -167,7 +167,8 @@ class Generator:
             config = json.load(stream)
         with open(tokenizer_path, "r", encoding="utf-8") as stream:
             tokenizer = json.load(stream)
-        if config.get("kind") != "waldo-mlx-model-config" or config.get("schema") != 1:
+        # Downloaded configs come from `model pull`, whose weights are already normalized to WALDO names.
+        if config.get("kind") not in ("waldo-mlx-model-config", "waldo-downloaded-model-config") or config.get("schema") != 1:
             raise ValueError("unsupported WALDO MLX model configuration")
         if tokenizer.get("kind") not in ("waldo-tokenizer", "waldo-byte-tokenizer") or tokenizer.get("schema") != 1:
             raise ValueError("unsupported WALDO tokenizer artifact")

@@ -133,6 +133,10 @@ func startMLXSession(ctx context.Context, python string, artifacts Artifacts) (*
 		_ = session.Close()
 		return nil, 0, fmt.Errorf("initialize MLX chat worker: %w", err)
 	}
+	if frame.Kind == "error" {
+		_ = session.Close()
+		return nil, 0, fmt.Errorf("initialize MLX chat worker: %s", frame.Error)
+	}
 	if frame.Kind != "ready" || frame.Context < 1 {
 		_ = session.Close()
 		return nil, 0, fmt.Errorf("MLX chat worker returned invalid readiness frame")
