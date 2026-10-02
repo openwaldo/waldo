@@ -220,7 +220,8 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 	} else if len(weights) != 0 {
 		return ResolvedParameters{}, fmt.Errorf("corpus_weights require training profile %q", WeightedProfile)
 	}
-	return ResolvedParameters{
+	resolved := ResolvedParameters{
+		Trainer: parameters.Trainer,
 		Profile: profile, ProfileSchema: profileSchema,
 		Epochs: epochs, RequestedTokens: requestedTokens, Steps: steps, BatchSize: parameters.BatchSize,
 		SequenceLength: parameters.SequenceLength, LearningRate: parameters.LearningRate,
@@ -230,7 +231,21 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 		Data:            DataPlan{Order: order, ShuffleBufferRecords: shuffleBuffer, ShuffleBufferBytes: shuffleBufferBytes, Packing: "continuous-eos-v1", CorpusWeights: weights},
 		Evaluation:      &EvaluationPolicy{Selection: selection, Fraction: evaluationFraction, MaxRecords: evaluationMaxRecords, MaxBytes: evaluationMaxBytes},
 		CheckpointEvery: checkpointEvery, EvaluateEvery: evaluateEvery,
-	}, nil
+	}
+	if parameters.Trainer != nil {
+		if err := parameters.Trainer.Validate(); err != nil {
+			return ResolvedParameters{}, err
+		}
+		if parameters.WeightDecay != nil || parameters.WarmupSteps != nil || (parameters.CheckpointEvery != nil && *parameters.CheckpointEvery != 0) || (parameters.EvaluateEvery != nil && *parameters.EvaluateEvery != 0) {
+			return ResolvedParameters{}, fmt.Errorf("Transformers optimizer settings belong in trainer.arguments; periodic checkpoints/evaluation are not supported yet")
+		}
+		// Native optimizer/schedule defaults are not assertions about Trainer.
+		resolved.Optimizer = Optimizer{}
+		resolved.Schedule = Schedule{}
+		resolved.CheckpointEvery = 0
+		resolved.EvaluateEvery = 0
+	}
+	return resolved, nil
 }
 
 // CanonicalProfile maps deprecated numbered profile names to their

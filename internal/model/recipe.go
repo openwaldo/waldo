@@ -122,23 +122,25 @@ type ComposeBase struct {
 }
 
 type Architecture struct {
-	Family           string    `json:"family" yaml:"family"`
-	ContextTokens    uint64    `json:"context_tokens" yaml:"context_tokens"`
-	VocabularySize   uint64    `json:"vocabulary_size" yaml:"vocabulary_size"`
-	HiddenSize       uint64    `json:"hidden_size" yaml:"hidden_size"`
-	IntermediateSize uint64    `json:"intermediate_size" yaml:"intermediate_size"`
-	Layers           uint64    `json:"layers" yaml:"layers"`
-	AttentionHeads   uint64    `json:"attention_heads" yaml:"attention_heads"`
-	KeyValueHeads    uint64    `json:"key_value_heads" yaml:"key_value_heads"`
-	Dropout          float64   `json:"dropout,omitempty" yaml:"dropout,omitempty"`
-	TieEmbeddings    bool      `json:"tie_embeddings" yaml:"tie_embeddings"`
-	ParameterDType   string    `json:"parameter_dtype" yaml:"parameter_dtype"`
-	Tokenizer        Tokenizer `json:"tokenizer" yaml:"tokenizer"`
+	Transformers     *training.TransformersModel `json:"transformers,omitempty" yaml:"transformers,omitempty"`
+	Family           string                      `json:"family" yaml:"family"`
+	ContextTokens    uint64                      `json:"context_tokens" yaml:"context_tokens"`
+	VocabularySize   uint64                      `json:"vocabulary_size" yaml:"vocabulary_size"`
+	HiddenSize       uint64                      `json:"hidden_size" yaml:"hidden_size"`
+	IntermediateSize uint64                      `json:"intermediate_size" yaml:"intermediate_size"`
+	Layers           uint64                      `json:"layers" yaml:"layers"`
+	AttentionHeads   uint64                      `json:"attention_heads" yaml:"attention_heads"`
+	KeyValueHeads    uint64                      `json:"key_value_heads" yaml:"key_value_heads"`
+	Dropout          float64                     `json:"dropout,omitempty" yaml:"dropout,omitempty"`
+	TieEmbeddings    bool                        `json:"tie_embeddings" yaml:"tie_embeddings"`
+	ParameterDType   string                      `json:"parameter_dtype" yaml:"parameter_dtype"`
+	Tokenizer        Tokenizer                   `json:"tokenizer" yaml:"tokenizer"`
 }
 
 type Tokenizer struct {
-	Name     string `json:"name" yaml:"name"`
-	Revision string `json:"revision" yaml:"revision"`
+	Name        string                         `json:"name" yaml:"name"`
+	Revision    string                         `json:"revision" yaml:"revision"`
+	HuggingFace *training.HuggingFaceTokenizer `json:"huggingface,omitempty" yaml:"huggingface,omitempty"`
 }
 
 type Stage struct {
@@ -396,6 +398,10 @@ func LoadCompose(path string) (Compose, string, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return Compose{}, "", fmt.Errorf("model compose %s is empty", absolute)
 	}
+	data, err = normalizeComposeDocument(data)
+	if err != nil {
+		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
+	}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	var compose Compose
@@ -410,6 +416,17 @@ func LoadCompose(path string) (Compose, string, error) {
 		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
 	}
 	compose.normalizeLegacyInteraction()
+	if compose.Architecture.Transformers != nil {
+		// JSON numbers have one representation across YAML input, history, and
+		// immutable JSON model/run records. Avoid int/float map equality drift.
+		encoded, err := json.Marshal(compose)
+		if err != nil {
+			return Compose{}, "", err
+		}
+		if err := json.Unmarshal(encoded, &compose); err != nil {
+			return Compose{}, "", err
+		}
+	}
 	if err := compose.Validate(); err != nil {
 		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
 	}
@@ -496,6 +513,14 @@ func (compose Compose) Validate() error {
 	seen := map[string]bool{}
 	hasToolTraining := false
 	for i, stage := range compose.Stages {
+		if (compose.Architecture.Transformers != nil) != (stage.Parameters.Trainer != nil) {
+			return fmt.Errorf("stage %s trainer must match the architecture provider", stage.Name)
+		}
+		if stage.Parameters.Trainer != nil {
+			if err := stage.Parameters.Trainer.Validate(); err != nil {
+				return err
+			}
+		}
 		if !validName.MatchString(stage.Name) || seen[stage.Name] {
 			return fmt.Errorf("stage %d has invalid or duplicate name %q", i+1, stage.Name)
 		}
@@ -585,8 +610,28 @@ func stageWithInteraction(stage Stage, interaction Interaction) Stage {
 }
 
 func (architecture Architecture) Validate() error {
-	if architecture.Family != "decoder-transformer" {
+	if architecture.Transformers != nil {
+		if architecture.Family != training.BackendTransformers {
+			return fmt.Errorf("Transformers architecture requires its own family")
+		}
+		if err := architecture.Transformers.Validate(); err != nil {
+			return err
+		}
+		projection, err := transformersArchitecture(architecture.Transformers, architecture.Tokenizer)
+		if err != nil {
+			return err
+		}
+		if projection != architecture {
+			return fmt.Errorf("Transformers lifecycle projection differs from architecture.config")
+		}
+		if err := architecture.validateTokenizer(); err != nil {
+			return err
+		}
+	} else if architecture.Family != "decoder-transformer" {
 		return fmt.Errorf("unsupported architecture family %q", architecture.Family)
+	}
+	if architecture.Transformers == nil && architecture.Tokenizer.HuggingFace != nil {
+		return fmt.Errorf("Hugging Face tokenizers require the Transformers backend")
 	}
 	if architecture.ContextTokens == 0 || architecture.VocabularySize == 0 || architecture.HiddenSize == 0 || architecture.IntermediateSize == 0 || architecture.Layers == 0 || architecture.AttentionHeads == 0 || architecture.KeyValueHeads == 0 {
 		return fmt.Errorf("architecture dimensions must be positive")
@@ -644,6 +689,24 @@ func (architecture Architecture) Forecast() (ArchitectureForecast, error) {
 	if err != nil {
 		return ArchitectureForecast{}, err
 	}
+	if architecture.Transformers != nil && architecture.Transformers.ModelClass == "MixtralForCausalLM" {
+		experts, _, err := architecture.Transformers.ExpertCounts()
+		if err != nil {
+			return ArchitectureForecast{}, err
+		}
+		mlp, err = multiply(mlp, experts)
+		if err != nil {
+			return ArchitectureForecast{}, err
+		}
+		router, err := multiply(architecture.HiddenSize, experts)
+		if err != nil {
+			return ArchitectureForecast{}, err
+		}
+		mlp, err = add(mlp, router)
+		if err != nil {
+			return ArchitectureForecast{}, err
+		}
+	}
 	block, err := add(attention, mlp)
 	if err != nil {
 		return ArchitectureForecast{}, err
@@ -682,7 +745,17 @@ func (architecture Architecture) Forecast() (ArchitectureForecast, error) {
 	if err != nil {
 		return ArchitectureForecast{}, err
 	}
-	return ArchitectureForecast{ApproximateParameters: parameters, ParameterBytes: parameterBytes, Formula: "embedding + decoder projections + gated MLP + norms; biases excluded"}, nil
+	formula := "embedding + decoder projections + gated MLP + norms; biases excluded"
+	if architecture.Transformers != nil {
+		formula = "rough native decoder approximation for Transformers; config-specific projections may differ; measured count is recorded in runtime.json"
+		if architecture.Transformers.ModelClass == "MixtralForCausalLM" {
+			formula = "rough resident parameter estimate including all experts and routers, not active-per-token parameters; measured counts are recorded in runtime.json"
+		}
+		if architecture.Transformers.ModelClass == "Qwen3_5ForCausalLM" {
+			formula = "rough dense-decoder proxy, not a hybrid state or memory estimate; measured parameter count is recorded in runtime.json"
+		}
+	}
+	return ArchitectureForecast{ApproximateParameters: parameters, ParameterBytes: parameterBytes, Formula: formula}, nil
 }
 
 func multiply(left, right uint64) (uint64, error) {

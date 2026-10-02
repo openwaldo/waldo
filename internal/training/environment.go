@@ -74,6 +74,21 @@ func NewEnvironmentResolverForCluster(preference string, cluster Cluster) Resolv
 }
 
 func (resolver EnvironmentResolver) Resolve(ctx context.Context, request ResolveRequest) (Selection, error) {
+	var envelope struct {
+		Family string `json:"family"`
+	}
+	if err := json.Unmarshal(request.Architecture, &envelope); len(request.Architecture) > 0 && err != nil {
+		return Selection{}, err
+	}
+	if envelope.Family == BackendTransformers {
+		if resolver.Preference != "" && resolver.Preference != BackendAuto && resolver.Preference != BackendPyTorch {
+			return Selection{}, fmt.Errorf("Transformers engine conflicts with model.backend=%s; use auto for this experimental adapter", resolver.Preference)
+		}
+		if resolver.Cluster.Nodes > 1 || resolver.Cluster.WorldSize > 1 || resolver.Cluster.NodeRank > 0 {
+			return Selection{}, fmt.Errorf("Transformers engine currently supports single-process training only")
+		}
+		return (TransformersResolver{Candidates: resolver.candidates()}).Resolve(ctx, request)
+	}
 	preference := strings.ToLower(strings.TrimSpace(resolver.Preference))
 	if preference == "" {
 		preference = BackendAuto

@@ -31,6 +31,9 @@ type Artifacts struct {
 }
 
 func ResolveArtifacts(inspection model.Inspection) (Artifacts, error) {
+	if inspection.Model.Architecture.Transformers != nil {
+		return Artifacts{}, fmt.Errorf("Transformers artifacts require the dedicated Transformers chat/export path, not native converters")
+	}
 	if inspection.BOM.CurrentRunID == "" && inspection.BOM.CurrentOriginSHA256 == "" {
 		return Artifacts{}, fmt.Errorf("model %q has no complete non-simulated run with usable weights", inspection.Model.Name)
 	}
