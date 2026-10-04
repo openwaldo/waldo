@@ -556,6 +556,14 @@ bytes, an end frame, then typed progress,
 checkpoint, evaluation, completion, or error output frames.
 Human-readable training progress includes a remaining-time ETA after the
 startup sample; JSON progress exposes the underlying `eta_seconds` value.
+Workers report progress at the first step, the last step, and every 1% of
+planned steps. When a long run goes more than 300 seconds without a report,
+the worker also sends a heartbeat: an ordinary progress event with the same
+fields. `WALDO_PROGRESS_HEARTBEAT_SECONDS` sets that interval, and `0` turns
+the heartbeat off. `waldo model advisor` treats more than ten minutes without
+telemetry on a running model as a reason to inspect it, so keep the interval
+under 600 seconds. A resume first replays the steps it already trained without
+reporting, so the first progress line follows the end of that replay.
 
 The MLX, PyTorch, and TorchTitan adapters embed their worker source in the
 WALDO binary while using the machine's explicit Python framework runtime. They
