@@ -148,6 +148,14 @@ else:
 # alone does not establish that the installed runtime is usable.
 value = torch.tensor([1.0], device=device)
 torch.sum(value).item()
+
+# The checkpoint writer converts tensors with .numpy(). Fail here with an actionable
+# message rather than at the first checkpoint save, which can be hours into a run.
+try:
+    torch.zeros(1).view(torch.uint8).numpy().tobytes()
+except Exception as error:
+    raise SystemExit(f"checkpoint writing needs a working numpy next to torch (pip install numpy): {error}")
+
 print(json.dumps({
     "python_version": platform.python_version(),
     "torch_version": torch.__version__,
