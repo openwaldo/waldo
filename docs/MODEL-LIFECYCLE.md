@@ -556,6 +556,10 @@ bytes, an end frame, then typed progress,
 checkpoint, evaluation, completion, or error output frames.
 Human-readable training progress includes a remaining-time ETA after the
 startup sample; JSON progress exposes the underlying `eta_seconds` value.
+After a resume, `tokens_per_second` and `eta_seconds` are measured from the end of
+the first trained step, so neither replaying the record stream up to the checkpoint
+nor that step's one-time start-up cost distorts them. A progress row that lands on
+that first step reports 0 tokens/s and no ETA.
 
 The MLX, PyTorch, and TorchTitan adapters embed their worker source in the
 WALDO binary while using the machine's explicit Python framework runtime. They
