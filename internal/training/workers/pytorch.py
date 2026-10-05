@@ -33,6 +33,36 @@ def emit(kind, **payload):
     print(json.dumps(frame, separators=(",", ":")), flush=True)
 
 
+# Rates cover the window since training (re)started, not the whole run: a resume restores absolute
+# step and token counts while the clock restarts, so dividing them by time since launch overstates both.
+def progress_estimate(step, target_steps, window_steps, window_tokens, window_seconds):
+    seconds = max(window_seconds, 1e-9)
+    throughput = window_tokens / seconds
+    if window_steps <= 0:
+        return throughput, 0
+    return throughput, int(max(0.0, (target_steps - step) * seconds / window_steps))
+
+
+class RateWindow:
+    """The window progress_estimate measures. A fresh run measures from launch. After a resume it opens once
+    the first step after replay has finished, so that step's one-time start-up cost stays out of the rate."""
+
+    def __init__(self, now):
+        self.started = now
+        self.step = 0
+        self.tokens = 0
+        self.pending = False
+
+    def restart(self):
+        self.pending = True
+
+    def estimate(self, step, target_steps, tokens, now):
+        if self.pending:
+            self.pending = False
+            self.started, self.step, self.tokens = now, step, tokens
+        return progress_estimate(step, target_steps, step - self.step, tokens - self.tokens, now - self.started)
+
+
 def artifact(path, logical_path):
     digest = hashlib.sha256()
     size = 0
@@ -346,6 +376,7 @@ class Trainer:
         self.evaluation_token_targets = 0
         self.final_loss = None
         self.started = time.perf_counter()
+        self.rate_window = RateWindow(self.started)
 
         tokenizer = begin["tokenizer"]
         architecture_tokenizer = self.architecture["tokenizer"]
@@ -523,6 +554,9 @@ class Trainer:
         if self.replay_steps > 0:
             self.replay_steps -= 1
             self.batch = []
+            if self.replay_steps == 0:
+                # Replay only fast-forwards the data stream. Speed is measured from the next trained step.
+                self.rate_window.restart()
             return
         tokens = torch.tensor([item[0] for item in self.batch], dtype=torch.long, device=self.device)
         mask = torch.tensor([item[1] for item in self.batch], dtype=torch.float32, device=self.device)
@@ -564,9 +598,9 @@ class Trainer:
                 self.consumed_by_corpus[corpus] = self.consumed_by_corpus.get(corpus, 0) + count
         self.final_loss = loss_value
         self.batch = []
-        elapsed = max(time.perf_counter() - self.started, 1e-9)
-        throughput = self.consumed_tokens / elapsed
-        eta = int(max(0.0, (self.target_steps - self.step_number) * elapsed / self.step_number))
+        throughput, eta = self.rate_window.estimate(
+            self.step_number, self.target_steps, self.consumed_tokens, time.perf_counter()
+        )
         report_every = max(1, self.target_steps // 100)
         if self.step_number == 1 or self.step_number == self.target_steps or self.step_number % report_every == 0:
             emit(
