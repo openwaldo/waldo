@@ -33,6 +33,33 @@ def emit(kind, **payload):
     print(json.dumps(frame, separators=(",", ":")), flush=True)
 
 
+# WALDO_PROGRESS_HEARTBEAT_SECONDS is how long a run may go without a progress line before the
+# worker prints one anyway, so a long 1% interval does not look like a hang. Default 300; 0 turns
+# the heartbeat off.
+DEFAULT_PROGRESS_HEARTBEAT_SECONDS = 300
+
+
+def read_progress_heartbeat():
+    raw = os.environ.get("WALDO_PROGRESS_HEARTBEAT_SECONDS")
+    if raw is None or not raw.strip():
+        return DEFAULT_PROGRESS_HEARTBEAT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or value < 0:
+        emit("event", event={"kind": "log", "message": f"WALDO_PROGRESS_HEARTBEAT_SECONDS must be a non-negative number of seconds; using {DEFAULT_PROGRESS_HEARTBEAT_SECONDS}"})
+        return DEFAULT_PROGRESS_HEARTBEAT_SECONDS
+    return value
+
+
+def progress_due(step, target_steps, last_report, now, heartbeat_seconds):
+    report_every = max(1, target_steps // 100)
+    if step == 1 or step == target_steps or step % report_every == 0:
+        return True
+    return heartbeat_seconds > 0 and now - last_report >= heartbeat_seconds
+
+
 def artifact(path, logical_path):
     digest = hashlib.sha256()
     size = 0
@@ -346,6 +373,8 @@ class Trainer:
         self.evaluation_token_targets = 0
         self.final_loss = None
         self.started = time.perf_counter()
+        self.last_report = self.started
+        self.heartbeat_seconds = read_progress_heartbeat()
 
         tokenizer = begin["tokenizer"]
         architecture_tokenizer = self.architecture["tokenizer"]
@@ -564,11 +593,12 @@ class Trainer:
                 self.consumed_by_corpus[corpus] = self.consumed_by_corpus.get(corpus, 0) + count
         self.final_loss = loss_value
         self.batch = []
-        elapsed = max(time.perf_counter() - self.started, 1e-9)
+        now = time.perf_counter()
+        elapsed = max(now - self.started, 1e-9)
         throughput = self.consumed_tokens / elapsed
         eta = int(max(0.0, (self.target_steps - self.step_number) * elapsed / self.step_number))
-        report_every = max(1, self.target_steps // 100)
-        if self.step_number == 1 or self.step_number == self.target_steps or self.step_number % report_every == 0:
+        if progress_due(self.step_number, self.target_steps, self.last_report, now, self.heartbeat_seconds):
+            self.last_report = now
             emit(
                 "event",
                 event={
