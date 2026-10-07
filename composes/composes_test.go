@@ -219,6 +219,28 @@ func TestActiveReferenceLadderForecastsAndControls(t *testing.T) {
 	}
 }
 
+func TestTinyStoriesBPEPreflightIsMeasurementOnlyAndPreservesCore(t *testing.T) {
+	measurement := loadCompose(t, "experiments/0003-tinystories-bpe-preflight.yaml")
+	reference := loadCompose(t, "0005-tinystories-capacity-20tpp.yaml")
+	if measurement.Architecture.VocabularySize != 4096 || measurement.Architecture.Tokenizer.Training == nil {
+		t.Fatalf("measurement tokenizer = %+v", measurement.Architecture.Tokenizer)
+	}
+	training := measurement.Architecture.Tokenizer.Training
+	if training.Algorithm != model.TokenizerAlgorithmByteBPEV1 || training.DistributionPolicy != corpus.DistributionPolicyDistributable || !reflect.DeepEqual(corpusPaths(training.Corpora), []string{"core/common-pile/pressbooks"}) {
+		t.Fatalf("measurement tokenizer training = %+v", training)
+	}
+	gotCore := measurement.Architecture
+	wantCore := reference.Architecture
+	gotCore.VocabularySize, wantCore.VocabularySize = 0, 0
+	gotCore.Tokenizer, wantCore.Tokenizer = model.Tokenizer{}, model.Tokenizer{}
+	if !reflect.DeepEqual(gotCore, wantCore) {
+		t.Fatalf("measurement changes the qualified model core: got=%+v want=%+v", gotCore, wantCore)
+	}
+	if len(measurement.Stages) != 1 || !reflect.DeepEqual(corpusPaths(measurement.Stages[0].Corpora), []string{"core/synthetic/tinystories-reference"}) || measurement.Stages[0].Parameters.Epochs != 1 || measurement.Stages[0].Parameters.Tokens != 0 || measurement.Stages[0].Parameters.Steps != 0 {
+		t.Fatalf("measurement stage = %+v", measurement.Stages)
+	}
+}
+
 func TestFoundationLadderKeepsOneControlledRecipe(t *testing.T) {
 	generalCorpora := []string{
 		"core/common-pile/wikimedia",

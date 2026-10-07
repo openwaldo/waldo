@@ -281,15 +281,17 @@ go run ./cmd/waldo/ model train tinystories-capacity-20tpp-01 \
 ## Later rungs
 
 Rung 0006 must be a compose-native compact byte-BPE source-exposure control,
-not another byte-token extension. Train the tokenizer on the pinned TinyStories
-corpus, report its held-out bytes/token, choose token context from measured
-fertility, and compare at fixed source records/bytes rather than pretending
-token counts from different tokenizers are equivalent. Do not create the
-training compose until those measurements are available. TinyStories is
-approved here for private/research training but not yet for distributable
-artifacts; WALDO's tokenizer-training compose contract currently accepts only
-`distribution_policy: distributable`. A research-only tokenizer policy must be
-an explicit reviewed change, not an implicit bypass. General-corpus mixtures
+not another byte-token extension. The measurement compose
+[`experiments/0003-tinystories-bpe-preflight.yaml`](experiments/0003-tinystories-bpe-preflight.yaml)
+trains a 4K BPE on distributable PressBooks, then measures it on the pinned
+TinyStories corpus. This keeps tokenizer training disjoint from the model
+evaluation corpus and avoids weakening the distribution gate. It must be run
+only with `model forecast --preflight`, never `model train`.
+
+Use the measured TinyStories bytes/token, record lengths, and unique targets to
+choose token context and a 1.34-source-pass budget matching rung 0005. Do not
+create the training compose until those measurements are available; token
+counts from different tokenizers are not equivalent. General-corpus mixtures
 come only after these narrow reference
 controls establish stable grammar, consistency, EOS, repetition, and held-out
 behavior.

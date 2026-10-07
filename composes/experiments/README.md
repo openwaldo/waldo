@@ -1,4 +1,26 @@
-# Assistant EOS canaries
+# Controlled experiments
+
+## TinyStories BPE source measurement
+
+[`0003-tinystories-bpe-preflight.yaml`](0003-tinystories-bpe-preflight.yaml)
+trains a compact 4K byte-level BPE on distributable PressBooks and measures it
+against the pinned TinyStories reference corpus. It is not a training rung and
+must not be passed to `model train`.
+
+Run only:
+
+```console
+go run ./cmd/waldo/ model forecast \
+  composes/experiments/0003-tinystories-bpe-preflight.yaml \
+  --preflight |
+  tee /tmp/tinystories-bpe-preflight.txt
+```
+
+The promoted rung will retain the 9-layer, width-512 core and use the measured
+unique BPE targets to match rung 0005's 1.34 effective source passes. It is not
+valid to copy the 613.6M byte-token budget into the BPE compose.
+
+## Assistant EOS canaries
 
 These experiments test whether assistant-response post-training teaches the
 76.6M Gate 3B checkpoint to terminate answers and whether a broad conversation
