@@ -32,6 +32,7 @@ var activeLadderFiles = []string{
 	"0002-tinystories-byte.yaml",
 	"0003-tinystories-context-512.yaml",
 	"0004-tinystories-capacity-pilot.yaml",
+	"0005-tinystories-capacity-20tpp.yaml",
 }
 
 var tinyStoriesFiles = []string{
@@ -143,8 +144,8 @@ func TestActiveReferenceLadderForecastsAndControls(t *testing.T) {
 	if !reflect.DeepEqual(files, activeLadderFiles) {
 		t.Fatalf("active ladder composes = %v, want %v", files, activeLadderFiles)
 	}
-	wantParameters := []uint64{10721280, 10721280, 10721280, 30813184}
-	wantTokens := []int64{81920000, 245760000, 245760000, 245760000}
+	wantParameters := []uint64{10721280, 10721280, 10721280, 30813184, 30813184}
+	wantTokens := []int64{81920000, 245760000, 245760000, 245760000, 613613568}
 	var reference model.Compose
 	for index, file := range files {
 		compose := loadCompose(t, file)
@@ -163,7 +164,7 @@ func TestActiveReferenceLadderForecastsAndControls(t *testing.T) {
 		if index >= 2 {
 			wantArchitecture.ContextTokens = 512
 		}
-		if index == 3 {
+		if index >= 3 {
 			wantArchitecture.HiddenSize = 512
 			wantArchitecture.IntermediateSize = 1536
 			wantArchitecture.Layers = 9
@@ -178,8 +179,9 @@ func TestActiveReferenceLadderForecastsAndControls(t *testing.T) {
 	stories := loadCompose(t, activeLadderFiles[1]).Stages[0]
 	storiesContext512 := loadCompose(t, activeLadderFiles[2]).Stages[0]
 	storiesCapacity := loadCompose(t, activeLadderFiles[3]).Stages[0]
-	if !reflect.DeepEqual(corpusPaths(shakespeare.Corpora), []string{"core/reference/tiny-shakespeare"}) || !reflect.DeepEqual(corpusPaths(stories.Corpora), []string{"core/synthetic/tinystories-reference"}) || !reflect.DeepEqual(corpusPaths(storiesContext512.Corpora), []string{"core/synthetic/tinystories-reference"}) || !reflect.DeepEqual(corpusPaths(storiesCapacity.Corpora), []string{"core/synthetic/tinystories-reference"}) {
-		t.Fatalf("active ladder corpora = %v / %v / %v / %v", corpusPaths(shakespeare.Corpora), corpusPaths(stories.Corpora), corpusPaths(storiesContext512.Corpora), corpusPaths(storiesCapacity.Corpora))
+	storiesCapacity20TPP := loadCompose(t, activeLadderFiles[4]).Stages[0]
+	if !reflect.DeepEqual(corpusPaths(shakespeare.Corpora), []string{"core/reference/tiny-shakespeare"}) || !reflect.DeepEqual(corpusPaths(stories.Corpora), []string{"core/synthetic/tinystories-reference"}) || !reflect.DeepEqual(corpusPaths(storiesContext512.Corpora), []string{"core/synthetic/tinystories-reference"}) || !reflect.DeepEqual(corpusPaths(storiesCapacity.Corpora), []string{"core/synthetic/tinystories-reference"}) || !reflect.DeepEqual(corpusPaths(storiesCapacity20TPP.Corpora), []string{"core/synthetic/tinystories-reference"}) {
+		t.Fatalf("active ladder corpora = %v / %v / %v / %v / %v", corpusPaths(shakespeare.Corpora), corpusPaths(stories.Corpora), corpusPaths(storiesContext512.Corpora), corpusPaths(storiesCapacity.Corpora), corpusPaths(storiesCapacity20TPP.Corpora))
 	}
 	for _, stage := range []model.Stage{shakespeare, stories} {
 		parameters := stage.Parameters
@@ -206,8 +208,14 @@ func TestActiveReferenceLadderForecastsAndControls(t *testing.T) {
 	if !reflect.DeepEqual(capacityParameters, wantCapacityParameters) {
 		t.Fatalf("capacity pilot recipe changed beyond scale-adjusted learning rate: got=%+v want=%+v", capacityParameters, wantCapacityParameters)
 	}
-	if shakespeare.Parameters.EvaluationSelection != "contiguous-tail-v1" || stories.Parameters.EvaluationSelection != "lowest-sha256-v1" || storiesContext512.Parameters.EvaluationSelection != "lowest-sha256-v1" || storiesCapacity.Parameters.EvaluationSelection != "lowest-sha256-v1" {
-		t.Fatalf("active ladder evaluation policies = %q / %q / %q / %q", shakespeare.Parameters.EvaluationSelection, stories.Parameters.EvaluationSelection, storiesContext512.Parameters.EvaluationSelection, storiesCapacity.Parameters.EvaluationSelection)
+	capacity20TPPParameters := storiesCapacity20TPP.Parameters
+	wantCapacity20TPPParameters := capacityParameters
+	wantCapacity20TPPParameters.Tokens = 613611520
+	if !reflect.DeepEqual(capacity20TPPParameters, wantCapacity20TPPParameters) {
+		t.Fatalf("capacity qualification changed controls beyond token horizon: got=%+v want=%+v", capacity20TPPParameters, wantCapacity20TPPParameters)
+	}
+	if shakespeare.Parameters.EvaluationSelection != "contiguous-tail-v1" || stories.Parameters.EvaluationSelection != "lowest-sha256-v1" || storiesContext512.Parameters.EvaluationSelection != "lowest-sha256-v1" || storiesCapacity.Parameters.EvaluationSelection != "lowest-sha256-v1" || storiesCapacity20TPP.Parameters.EvaluationSelection != "lowest-sha256-v1" {
+		t.Fatalf("active ladder evaluation policies = %q / %q / %q / %q / %q", shakespeare.Parameters.EvaluationSelection, stories.Parameters.EvaluationSelection, storiesContext512.Parameters.EvaluationSelection, storiesCapacity.Parameters.EvaluationSelection, storiesCapacity20TPP.Parameters.EvaluationSelection)
 	}
 }
 
@@ -321,8 +329,9 @@ func TestRootREADMEDefinesActiveReferenceLadder(t *testing.T) {
 		"Rung 0002: TinyStories byte control — diagnostic complete",
 		"EOS is measured at a horizon calibrated to the corpus",
 		"Rung 0003: TinyStories 512-byte context — passed",
-		"Rung 0004: TinyStories capacity pilot — ready",
-		"Do not create rung 0005",
+		"Rung 0004: TinyStories capacity pilot — passed",
+		"Rung 0005: TinyStories capacity qualification — ready",
+		"Do not create rung 0006",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("README does not contain %q", required)
