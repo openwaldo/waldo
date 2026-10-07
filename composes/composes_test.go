@@ -330,8 +330,8 @@ func TestRootREADMEDefinesActiveReferenceLadder(t *testing.T) {
 		"EOS is measured at a horizon calibrated to the corpus",
 		"Rung 0003: TinyStories 512-byte context — passed",
 		"Rung 0004: TinyStories capacity pilot — passed",
-		"Rung 0005: TinyStories capacity qualification — ready",
-		"Do not create rung 0006",
+		"Rung 0005: TinyStories capacity qualification — behavioral near-miss",
+		"Rung 0006 must be a compose-native compact byte-BPE source-exposure control",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("README does not contain %q", required)

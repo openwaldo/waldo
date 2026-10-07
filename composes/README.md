@@ -219,13 +219,19 @@ go run ./cmd/waldo/ model train tinystories-capacity-pilot-01 \
   0.8 42 1536
 ```
 
-## Rung 0005: TinyStories capacity qualification — ready
+## Rung 0005: TinyStories capacity qualification — behavioral near-miss
 
 [`0005-tinystories-capacity-20tpp.yaml`](0005-tinystories-capacity-20tpp.yaml)
 changes only the training horizon from rung 0004. Its requested 613,611,520
 tokens resolve to 613,613,568 packed tokens: 37,452 optimizer steps and 20.00
 tokens per core parameter. It trains from initialization so the cosine schedule
 covers the complete qualification horizon.
+
+Here "tokens" means built-in byte-tokenizer tokens. The ratio is exact for the
+compose but is not interchangeable with 20 tokens per parameter measured by a
+subword tokenizer. The 613.6M byte tokens represent about 1.34 passes over the
+458.7M source bytes; at the earlier 4.26 bytes/subword measurement they are only
+about 4.7 subword-equivalent tokens per core parameter.
 
 Promotion requires all of the following:
 
@@ -238,6 +244,22 @@ Promotion requires all of the following:
    collapse into an immediate repeated sentence or phrase loop.
 4. At least seven of eight temperature-0.8 samples emit EOS within the
    corpus-calibrated 1,536-token horizon.
+
+Validated result on 2026-10-07:
+
+- held-out loss improved 9.1%, from 0.4892 to 0.4447, passing the 0.4745
+  numerical gate; the terminal step 37,452 was selected and reloaded;
+- five of eight temperature samples clearly retained the prompt's entities,
+  objects, and causal setup, short of the six-of-eight gate;
+- no temperature sample immediately collapsed into an exact phrase loop, but
+  about four of eight greedy samples did, missing the two-of-eight limit; and
+- seven of eight long-horizon samples emitted EOS, passing the calibrated
+  stopping gate.
+
+Rung 0005 therefore confirms that additional capacity and exposure lower loss,
+improve prose, and teach stopping, but it does not pass causal fidelity or
+greedy-repetition promotion. Do not extend the same byte-token recipe merely
+because its loss was still improving.
 
 Run it with:
 
@@ -258,10 +280,13 @@ go run ./cmd/waldo/ model train tinystories-capacity-20tpp-01 \
 
 ## Later rungs
 
-Do not create rung 0006 until rung 0005 has a written gate decision. Compact
-byte-BPE tokenization remains a later efficiency experiment; it must preserve
-source-byte exposure rather than silently multiplying the training corpus.
-General-corpus mixtures come only after these narrow reference
+Rung 0006 must be a compose-native compact byte-BPE source-exposure control,
+not another byte-token extension. Train the tokenizer on the pinned TinyStories
+corpus, report its held-out bytes/token, choose token context from measured
+fertility, and compare at fixed source records/bytes rather than pretending
+token counts from different tokenizers are equivalent. Do not create the
+training compose until those measurements are available. General-corpus
+mixtures come only after these narrow reference
 controls establish stable grammar, consistency, EOS, repetition, and held-out
 behavior.
 
