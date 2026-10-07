@@ -285,8 +285,12 @@ not another byte-token extension. Train the tokenizer on the pinned TinyStories
 corpus, report its held-out bytes/token, choose token context from measured
 fertility, and compare at fixed source records/bytes rather than pretending
 token counts from different tokenizers are equivalent. Do not create the
-training compose until those measurements are available. General-corpus
-mixtures come only after these narrow reference
+training compose until those measurements are available. TinyStories is
+approved here for private/research training but not yet for distributable
+artifacts; WALDO's tokenizer-training compose contract currently accepts only
+`distribution_policy: distributable`. A research-only tokenizer policy must be
+an explicit reviewed change, not an implicit bypass. General-corpus mixtures
+come only after these narrow reference
 controls establish stable grammar, consistency, EOS, repetition, and held-out
 behavior.
 
@@ -301,6 +305,21 @@ decomposition, core/token-I/O allocation, GQA projections, SwiGLU matrices,
 context fitness, optimizer-step arithmetic, conventional and
 architecture-aware compute, memory components, advisory warnings, and JSON
 fields under `forecast.fitness`.
+
+Add `--preflight` to materialize the compose corpus and make the missing
+measurements without initializing model weights or running an optimizer:
+
+```console
+go run ./cmd/waldo/ model forecast \
+  composes/0005-tinystories-capacity-20tpp.yaml \
+  --preflight
+```
+
+The report includes training and model-held-out fertility, record-length
+percentiles, one-sequence fit rate, packed document/EOS density, unique target
+count, effective corpus passes, and per-corpus exposure. The held-out partition
+is disjoint from model training, but is not claimed to be disjoint from a
+compose-declared tokenizer-training sample.
 
 For a byte tokenizer, token context is also exact byte context. The current
 reference models therefore expose 256 tokens as exactly 256 UTF-8 bytes; after

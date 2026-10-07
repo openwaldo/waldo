@@ -722,6 +722,14 @@ func (partition RecordPartition) TrainingRecords() (RecordSource, error) {
 	return partitionedRecordSource{source: source, partition: partition}, nil
 }
 
+// TrainingMeasurementRecords streams each eligible non-evaluation record once
+// in immutable shard order. It deliberately skips training shuffle and corpus
+// balancing so corpus/tokenizer preflight can measure the unique source without
+// allocating the configured shuffle buffer or replaying epochs.
+func (partition RecordPartition) TrainingMeasurementRecords() RecordSource {
+	return partitionedRecordSource{source: rawRecordSource{inputs: partition.inputs}, partition: partition}
+}
+
 func (partition RecordPartition) EvaluationRecords() RecordSource {
 	return sliceRecordSource(partition.evaluationRecords)
 }

@@ -58,6 +58,9 @@ func runModelForecast(context Context, args []string, stdout, stderr io.Writer) 
 			return runModelComposeForecast(context, args[0], stdout, stderr)
 		}
 	}
+	if boolOption(context, "preflight") {
+		return fmt.Errorf("--preflight requires exactly one model compose")
+	}
 	return runModelIndexForecast(context, args, stdout, stderr)
 }
 
@@ -83,6 +86,22 @@ func runModelComposeForecast(context Context, path string, stdout, progress io.W
 	compose, composePath, err := model.LoadCompose(path)
 	if err != nil {
 		return err
+	}
+	var preflight *composePreflightReport
+	if boolOption(context, "preflight") {
+		cache, err := lookaside.DefaultCache()
+		if err != nil {
+			return err
+		}
+		compose, err = resolveComposeTokenizerTraining(context, compose, cache, progress)
+		if err != nil {
+			return err
+		}
+		measured, err := preflightCompose(context, compose, cache, progress)
+		if err != nil {
+			return err
+		}
+		preflight = &measured
 	}
 	builder, err := configuredModelBuilder(context, progress)
 	if err != nil {
@@ -112,13 +131,17 @@ func runModelComposeForecast(context Context, path string, stdout, progress io.W
 	if context.JSON {
 		visible := visibleModelForecast(report, compareHosts)
 		return writeJSON(stdout, struct {
-			Compose  string                 `json:"compose"`
-			Forecast model.ResourceForecast `json:"forecast"`
-			Host     model.HostForecast     `json:"host"`
-		}{Compose: composePath, Forecast: visible, Host: hostForecast})
+			Compose   string                  `json:"compose"`
+			Forecast  model.ResourceForecast  `json:"forecast"`
+			Host      model.HostForecast      `json:"host"`
+			Preflight *composePreflightReport `json:"preflight,omitempty"`
+		}{Compose: composePath, Forecast: visible, Host: hostForecast, Preflight: preflight})
 	}
 	fmt.Fprintf(stdout, "COMPOSE:     %s\n", composePath)
 	writeModelForecast(stdout, report, hostForecast, compareHosts, &compose.Architecture)
+	if preflight != nil {
+		writeComposePreflight(stdout, *preflight)
+	}
 	return nil
 }
 
