@@ -33,6 +33,7 @@ var activeLadderFiles = []string{
 	"0003-tinystories-context-512.yaml",
 	"0004-tinystories-capacity-pilot.yaml",
 	"0005-tinystories-capacity-20tpp.yaml",
+	"0006-tinystories-bpe-source-control.yaml",
 }
 
 var tinyStoriesFiles = []string{
@@ -144,8 +145,9 @@ func TestActiveReferenceLadderForecastsAndControls(t *testing.T) {
 	if !reflect.DeepEqual(files, activeLadderFiles) {
 		t.Fatalf("active ladder composes = %v, want %v", files, activeLadderFiles)
 	}
-	wantParameters := []uint64{10721280, 10721280, 10721280, 30813184, 30813184}
-	wantTokens := []int64{81920000, 245760000, 245760000, 245760000, 613613568}
+	wantParameters := []uint64{10721280, 10721280, 10721280, 30813184, 30813184, 32777728}
+	wantTokens := []int64{81920000, 245760000, 245760000, 245760000, 613613568, 204128256}
+	bpeTokenizer := loadCompose(t, "experiments/0003-tinystories-bpe-preflight.yaml").Architecture.Tokenizer
 	var reference model.Compose
 	for index, file := range files {
 		compose := loadCompose(t, file)
@@ -171,6 +173,10 @@ func TestActiveReferenceLadderForecastsAndControls(t *testing.T) {
 			wantArchitecture.AttentionHeads = 8
 			wantArchitecture.KeyValueHeads = 8
 		}
+		if index == 5 {
+			wantArchitecture.VocabularySize = 4096
+			wantArchitecture.Tokenizer = bpeTokenizer
+		}
 		if !reflect.DeepEqual(wantArchitecture, compose.Architecture) {
 			t.Fatalf("%s changes more than the intended context control", file)
 		}
@@ -180,8 +186,9 @@ func TestActiveReferenceLadderForecastsAndControls(t *testing.T) {
 	storiesContext512 := loadCompose(t, activeLadderFiles[2]).Stages[0]
 	storiesCapacity := loadCompose(t, activeLadderFiles[3]).Stages[0]
 	storiesCapacity20TPP := loadCompose(t, activeLadderFiles[4]).Stages[0]
-	if !reflect.DeepEqual(corpusPaths(shakespeare.Corpora), []string{"core/reference/tiny-shakespeare"}) || !reflect.DeepEqual(corpusPaths(stories.Corpora), []string{"core/synthetic/tinystories-reference"}) || !reflect.DeepEqual(corpusPaths(storiesContext512.Corpora), []string{"core/synthetic/tinystories-reference"}) || !reflect.DeepEqual(corpusPaths(storiesCapacity.Corpora), []string{"core/synthetic/tinystories-reference"}) || !reflect.DeepEqual(corpusPaths(storiesCapacity20TPP.Corpora), []string{"core/synthetic/tinystories-reference"}) {
-		t.Fatalf("active ladder corpora = %v / %v / %v / %v / %v", corpusPaths(shakespeare.Corpora), corpusPaths(stories.Corpora), corpusPaths(storiesContext512.Corpora), corpusPaths(storiesCapacity.Corpora), corpusPaths(storiesCapacity20TPP.Corpora))
+	storiesBPE := loadCompose(t, activeLadderFiles[5]).Stages[0]
+	if !reflect.DeepEqual(corpusPaths(shakespeare.Corpora), []string{"core/reference/tiny-shakespeare"}) || !reflect.DeepEqual(corpusPaths(stories.Corpora), []string{"core/synthetic/tinystories-reference"}) || !reflect.DeepEqual(corpusPaths(storiesContext512.Corpora), []string{"core/synthetic/tinystories-reference"}) || !reflect.DeepEqual(corpusPaths(storiesCapacity.Corpora), []string{"core/synthetic/tinystories-reference"}) || !reflect.DeepEqual(corpusPaths(storiesCapacity20TPP.Corpora), []string{"core/synthetic/tinystories-reference"}) || !reflect.DeepEqual(corpusPaths(storiesBPE.Corpora), []string{"core/synthetic/tinystories-reference"}) {
+		t.Fatalf("active ladder corpus changed: %v", corpusPaths(storiesBPE.Corpora))
 	}
 	for _, stage := range []model.Stage{shakespeare, stories} {
 		parameters := stage.Parameters
@@ -214,8 +221,16 @@ func TestActiveReferenceLadderForecastsAndControls(t *testing.T) {
 	if !reflect.DeepEqual(capacity20TPPParameters, wantCapacity20TPPParameters) {
 		t.Fatalf("capacity qualification changed controls beyond token horizon: got=%+v want=%+v", capacity20TPPParameters, wantCapacity20TPPParameters)
 	}
-	if shakespeare.Parameters.EvaluationSelection != "contiguous-tail-v1" || stories.Parameters.EvaluationSelection != "lowest-sha256-v1" || storiesContext512.Parameters.EvaluationSelection != "lowest-sha256-v1" || storiesCapacity.Parameters.EvaluationSelection != "lowest-sha256-v1" || storiesCapacity20TPP.Parameters.EvaluationSelection != "lowest-sha256-v1" {
-		t.Fatalf("active ladder evaluation policies = %q / %q / %q / %q / %q", shakespeare.Parameters.EvaluationSelection, stories.Parameters.EvaluationSelection, storiesContext512.Parameters.EvaluationSelection, storiesCapacity.Parameters.EvaluationSelection, storiesCapacity20TPP.Parameters.EvaluationSelection)
+	bpeParameters := storiesBPE.Parameters
+	wantBPEParameters := capacity20TPPParameters
+	wantBPEParameters.Tokens = 204123174
+	wantBPEParameters.BatchSize = 12
+	wantBPEParameters.GradientAccumulation = 3
+	if !reflect.DeepEqual(bpeParameters, wantBPEParameters) {
+		t.Fatalf("BPE source control changes unexpected training controls: got=%+v want=%+v", bpeParameters, wantBPEParameters)
+	}
+	if shakespeare.Parameters.EvaluationSelection != "contiguous-tail-v1" || stories.Parameters.EvaluationSelection != "lowest-sha256-v1" || storiesContext512.Parameters.EvaluationSelection != "lowest-sha256-v1" || storiesCapacity.Parameters.EvaluationSelection != "lowest-sha256-v1" || storiesCapacity20TPP.Parameters.EvaluationSelection != "lowest-sha256-v1" || storiesBPE.Parameters.EvaluationSelection != "lowest-sha256-v1" {
+		t.Fatalf("active ladder evaluation policies changed")
 	}
 }
 
