@@ -435,7 +435,7 @@ reference for this ladder: compact BPE, sufficient effective context, stable
 multi-host optimization, prompt retention, bounded repetition, and learned
 document stopping all work together.
 
-## Next transition: real-text source control
+## Rung 0008: PressBooks real-text control — ready
 
 Do not jump directly from this narrow reference to the retired broad-mixture
 recipe. First isolate distribution transfer while preserving the qualified
@@ -446,18 +446,52 @@ PressBooks is the tokenizer's training source and is structured, distributable
 real educational prose, so this is the smallest defensible bridge away from
 synthetic stories.
 
-Run only the preflight:
+The completed preflight measured:
+
+- 50.8K included training records and 503.9 MiB of UTF-8 text;
+- 3.463 training bytes/token and 3.500 held-out bytes/token;
+- 1,773 effective context bytes per 512-token sequence;
+- token-length P50/P90/P95 of 1,466/6,907/10,117, with 20.3% of records
+  fitting one sequence;
+- 0.170 expected document/EOS boundaries per sequence; and
+- 152.6M unique packed targets per source pass.
+
+[`0008-pressbooks-bpe-20tpp.yaml`](0008-pressbooks-bpe-20tpp.yaml) therefore
+trains for four source passes. Preflight resolves that to about 610.5M BPE targets,
+essentially the same 20-token/core-parameter horizon and four-source-pass
+exposure as rung 0007. It trains from initialization and changes only the
+filtered model-training distribution; the architecture, tokenizer, context,
+optimizer, learning rate, dropout, initialization, seed, and evaluation policy
+remain fixed.
+
+Promotion requires:
+
+1. Training and artifact reload complete without non-finite loss, selected
+   held-out loss improves at least 70% from initialization, and selection does
+   not expose a material late overtraining reversal.
+2. At least 12 of 15 deterministic general-continuation probes are grammatical
+   and remain on topic through their first sentence.
+3. No more than two deterministic probes and no more than two temperature-0.7
+   probes collapse into an immediate repeated sentence or phrase loop.
+4. At least eight of ten factual stems produce a relevant first sentence.
+   Exact factual recall is scored and retained, but is not yet a hard gate for
+   a 32.8M raw pretraining control.
+
+Run and evaluate it with:
 
 ```console
-go run ./cmd/waldo/ model forecast \
-  composes/experiments/0004-pressbooks-bpe-preflight.yaml --preflight
+go run ./cmd/waldo/ model forecast composes/0008-pressbooks-bpe-20tpp.yaml \
+  --preflight
+go run ./cmd/waldo/ model train pressbooks-bpe-20tpp-01 \
+  composes/0008-pressbooks-bpe-20tpp.yaml --hostfile ~/hostfile
+./composes/general-foundation/evaluate-general.sh \
+  pressbooks-bpe-20tpp-01 /tmp/pressbooks-bpe-20tpp-01-greedy.jsonl 0 42
+./composes/general-foundation/evaluate-general.sh \
+  pressbooks-bpe-20tpp-01 /tmp/pressbooks-bpe-20tpp-01-temp07.jsonl 0.7 42
 ```
 
-Use its unique packed targets, fertility, record-length distribution, and EOS
-density to define the next root compose at the same approximately four source
-passes as rung 0007. Its capability gates must emphasize coherent real-text
-continuation, repetition, and EOS before adding Wikimedia, Stack Exchange, or
-PLOS. This prevents corpus mixture, source exposure, and architecture from
+Do not add Wikimedia, Stack Exchange, or PLOS until this real-text control
+passes. This keeps corpus mixture, source exposure, and architecture from
 changing in one experiment.
 
 ## Forecast before training
