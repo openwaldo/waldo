@@ -178,17 +178,18 @@ func resolveCorpusWeights(declared map[string]uint64, paths []string) (map[strin
 }
 
 func composePlan(name string, compose Compose) (Plan, error) {
-	architectureHash, err := canonicalHash(compose.Architecture)
+	architecture := composeModelArchitecture(compose.Architecture)
+	architectureHash, err := canonicalHash(architecture)
 	if err != nil {
 		return Plan{}, err
 	}
-	forecast, err := compose.Architecture.Forecast()
+	forecast, err := architecture.Forecast()
 	if err != nil {
 		return Plan{}, err
 	}
 	plan := Plan{
 		Kind: "waldo-model-plan", Schema: PlanSchema, Name: name,
-		ArchitectureSHA256: architectureHash, Architecture: compose.Architecture,
+		ArchitectureSHA256: architectureHash, Architecture: architecture,
 		Interaction: compose.Interaction, Forecast: forecast,
 	}
 	if compose.Base != nil {
@@ -204,13 +205,24 @@ func composePlan(name string, compose Compose) (Plan, error) {
 	return plan, nil
 }
 
+func composeModelArchitecture(architecture Architecture) Architecture {
+	if architecture.Tokenizer.Artifact != nil {
+		architecture.Tokenizer.Training = nil
+	}
+	return architecture
+}
+
 func forecastPlanForCompose(compose Compose) (Plan, error) {
 	plan, err := composePlan("forecast", compose)
 	if err != nil {
 		return Plan{}, err
 	}
 	for _, stage := range compose.Stages {
-		resolved, err := stage.ResolvePlanningParameters()
+		parameters, err := stage.trainingParameters()
+		if err != nil {
+			return Plan{}, fmt.Errorf("stage %s training parameters: %w", stage.Name, err)
+		}
+		resolved, err := training.ResolvePlanningParameters(parameters)
 		if err != nil {
 			return Plan{}, fmt.Errorf("stage %s training parameters: %w", stage.Name, err)
 		}
@@ -218,7 +230,7 @@ func forecastPlanForCompose(compose Compose) (Plan, error) {
 		if stage.Parameters.Steps == 0 && stage.Parameters.Tokens == 0 {
 			plannedTokens = 0
 		}
-		plan.Stages = append(plan.Stages, PlannedStage{Name: stage.Name, Type: stage.Type, Objective: stage.Objective, Parameters: stage.Parameters, PlannedTokens: plannedTokens})
+		plan.Stages = append(plan.Stages, PlannedStage{Name: stage.Name, Type: stage.Type, Objective: stage.Objective, Parameters: parameters, PlannedTokens: plannedTokens})
 	}
 	return plan, nil
 }

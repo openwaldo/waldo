@@ -1,0 +1,50 @@
+# Ladder rung 0004: test model capacity after the 512-byte context control.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 512
+  vocabulary_size: 259
+  hidden_size: 512
+  intermediate_size: 1536
+  layers: 9
+  attention_heads: 8
+  key_value_heads: 8
+  dropout: 0.2
+  qk_normalization: false
+  initialization: depth-scaled
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    name: byte
+    revision: builtin-byte-schema-1
+stages:
+  - name: tinystories-pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    corpora:
+      - core/synthetic/tinystories-reference
+    parameters:
+      profile: causal-pretrain-shuffled
+      parallelism: auto
+      tokens: 245760000
+      batch_size: 32
+      gradient_accumulation_steps: 8
+      compute_precision: auto
+      activation_checkpointing: false
+      compile: false
+      sequence_length: 512
+      learning_rate: 0.0006
+      optimizer: adamw
+      schedule: cosine
+      seed: 42
+      weight_decay: 0.1
+      warmup_steps: 100
+      checkpoint_every: 250
+      evaluate_every: 250
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 1073741824
+      evaluation_selection: lowest-sha256-v1
+      evaluation_fraction: 0.01
+      evaluation_max_records: 512
+      evaluation_max_bytes: 16777216

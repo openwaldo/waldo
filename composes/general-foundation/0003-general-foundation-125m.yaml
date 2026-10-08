@@ -1,0 +1,74 @@
+# Gate 3: extend the unchanged ~125.6M recipe to a 5B-token qualification horizon.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 2048
+  vocabulary_size: 16000
+  hidden_size: 768
+  intermediate_size: 2048
+  layers: 18
+  attention_heads: 12
+  key_value_heads: 4
+  dropout: 0.0
+  qk_normalization: true
+  initialization: depth-scaled
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    training:
+      algorithm: byte-bpe-v1
+      sample_bytes: 268435456
+      seed: 42
+      max_token_inflation: 0.35
+      distribution_policy: distributable
+      filter:
+        main_content: true
+        exclude:
+          repetitive_content: true
+          boilerplate_content: true
+      corpora:
+        - core/common-pile/wikimedia
+        - core/common-pile/pressbooks
+        - science/plos
+stages:
+  - name: general-pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: core/common-pile/wikimedia
+        weight: 11
+      - path: core/common-pile/stackexchange
+        weight: 5
+      - path: science/plos
+        weight: 3
+      - path: core/common-pile/pressbooks
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      tokens: 5000000000
+      batch_size: 64
+      gradient_accumulation_steps: 4
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: false
+      sequence_length: 2048
+      learning_rate: 0.0002
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
+      seed: 42
+      weight_decay: 0.1
+      warmup_steps: 763
+      warmdown_steps: 7629
+      shuffle_buffer_records: 65536
+      shuffle_buffer_bytes: 2147483648
+      checkpoint_every: 2000
+      evaluate_every: 2000
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432

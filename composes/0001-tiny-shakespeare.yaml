@@ -1,0 +1,55 @@
+# Ladder rung 0001: reproduce the validated Tiny Shakespeare reference model.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 256
+  vocabulary_size: 259
+  hidden_size: 384
+  intermediate_size: 1024
+  layers: 6
+  attention_heads: 6
+  key_value_heads: 6
+  dropout: 0.2
+  qk_normalization: false
+  initialization: depth-scaled
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    name: byte
+    revision: builtin-byte-schema-1
+stages:
+  - name: tiny-shakespeare-pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - core/reference/tiny-shakespeare
+    parameters:
+      profile: causal-pretrain-shuffled
+      parallelism: auto
+      tokens: 81920000
+      batch_size: 64
+      gradient_accumulation_steps: 8
+      compute_precision: auto
+      activation_checkpointing: false
+      compile: false
+      sequence_length: 256
+      learning_rate: 0.001
+      optimizer: adamw
+      schedule: cosine
+      seed: 42
+      weight_decay: 0.1
+      warmup_steps: 100
+      checkpoint_every: 250
+      evaluate_every: 250
+      shuffle_buffer_records: 1
+      shuffle_buffer_bytes: 2097152
+      evaluation_selection: contiguous-tail-v1
+      evaluation_fraction: 0.10
+      evaluation_max_records: 1
+      evaluation_max_bytes: 262144

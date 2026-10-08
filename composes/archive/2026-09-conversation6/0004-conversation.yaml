@@ -1,5 +1,9 @@
-# Conversation level 3: a larger model built from the proven conversation1
-# curriculum, with technical and scientific knowledge as the majority.
+# Conversation level 4: train this compose as model `conversation3`. It is a
+# larger successor to the restored 0003 conversation curriculum, with
+# technical and scientific knowledge as the majority.
+# This is a private research compose pending the corpus-rights reviews listed
+# in docs/COMPOSE-CORPUS-LICENSE-AUDIT.md. Its model artifacts must not be
+# represented or released as distributable.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -13,9 +17,13 @@ architecture:
   layers: 24
   attention_heads: 24
   key_value_heads: 8
-  dropout: 0.1
-  tie_embeddings: true
-  parameter_dtype: bfloat16
+  dropout: 0.0
+  tie_embeddings: false
+  qk_normalization: true
+  initialization: depth-scaled
+  # Keep portable weights lossless and compiled execution disabled until this
+  # architecture passes WALDO's compiled/eager/artifact equivalence checks.
+  parameter_dtype: float32
   tokenizer:
     name: tiktoken/r50k_base
     revision: tiktoken-r50k-base
@@ -43,10 +51,17 @@ stages:
         weight: 5
     parameters:
       profile: causal-pretrain-weighted
-      tokens: 18000000000
+      parallelism: auto
+      tokens: 5000000000
       batch_size: 16
+      gradient_accumulation_steps: 4
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: false
       sequence_length: 4096
       learning_rate: 0.00011
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 42
       weight_decay: 0.15
       warmup_steps: 2747
@@ -80,10 +95,17 @@ stages:
       - {path: community/python-mailing-lists, weight: 1}
     parameters:
       profile: causal-pretrain-weighted
-      tokens: 3000000000
+      parallelism: auto
+      tokens: 1000000000
       batch_size: 8
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: false
       sequence_length: 4096
       learning_rate: 0.00002
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 45
       weight_decay: 0.08
       warmup_steps: 916
@@ -96,7 +118,7 @@ stages:
 
   - name: conversational-midtrain
     type: fine-tuning
-    objective: causal-language-modeling
+    objective: assistant-response-modeling
     conversation:
       template: user-assistant-v1
       supervised_roles: [assistant]
@@ -116,10 +138,17 @@ stages:
         weight: 2
     parameters:
       profile: causal-pretrain-weighted
+      parallelism: auto
       epochs: 3
       batch_size: 8
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: false
       sequence_length: 4096
       learning_rate: 0.00003
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 43
       weight_decay: 0.08
       warmup_steps: 305
@@ -150,10 +179,17 @@ stages:
         weight: 2
     parameters:
       profile: causal-pretrain-weighted
-      tokens: 400000000
+      parallelism: auto
+      tokens: 100000000
       batch_size: 8
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: false
       sequence_length: 4096
       learning_rate: 0.00001
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 46
       weight_decay: 0.04
       warmup_steps: 122
@@ -164,11 +200,11 @@ stages:
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
 
-  # Finish with the same bounded behavior anchor that made conversation1
-  # useful. Narrow alignment belongs after broad and technical learning.
+  # Finish with the same bounded behavior anchor used by 0003. Narrow
+  # alignment belongs after broad and technical learning.
   - name: post-train
     type: fine-tuning
-    objective: causal-language-modeling
+    objective: assistant-response-modeling
     conversation:
       template: user-assistant-v1
       supervised_roles: [assistant]
@@ -182,12 +218,21 @@ stages:
         weight: 8
       - path: post-train/sft/helpsteer2
         weight: 3
+      - path: post-train/sft/waldo-project-v1
+        weight: 1
     parameters:
       profile: causal-pretrain-weighted
+      parallelism: auto
       epochs: 3
       batch_size: 8
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: false
       sequence_length: 4096
       learning_rate: 0.000008
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
       seed: 44
       weight_decay: 0.05
       warmup_steps: 48
@@ -197,3 +242,40 @@ stages:
       evaluate_every: 80
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
+
+  - name: project-grounding
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/waldo-project-v1
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      epochs: 5
+      batch_size: 8
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: false
+      sequence_length: 4096
+      learning_rate: 0.000002
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
+      seed: 47
+      weight_decay: 0
+      warmup_steps: 5
+      shuffle_buffer_records: 4096
+      shuffle_buffer_bytes: 134217728
+      checkpoint_every: 10
+      evaluate_every: 10
+      evaluation_max_records: 256
+      evaluation_max_bytes: 8388608

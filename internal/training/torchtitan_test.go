@@ -149,7 +149,7 @@ func TestTorchTitanResolverFailsClosed(t *testing.T) {
 
 func TestTorchTitanInstallGuidanceExplainsPythonResolution(t *testing.T) {
 	guidance := torchTitanInstallGuidanceForDistribution("Rocky Linux 9")
-	for _, expected := range []string{"Copy and run this installation block", "python3.11-pip", "hash -r", recommendedTorchVersion, recommendedTorchIndex, recommendedTorchTitanVersion, "torch.cuda.is_available()", "torch.distributed.is_nccl_available()"} {
+	for _, expected := range []string{"Copy and run this installation block", "gcc", "python3.11-devel", "python3.11-pip", "hash -r", recommendedTorchVersion, recommendedTorchIndex, recommendedTorchTitanVersion, "torch.cuda.is_available()", "torch.distributed.is_nccl_available()"} {
 		if !strings.Contains(guidance, expected) {
 			t.Fatalf("installation guidance omits %q: %s", expected, guidance)
 		}
@@ -196,7 +196,7 @@ func TestValidateTorchTitanHostConfiguration(t *testing.T) {
 }
 
 func TestTorchTitanProbeCollectsNetworkAndRDMASanityFacts(t *testing.T) {
-	for _, expected := range []string{"resource.RLIMIT_MEMLOCK", `Path("/sys/class/net")`, `Path("/sys/class/infiniband")`, `"has_address"`, `"memlock_soft_bytes"`, `"network_interfaces"`, `"rdma_devices"`, `"nvidia-smi", "topo", "-m"`, `"local_interconnect"`} {
+	for _, expected := range []string{"resource.RLIMIT_MEMLOCK", `Path("/sys/class/net")`, `Path("/sys/class/infiniband")`, `"has_address"`, `"memlock_soft_bytes"`, `"network_interfaces"`, `"rdma_devices"`, `"nvidia-smi", "topo", "-m"`, `"local_interconnect"`, `shutil.which("gcc")`, ` / "Python.h"`, "triton_driver.active.get_current_target()"} {
 		if !strings.Contains(torchTitanProbeProgram, expected) {
 			t.Fatalf("TorchTitan probe omits %q", expected)
 		}
@@ -336,7 +336,7 @@ func TestTorchTitanRejectsGlobalBatchThatCannotBePartitioned(t *testing.T) {
 	}
 	backend := TorchTitan{Python: "unused", LocalProcs: 2, Nodes: 2, Rendezvous: "primary:29500"}
 	_, err = backend.Run(context.Background(), Request{Parameters: parameters})
-	if err == nil || !strings.Contains(err.Error(), "global batch size 6 must be at least and divisible by world size 4") {
+	if err == nil || !strings.Contains(err.Error(), "global micro-batch 6 (batch_size 6 / gradient_accumulation_steps 1) must be divisible by world size 4") {
 		t.Fatalf("batch partition error = %v", err)
 	}
 }
@@ -394,7 +394,7 @@ func TestTorchTitanResolverAggregatesClusterNodes(t *testing.T) {
 	}
 }
 
-func TestTorchTitanSecondaryNodeReceivesRecordsFromGlobalRankZero(t *testing.T) {
+func TestTorchTitanSecondaryLauncherStreamReceivesRecordsFromGlobalRankZero(t *testing.T) {
 	worker := filepath.Join(t.TempDir(), "fake-python")
 	script := `#!/bin/sh
 case "$*" in
@@ -424,6 +424,45 @@ exit 0
 	})
 	if err != nil {
 		t.Fatalf("secondary run: %v", err)
+	}
+	if len(observation.Artifacts) != 0 || observation.Steps != 0 {
+		t.Fatalf("secondary observation = %+v", observation)
+	}
+}
+
+func TestTorchTitanSecondaryStreamsVerifiedNodeLocalRecords(t *testing.T) {
+	worker := filepath.Join(t.TempDir(), "fake-python")
+	script := `#!/bin/sh
+[ "$WALDO_TORCH_DATA_PLANE" = "node-local-cache" ] || exit 5
+IFS= read -r begin || exit 6
+IFS= read -r record || exit 7
+IFS= read -r boundary || exit 8
+IFS= read -r end || exit 9
+case "$begin" in *'"kind":"begin"'*) ;; *) exit 9;; esac
+case "$record" in *'"kind":"sequence"'*'"tokens"'*) ;; *) exit 10;; esac
+case "$boundary" in *'"kind":"micro_batch_end"'*) ;; *) exit 11;; esac
+case "$end" in *'"kind":"end"'*) ;; *) exit 12;; esac
+exit 0
+`
+	if err := os.WriteFile(worker, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := TorchTitan{
+		Python: worker, LocalProcs: 1, Nodes: 2, NodeRank: 1,
+		Rendezvous: "primary:29500", Interface: "eth0", Secondary: true,
+	}
+	observation, err := backend.Run(context.Background(), Request{
+		ArtifactDirectory: t.TempDir(), ArtifactPrefix: "artifacts",
+		Parameters: parameters, Architecture: json.RawMessage(`{"family":"decoder-transformer"}`),
+		Parallelism: Parallelism{WorldSize: 2, GPUsPerNode: 1, DataPlane: DataPlaneNodeLocal},
+		Records:     staticRecordSource{{ID: "one", Text: "node-local", Corpus: "test"}},
+	})
+	if err != nil {
+		t.Fatalf("secondary node-local run: %v", err)
 	}
 	if len(observation.Artifacts) != 0 || observation.Steps != 0 {
 		t.Fatalf("secondary observation = %+v", observation)

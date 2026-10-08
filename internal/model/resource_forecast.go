@@ -25,6 +25,7 @@ type ResourceForecast struct {
 	PlannedTokens         int64                   `json:"planned_tokens"`
 	EpochDerivedStages    []string                `json:"epoch_derived_stages,omitempty"`
 	TrainingFLOPs         float64                 `json:"training_flops"`
+	Fitness               FitnessAnalysis         `json:"fitness"`
 	Calibrations          []ForecastCalibration   `json:"calibrations,omitempty"`
 	Configurations        []HardwareConfiguration `json:"configurations,omitempty"`
 }
@@ -123,6 +124,11 @@ func forecastPlanWithCalibration(plan Plan, calibrations []ForecastCalibration) 
 		ApproximateParameters: parameters, PlannedTokens: plannedTokens,
 		TrainingFLOPs: trainingFLOPs,
 	}
+	fitness, err := analyzeFitness(plan, plannedTokens, trainingFLOPs)
+	if err != nil {
+		return ResourceForecast{}, err
+	}
+	report.Fitness = fitness
 	for _, stage := range plan.Stages {
 		if stage.PlannedTokens == 0 {
 			report.EpochDerivedStages = append(report.EpochDerivedStages, stage.Name)
@@ -215,19 +221,44 @@ func requiredMemoryPerGPU(plan Plan, GPUs int) (uint64, error) {
 	}
 	// BF16 parameters and gradients plus FP32 master weights and two Adam
 	// moments require approximately 16 bytes per parameter. Model state is
-	// assumed fully sharded. The built-in workers do not activation-checkpoint,
-	// and FSDP shards model state rather than the input batch, so every rank must
-	// fit the complete declared physical batch. The loss also retains BF16
-	// logits and an FP32 conversion across the complete vocabulary.
+	// assumed fully sharded. The built-in distributed worker partitions the
+	// declared global batch across ranks, so activation and logits workspace is
+	// estimated from the per-rank batch. Round up here to remain conservative
+	// for forecasts even though execution currently requires exact divisibility.
+	// The loss retains BF16 logits and an FP32 conversion across the local batch.
 	states, err := multiply(plan.Forecast.ApproximateParameters, 16)
 	if err != nil {
 		return 0, err
 	}
 	states = divideRoundUp(states, uint64(GPUs))
+	maxActivations, err := maximumActivationWorkspace(plan, GPUs)
+	if err != nil {
+		return 0, err
+	}
+	required, err := add(states, maxActivations, 4<<30)
+	if err != nil {
+		return 0, err
+	}
+	return required, nil
+}
+
+func maximumActivationWorkspace(plan Plan, GPUs int) (uint64, error) {
+	if GPUs <= 0 {
+		return 0, fmt.Errorf("GPU count must be positive")
+	}
 	var maxActivations uint64
 	for _, stage := range plan.Stages {
-		batch := uint64(stage.Parameters.BatchSize)
-		activations, err := multiplyAll(batch, uint64(stage.Parameters.SequenceLength), plan.Architecture.HiddenSize, plan.Architecture.Layers, 72)
+		accumulation := max(int64(1), stage.Parameters.GradientAccumulation)
+		globalMicroBatch := divideRoundUp(uint64(stage.Parameters.BatchSize), uint64(accumulation))
+		batch := divideRoundUp(globalMicroBatch, uint64(GPUs))
+		activationFactor := uint64(72)
+		if stage.Parameters.ActivationCheckpointing {
+			// Layer checkpointing retains inputs instead of every intermediate.
+			// Keep this deliberately conservative until calibrated GPU evidence
+			// supports a tighter backend-specific estimate.
+			activationFactor = 24
+		}
+		activations, err := multiplyAll(batch, uint64(stage.Parameters.SequenceLength), plan.Architecture.HiddenSize, plan.Architecture.Layers, activationFactor)
 		if err != nil {
 			return 0, fmt.Errorf("stage %s activation memory: %w", stage.Name, err)
 		}
@@ -243,11 +274,7 @@ func requiredMemoryPerGPU(plan Plan, GPUs int) (uint64, error) {
 			maxActivations = activations
 		}
 	}
-	required, err := add(states, maxActivations, 4<<30)
-	if err != nil {
-		return 0, err
-	}
-	return required, nil
+	return maxActivations, nil
 }
 
 func multiplyAll(values ...uint64) (uint64, error) {

@@ -1,0 +1,72 @@
+# Gate 1: isolate the effect of replacing Cosmopedia-only training with a broad existing-index mixture.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 512
+  vocabulary_size: 10000
+  hidden_size: 512
+  intermediate_size: 1536
+  layers: 9
+  attention_heads: 8
+  key_value_heads: 2
+  dropout: 0.0
+  qk_normalization: true
+  initialization: depth-scaled
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    training:
+      algorithm: byte-bpe-v1
+      sample_bytes: 268435456
+      seed: 42
+      max_token_inflation: 0.35
+      distribution_policy: distributable
+      filter:
+        main_content: true
+        exclude:
+          repetitive_content: true
+          boilerplate_content: true
+      corpora:
+        - core/common-pile/pressbooks
+stages:
+  - name: general-pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: core/common-pile/wikimedia
+        weight: 11
+      - path: core/common-pile/stackexchange
+        weight: 5
+      - path: science/plos
+        weight: 3
+      - path: core/common-pile/pressbooks
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      tokens: 1000000000
+      batch_size: 64
+      gradient_accumulation_steps: 4
+      compute_precision: bfloat16
+      activation_checkpointing: false
+      compile: false
+      sequence_length: 512
+      learning_rate: 0.0005
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
+      seed: 42
+      weight_decay: 0.1
+      warmup_steps: 610
+      warmdown_steps: 3052
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 1073741824
+      checkpoint_every: 1000
+      evaluate_every: 1000
+      evaluation_max_records: 512
+      evaluation_max_bytes: 16777216

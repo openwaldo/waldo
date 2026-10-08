@@ -39,19 +39,21 @@ func runLookasideStatus(context Context, _ []string, stdout, _ io.Writer) error 
 	}
 	if context.JSON {
 		return writeJSON(stdout, struct {
-			Cache       string                     `json:"cache"`
-			Scratch     string                     `json:"scratch"`
-			MaxBytes    int64                      `json:"cache_max_bytes"`
-			Mirrors     []string                   `json:"mirrors"`
-			Publish     *config.Publish            `json:"publish,omitempty"`
-			Credentials *lookasideCredentialStatus `json:"credentials,omitempty"`
-			Stats       lookaside.Stats            `json:"stats"`
-			Protected   lookaside.Stats            `json:"protected"`
-			Owners      []string                   `json:"protected_models,omitempty"`
-		}{Cache: cache.Root(), Scratch: cache.Scratch(), MaxBytes: cache.MaxBytes(), Mirrors: cache.Mirrors(), Publish: configuration.Lookaside.Publish, Credentials: credentialStatus(configuration.Lookaside.Publish), Stats: stats, Protected: protectedStats, Owners: owners})
+			Cache           string                     `json:"cache"`
+			Scratch         string                     `json:"scratch"`
+			MaxBytes        int64                      `json:"cache_max_bytes"`
+			RetainCompleted bool                       `json:"retain_completed"`
+			Mirrors         []string                   `json:"mirrors"`
+			Publish         *config.Publish            `json:"publish,omitempty"`
+			Credentials     *lookasideCredentialStatus `json:"credentials,omitempty"`
+			Stats           lookaside.Stats            `json:"stats"`
+			Protected       lookaside.Stats            `json:"protected"`
+			Owners          []string                   `json:"protected_models,omitempty"`
+		}{Cache: cache.Root(), Scratch: cache.Scratch(), MaxBytes: cache.MaxBytes(), RetainCompleted: cache.RetainCompleted(), Mirrors: cache.Mirrors(), Publish: configuration.Lookaside.Publish, Credentials: credentialStatus(configuration.Lookaside.Publish), Stats: stats, Protected: protectedStats, Owners: owners})
 	}
 	fmt.Fprintf(stdout, "lookaside cache    %s\n", cache.Root())
 	fmt.Fprintf(stdout, "  limit          %s\n", humanBytes(cache.MaxBytes()))
+	fmt.Fprintf(stdout, "  retain completed %t\n", cache.RetainCompleted())
 	fmt.Fprintf(stdout, "lookaside scratch  %s\n", cache.Scratch())
 	fmt.Fprintf(stdout, "  objects        %s\n", humanInteger(stats.Objects))
 	fmt.Fprintf(stdout, "  bytes          %s\n", humanBytes(stats.Bytes))
@@ -153,7 +155,7 @@ func protectedCacheObjects(configuration config.Config) (map[string]bool, []stri
 			return nil, nil, err
 		}
 		for index, run := range inspection.Runs {
-			resumableFailure := run.State == model.RunFailed && index == len(inspection.Runs)-1 && model.HasRecoverableFinalizationFailure(inspection)
+			resumableFailure := run.State == model.RunFailed && index == len(inspection.Runs)-1 && model.HasRecoverableCheckpointFailure(inspection)
 			if run.State != model.RunRunning && run.State != model.RunInterrupted && !resumableFailure {
 				continue
 			}

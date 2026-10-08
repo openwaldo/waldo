@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/pytorchruntime"
 	"github.com/openwaldo/waldo/internal/training"
 )
 
@@ -71,7 +72,7 @@ func startPyTorchSession(ctx context.Context, python, device string, artifacts A
 	if err != nil {
 		return nil, 0, err
 	}
-	command := exec.CommandContext(ctx, python, "-c", string(pyTorchChatWorker), artifacts.Weights, artifacts.Configuration, artifacts.Tokenizer, device)
+	command := exec.CommandContext(ctx, python, "-c", pytorchruntime.WithModel(pyTorchChatWorker), artifacts.Weights, artifacts.Configuration, artifacts.Tokenizer, device)
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		return nil, 0, err

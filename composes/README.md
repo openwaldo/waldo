@@ -1,472 +1,564 @@
-# Model-building ladder
-
-Each model must reach a testable endpoint before the next rung begins. A model
-inherits the previous checkpoint when its architecture and tokenizer remain
-compatible. A different architecture starts new weights but reuses the proven
-corpus recipe, training process, and evaluation gates.
-
-Runtime estimates cover training after data and the environment are ready.
-They are planning ranges until replaced by observed WALDO run evidence.
-
-Stages are weight-changing operations and execute strictly in YAML order. Keep
-broad foundation data first, domain or technical adaptation next, conversation
-training after that, and narrow assistant, alignment, or tool-use training
-last. If the relative order of completed stages is corrected, use a new model;
-replaying an existing model cannot retroactively change its training order.
-See [Stage ordering is part of the model design](../docs/MODEL-COMPOSE.md#stage-ordering-is-part-of-the-model-design).
-
-For domain knowledge, lead with explanatory reference material and question/
-answer text. Source code and expert discussions are valuable supporting data,
-but a mixture dominated by patches, issue traffic, or mailing-list replies can
-teach domain vocabulary without reliably teaching basic facts. Keep enough
-general instruction data after domain training to make the knowledge usable,
-then finish with the narrowest validated behavior stage.
-
-## Canary / smoke test (`0000-canary.yaml`)
-
-| Field | Plan |
-| --- | --- |
-| Status | Existing compose; ready |
-| Builds from | Random initialization |
-| Model type | Small dense monolithic model; approximately 14M parameters |
-| Recommended hardware | Apple M4 Max with 128 GB unified memory |
-| Approximate runtime | 1-3 minutes |
-
-Success criteria:
-
-- The model may be unusable.
-- Training and evaluation complete.
-- Checkpoint and resume work.
-- The exported artifact runs inference.
-
-Corpus requirements:
-
-- Small raw-text sample.
-- Small structured-conversation sample.
-- Current selection is sufficient.
-
-WALDO requirements:
-
-- Basic ingestion and compose.
-- Training lifecycle and artifact verification.
-- Inference.
-- Current support is sufficient.
-
-## Babbling model (`0001-babble.yaml`)
-
-| Field | Plan |
-| --- | --- |
-| Status | Existing compose; ready for a formally evaluated run |
-| Builds from | Random initialization using the canary-proven pipeline |
-| Model type | Small dense monolithic foundation; approximately 76M parameters |
-| Recommended hardware | 1x NVIDIA H100 80 GB |
-| Approximate runtime | 1-2 hours for 1.57B tokens |
-
-Success criteria:
-
-- Stable short-form language.
-- Improving held-out loss.
-- Simple corpus recall.
-- No repetition collapse.
-
-Corpus requirements:
-
-- Edited prose from Gutenberg.
-- Reference text from Wikimedia.
-- Scientific exposition from PLOS.
-- Current selection is sufficient for this rung.
-
-WALDO requirements:
-
-- Current dense training.
-- Fixed generation tests in addition to held-out loss.
-
-## Conversation level 1 (`0002-conversation1.yaml`)
-
-| Field | Plan |
-| --- | --- |
-| Status | Existing known-good compose preserved |
-| Builds from | New larger initialization using the babbling model's proven recipe and tests |
-| Model type | Dense monolithic foundation plus conversation SFT; approximately 337M parameters |
-| Recommended hardware | 1x 8-GPU NVIDIA H100 SXM system |
-| Approximate runtime | 4-8 hours for approximately 12B pretraining tokens plus SFT |
-
-Success criteria:
-
-- Direct answers and simple constraint following.
-- Prior-turn context and correction handling.
-- Necessary clarification.
-- No tool-call syntax.
-
-Corpus requirements:
-
-- Natural multi-turn dialogue.
-- Broad instruction data.
-- Quality-filtered responses.
-- Bounded Interaction Contract examples.
-
-WALDO requirements:
-
-- Assistant-response modeling and assistant-only loss masks (supported).
-- Add fixed conversation tests.
-- Replay foundation regression tests.
-
-## Conversation level 2 (`0002-conversation2.yaml`)
-
-| Field | Plan |
-| --- | --- |
-| Status | Compatible extension of conversation1 with a stronger technical curriculum |
-| Builds from | The same approximately 337M-parameter architecture and tokenizer as conversation1 |
-| Model type | Dense conversation model with technical knowledge midtraining and expanded conversation SFT |
-| Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
-| Approximate runtime | Approximately 3 days for a fresh run, or about 16 hours for its 3.4B newly declared tokens when extending a compatible checkpoint |
-
-Success criteria:
-
-- Improves instruction following and multi-turn coherence over conversation1.
-- Correctly answers basic factual questions about operating systems, Linux,
-  programming, and systems administration.
-- Preserves the baseline's directness, correction handling, and no-tool behavior.
-
-Corpus requirements:
-
-- Cosmopedia v2 and Stack Exchange lead the technical knowledge mixture.
-- Linux/GNU and cloud-native source, repository documentation, and a bounded
-  amount of Linux, Git, and Python development discussion provide concrete
-  systems vocabulary.
-- Tulu 3, Smol-SmolTalk, and UltraChat provide broader assistant supervision.
-- The validated Interaction Contract and HelpSteer2 stage remains last.
-
-WALDO requirements:
-
-- Architecture-compatible continuation and completed-path skipping.
-- Fixed side-by-side conversation evaluations.
-- Promote only when it beats conversation1 without material regression.
-
-## Conversation level 3 (`0003-conversation.yaml`)
-
-| Field | Plan |
-| --- | --- |
-| Status | Larger successor created after conversation2 exposed a model-capacity ceiling |
-| Builds from | Random initialization with the complete, known-good conversation1 recipe embedded first |
-| Model type | Approximately 681M-parameter dense model, 4,096-token context, technical knowledge midtraining, and expanded conversation SFT |
-| Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
-| Approximate runtime | Approximately 7-10 days for the roughly 22B-token curriculum; replace this estimate with measured evidence after the first run |
-
-Success criteria:
-
-- Improves instruction following and multi-turn coherence over conversation2.
-- Correctly answers basic factual questions about operating systems, Linux, programming, and systems administration.
-- Improves familiarity with software development, systems, debugging, review, and technical documentation.
-- Preserves the baseline's directness, correction handling, and no-tool behavior.
-- Passes the baseline conversation and foundation regression tests.
-
-Corpus requirements:
-
-- Cosmopedia v2 educational material, Stack Exchange technical Q&A, PLOS, and
-  Wikimedia form the majority of the 18B-token foundation mixture.
-- Linux/GNU and cloud-native source, repository documentation, and a bounded
-  amount of Linux, Git, and Python development discussion provide concrete
-  systems vocabulary in a separate 3B-token stage. Known non-English rows are
-  excluded; legacy rows without language metadata are retained.
-- Tulu 3, Smol-SmolTalk, and UltraChat provide broader assistant supervision.
-- The validated Interaction Contract and HelpSteer2 stage remains last so
-  narrow behavior tuning is not overwritten by broader training.
-
-WALDO requirements:
-
-- A fresh model is required because conversation3 has roughly twice the
-  parameter capacity and context length of conversation1/conversation2 as well
-  as a corrected stage order.
-- Fixed side-by-side conversation evaluations.
-- Promote only when it beats the previous rung without material regression.
-
-## Tool-use model (`holding/tool-use.yaml`)
-
-| Field | Plan |
-| --- | --- |
-| Status | On hold until the next conversation model is trained, evaluated, and promoted |
-| Builds from | Placeholder `conversation` model; update the base and architecture before use |
-| Model type | Dense conversation model plus tool-use SFT; approximately 337M parameters after revision |
-| Recommended hardware | 1x NVIDIA H200 141 GB |
-| Approximate runtime | 1-2 hours for the 20M-token tool-only stage |
-
-Success criteria:
-
-- Decides whether a tool is needed.
-- Calls only a provided tool with schema-valid arguments.
-- Handles results and errors.
-- Grounds the final answer in tool results.
-- Retains conversation quality.
-
-Corpus requirements:
-
-- One normalized call protocol.
-- Matched tool and no-tool cases.
-- Unavailable-tool and clarification cases.
-- Invalid-argument, empty-result, and error cases.
-- Result-grounding examples.
-
-WALDO requirements:
-
-- Verified trained-parent initialization and lineage (supported).
-- Selectable tool-data categories.
-- Fixed tool and conversation regression tests.
-- Tool-specific metrics.
-- Inference tool registry and execution loop.
-
-## Capable dense foundation model
-
-| Field | Plan |
-| --- | --- |
-| Status | Planned; corpus and evaluation work required |
-| Builds from | New larger initialization using all proven dense recipes and foundation tests |
-| Model type | Dense foundation; initial target approximately 3B parameters |
-| Recommended hardware | 1x 8-GPU NVIDIA B200 SXM system |
-| Approximate runtime | 3-6 days for an initial 3B-parameter, 60B-token candidate |
-
-Success criteria:
-
-- Useful general language and factual knowledge.
-- Summarization and technical understanding.
-- Code completion and mathematical competence.
-- All capabilities are evaluated before assistant tuning.
-
-Corpus requirements:
-
-- Reference prose, books, and education.
-- Science, technical documentation, and code.
-- Mathematics, law, and measured multilingual material.
-- Add open textbooks, stronger mathematics, and Stack V2 Edu.
-
-WALDO requirements:
-
-- Corpus-mixture reporting and cross-corpus deduplication.
-- Contamination checks and domain evaluations.
-- Scaling forecasts and checkpoint comparison.
-
-## Capable dense assistant
-
-| Field | Plan |
-| --- | --- |
-| Status | Planned; follows the capable dense foundation |
-| Builds from | Promoted capable dense foundation checkpoint |
-| Model type | Dense foundation plus conversation and instruction SFT |
-| Recommended hardware | 1x 8-GPU NVIDIA B200 SXM system |
-| Approximate runtime | 2-6 hours for approximately 200M-500M SFT tokens |
-
-Success criteria:
-
-- Passes the complete conversation gate at higher quality.
-- Retains foundation knowledge and skills.
-- Avoids excessive refusal, verbosity, and template repetition.
-
-Corpus requirements:
-
-- Human and natural dialogue anchors.
-- Filtered broad instruction data.
-- High-quality scored responses.
-- Bounded reviewed Interaction Contract examples.
-
-WALDO requirements:
-
-- Explicit parent artifacts.
-- Immutable behavioral evaluation splits.
-- Assistant-only loss and regression reporting.
-
-## Reasoning assistant
-
-| Field | Plan |
-| --- | --- |
-| Status | Planned; training corpus is incomplete |
-| Builds from | Promoted capable dense assistant checkpoint |
-| Model type | Dense assistant plus reasoning post-training |
-| Recommended hardware | 1x 8-GPU NVIDIA B200 SXM system |
-| Approximate runtime | 4-12 hours for approximately 500M-2B verified post-training tokens |
-
-Success criteria:
-
-- Multi-step mathematical and scientific problem solving.
-- Code generation validated by tests.
-- Planning with verifiable outcomes.
-- No regression in conversation or foundation gates.
-
-Corpus requirements:
-
-- Redistributable worked problems and proofs.
-- Executable code tasks and scientific reasoning.
-- OpenWALDO-generated examples with independently verified answers and complete
-  provenance.
-
-WALDO requirements:
-
-- Reasoning-specific record types and answer verification.
-- Sandboxed code and test execution.
-- Contamination controls and benchmark regression gates.
-
-## Reliable tool and agent assistant
-
-| Field | Plan |
-| --- | --- |
-| Status | Planned; depends on the reasoning and basic tool gates |
-| Builds from | Promoted reasoning assistant checkpoint |
-| Model type | Dense reasoning assistant plus agentic tool post-training |
-| Recommended hardware | 1x 8-GPU NVIDIA B200 SXM system |
-| Approximate runtime | 2-8 hours for approximately 200M-1B trajectory tokens |
-
-Success criteria:
-
-- Retains basic tool selection and execution.
-- Plans multi-step work and selects among multiple tools.
-- Recovers from failures with bounded retries.
-- Stops correctly.
-
-Corpus requirements:
-
-- Normalized multi-step tool traces.
-- Alternate plans, partial results, failures, and retries.
-- Permission boundaries.
-- Ordinary no-tool conversation anchors.
-
-WALDO requirements:
-
-- Stateful tool-loop evaluation.
-- Sandboxed executable environments.
-- Trajectory metrics and end-to-end agent regression tests.
-
-## Small sparse-MoE proof
-
-| Field | Plan |
-| --- | --- |
-| Status | Planned; WALDO does not yet support sparse-MoE training |
-| Builds from | Random initialization using the proven dense pipeline, corpus contracts, and evaluations |
-| Model type | Small sparse-MoE foundation; target 1B-3B total and 300M-700M active parameters |
-| Recommended hardware | 1x 8-GPU NVIDIA H200 or B200 SXM system |
-| Approximate runtime | 4-12 hours for a bounded 2B-5B-token proof |
-
-Success criteria:
-
-- Training and resume are reliable.
-- No expert collapse and acceptable load balance.
-- Matches a comparable dense control on a bounded language task.
-
-Corpus requirements:
-
-- Babbling-model foundation mixture.
-- No new knowledge corpus is required; this rung tests routing.
-
-WALDO requirements:
-
-- Sparse architecture declarations.
-- Total, active, and trainable parameter accounting.
-- Expert parallelism and router metrics.
-- Distributed checkpoints and MoE-aware forecasting.
-
-## OpenWALDO sparse-MoE foundation and assistant
-
-| Field | Plan |
-| --- | --- |
-| Status | Planned; follows the small sparse-MoE proof |
-| Builds from | A scaled MoE configuration starts new foundation weights; conversation, reasoning, and tools then inherit promoted checkpoints |
-| Model type | Target 10B-20B total and 2B-4B active sparse-MoE foundation with successive assistant checkpoints |
-| Recommended hardware | 1x 8-GPU NVIDIA B200 SXM system |
-| Approximate runtime | 4-10 days for a 50B-100B-token foundation candidate; post-training adds approximately 1 day |
-
-Success criteria:
-
-- Meets the capable dense foundation and assistant gates.
-- Shows useful compute efficiency.
-- Maintains healthy routing through post-training.
-
-Corpus requirements:
-
-- Complete capable-foundation mixture.
-- Enough domain and language diversity to exercise experts.
-- Mixture controls that prevent one source from dominating routing.
-
-WALDO requirements:
-
-- Packed training data and distributed topology planning.
-- Native artifact sets and expert-level telemetry.
-- NeMo/Megatron backend.
-
-## Nemotron 30B foundation adaptation
-
-| Field | Plan |
-| --- | --- |
-| Status | Planned; begins after the smaller sparse-MoE path is proven |
-| Builds from | Pinned Nemotron-3 Nano 30B-A3B Base; starts an external model lineage |
-| Model type | Native 30B-total, approximately 3.5B-active hybrid Mamba/Transformer sparse-MoE using full-parameter continued pretraining |
-| Recommended hardware | 1x 8-GPU NVIDIA B200 SXM system with 2 TB host RAM and 8-16 TB local NVMe |
-| Approximate runtime | 2-4 hours for 1B training tokens; 10-18 hours for 5B tokens, plus preparation and evaluation |
-
-Success criteria:
-
-- Improves selected WALDO knowledge domains.
-- Avoids unacceptable base-model regression.
-- Maintains healthy expert routing.
-- Resumes exactly and produces a verified native export.
-
-Corpus requirements:
-
-- Reviewed capable-foundation mixture.
-- Initial bounded 1B-token proof.
-- Optional 5B-token candidate after the proof passes.
-
-WALDO requirements:
-
-- Pinned native-model import and Nemotron tokenizer/configuration.
-- Packed data and NeMo/Megatron execution.
-- Native distributed checkpoints.
-- MoE and base-model regression evaluation.
-
-## Nemotron 30B post-training
-
-| Field | Plan |
-| --- | --- |
-| Status | Planned; last rung in this ladder |
-| Builds from | Promoted Nemotron foundation-adaptation checkpoint; conversation, reasoning, and tools produce separate ordered checkpoints |
-| Model type | Native sparse-MoE foundation plus full SFT or LoRA adapters |
-| Recommended hardware | 1x 8-GPU NVIDIA B200 SXM system |
-| Approximate runtime | 4-12 hours for conversation, reasoning, tools, evaluation, and export |
-
-Success criteria:
-
-- Each stage passes its corresponding smaller-model gate.
-- Every earlier foundation and behavior gate remains passing.
-- Adapters and merged artifacts are reproducible.
-
-Corpus requirements:
-
-- Reviewed conversation mixture.
-- Verified reasoning mixture.
-- Normalized tool mixture.
-- Nemotron-native rendering.
-
-WALDO requirements:
-
-- Native chat and tool templates.
-- Adapter lineage and stage-specific evaluation.
-- Native and merged exports.
-- Inference tool loop.
-
-## Next steps
-
-- Freeze the language, conversation, and tool evaluation sets.
-- Run `0002-conversation1` as the known-good baseline.
-- Use `0002-conversation2` for an architecture-compatible continuation or a
-  fresh side-by-side comparison with conversation1.
-- Train `0003-conversation` under a new model name and compare it with both
-  337M-parameter conversation models. Its larger architecture cannot reuse
-  their weights.
-- Keep tool-use training on hold until a conversation checkpoint is promoted,
-  then update and revalidate `holding/tool-use.yaml` against that parent.
-- Build the capable dense foundation, assistant, reasoning, and agent rungs.
-- Fill the textbook, mathematics, technical, and tool-corpus gaps.
-- Implement and validate the small sparse-MoE proof.
-- Build the OpenWALDO sparse-MoE lineage.
-- Adapt the Nemotron foundation, then run its separate conversation, reasoning,
-  and tool post-training stages.
-
-The supporting native-model and backend design is in the
-[foundation and sparse-MoE plan](../docs/FOUNDATION-MOE-PLAN.md).
+# Reference-model training ladder
+
+This directory contains the active, gated path from a reproducible narrow
+language model toward broader capability. Every rung has one hypothesis, a
+pinned compose, fixed prompts, and explicit promotion criteria. A failed rung
+stops the ladder; it does not justify changing several variables at once.
+
+Historical composes remain under [`archive`](archive). The `experiments`,
+`general-foundation`, and `tinystories` subdirectories preserve earlier
+diagnostics and are not active ladder rungs.
+
+## Rung 0001: Tiny Shakespeare reference — passed
+
+[`0001-tiny-shakespeare.yaml`](0001-tiny-shakespeare.yaml) is WALDO's first
+reference model. It uses the exact 1,115,394-byte Tiny Shakespeare text, the
+built-in byte tokenizer, a 10.7M-parameter decoder, and a deterministic 90/10
+contiguous split that does not introduce artificial line-level EOS tokens.
+
+Validated result on 2026-10-05:
+
+- model `tiny-shakespeare-control-01`, ID `b4f8477a55ad`;
+- 5,000 optimizer steps and 81.92M consumed tokens;
+- held-out loss improved from 5.3814 to 1.5117;
+- step 1,250 was correctly selected and reloaded after terminal loss rose to
+  2.0940;
+- all eight temperature-0.8 samples preserved play formatting and produced
+  locally plausible Shakespeare-like text without immediate loop collapse;
+- greedy decoding exposed a repeat attractor around "season/state/seas"; and
+- training completed in under 15 minutes on two H200 GPUs.
+
+The full 81.92M-token compose is retained because it reproduces the learning
+curve, overtraining evidence, and selected checkpoint. Changing its horizon to
+20.48M would also change the cosine schedule and would not reproduce the same
+checkpoint.
+
+Run and evaluate it with:
+
+```console
+go run ./cmd/waldo/ model forecast composes/0001-tiny-shakespeare.yaml
+go run ./cmd/waldo/ model train tiny-shakespeare-control-01 \
+  composes/0001-tiny-shakespeare.yaml
+./composes/evaluate-tiny-shakespeare.sh \
+  tiny-shakespeare-control-01 /tmp/tiny-shakespeare-control-01-eval.jsonl
+```
+
+This rung proves that WALDO's ingestion, byte tokenization, packing, optimizer,
+held-out evaluation, checkpoint selection, reload, and raw generation paths can
+learn a real language distribution. EOS is not a gate because this corpus is
+one continuous document.
+
+## Rung 0002: TinyStories byte control — diagnostic complete
+
+[`0002-tinystories-byte.yaml`](0002-tinystories-byte.yaml) asks whether the
+same proven 10.7M model can move from one play-like stream to many short,
+simple stories. It keeps the architecture, tokenizer, context, batch,
+optimizer, learning rate, dropout, initialization, and seed from rung 0001.
+The intentional changes are the corpus, record-level evaluation, shuffle
+capacity, and the longer 15,000-step horizon needed to encounter diverse
+stories.
+
+The corpus is the first pinned training Parquet shard from the original
+TinyStories release. This bounded quarter-corpus makes the rung practical on a
+Mac while retaining hundreds of thousands of complete story records. It is a
+WALDO-shaped learning control, not yet an exact reproduction of the paper's
+alternating GPT-Neo attention or pruned tokenizer. The paper and published
+prompts are available from the
+[TinyStories project](https://huggingface.co/datasets/roneneldan/TinyStories)
+and [paper](https://arxiv.org/abs/2305.07759).
+
+Hypothesis: changing only to a constrained simple-English story distribution
+will preserve grammatical generation while improving entity, causal, and
+short-plot consistency beyond the Shakespeare style control.
+
+Promotion gates:
+
+1. Training completes without non-finite loss, and the selected checkpoint's
+   reloaded held-out loss agrees with its persisted evaluation.
+2. Best held-out loss improves by at least 50% from the initial evaluation.
+3. At least six of eight temperature-0.8 samples remain grammatical and retain
+   the prompt's people, objects, and causal setup for at least 150 generated
+   byte tokens.
+4. No more than two samples collapse into an immediate repeated sentence or
+   phrase loop.
+5. EOS is measured at a horizon calibrated to the corpus record-length
+   distribution. Unlike rung 0001, every TinyStories record teaches a real
+   document boundary.
+6. Greedy output is recorded as a degeneration diagnostic, but it is not the
+   sole promotion decision.
+
+Validated results on 2026-10-05:
+
+- the four-GPU, two-host run reached held-out loss 0.5782 after 245.8M tokens;
+- the two-GPU, single-host control reached 0.5794 with the same architecture,
+  data, token budget, global batch, optimizer steps, and seed;
+- the 0.21% final-loss difference passes the 3% topology-equivalence gate and
+  rules out multi-host data parallelism as the cause of the generation issues;
+- both runs produced grammatical simple-story prose at temperature 0.8, but
+  lost prompt entities and causal details, exhibited greedy repetition, and
+  rarely emitted EOS within the evaluation horizon; and
+- rung 0002 therefore passes learning and execution controls but fails its
+  prompt-retention and repetition capability gates.
+
+The failure is useful evidence rather than a reason to tune several settings:
+with byte tokenization, the 256-token context is exactly 256 UTF-8 bytes. The
+published prompts consume much of that window before generation begins.
+
+Run it only after `core/synthetic/tinystories-reference` has been ingested:
+
+```console
+cd ../fetchers
+go run ./cmd/fetcher corpora/tinystories-reference.ini \
+  /tmp/tinystories-reference
+cd ../waldo
+go run ./cmd/waldo/ index ingest /tmp/tinystories-reference \
+  core/synthetic/tinystories-reference
+
+go run ./cmd/waldo/ model forecast composes/0002-tinystories-byte.yaml
+go run ./cmd/waldo/ model train tinystories-byte-01 \
+  composes/0002-tinystories-byte.yaml
+./composes/evaluate-tinystories.sh \
+  tinystories-byte-01 /tmp/tinystories-byte-01-eval.jsonl
+./composes/evaluate-tinystories.sh \
+  tinystories-byte-01 /tmp/tinystories-byte-01-greedy.jsonl 0 42
+```
+
+## Rung 0003: TinyStories 512-byte context — passed
+
+[`0003-tinystories-context-512.yaml`](0003-tinystories-context-512.yaml)
+isolates the next hypothesis: rung 0002 failed because a 256-byte window cannot
+hold the prompt and enough continuation to preserve its setup. It changes only
+the architecture and training sequence lengths from 256 to 512 and reduces the
+global batch from 64 to 32. Both rungs therefore retain 16,384 tokens per
+optimizer update, 15,000 optimizer steps, and 245.76M total training tokens.
+
+The comparison asks:
+
+1. Does held-out loss remain stable or improve without changing the token
+   budget or optimizer-step count?
+2. Do at least six of eight temperature-0.8 samples retain the people,
+   objects, and causal setup for 150 generated bytes?
+3. Are immediate repetition and prompt retention materially better than rung
+   0002?
+
+Validated result on 2026-10-06:
+
+- held-out loss improved from rung 0002's 0.5782 to 0.5375, or 7.0%, with the
+  same 245.76M tokens and 15,000 optimizer steps;
+- temperature-0.8 prompt retention improved, with four clear passes, two
+  borderline continuations, and two failures; no sample immediately collapsed
+  into a phrase loop;
+- greedy decoding remained strongly repetitive, so context alone did not fix
+  the remaining capability limitation;
+- an audit of all 509,625 source stories measured mean 900 bytes, P50 789,
+  P90 1,381, and P95 1,757; only 0.016% are 256 bytes or shorter; and
+- after correcting the invalid 256-token EOS horizon, six of eight generations
+  emitted EOS within 1,536 tokens. EOS training works; the two remaining
+  max-token responses exposed the same long-generation degeneration.
+
+Rung 0003 passes the context hypothesis. The next controlled question is
+whether additional core model capacity reduces semantic drift and repetition.
+
+Run and evaluate it with:
+
+```console
+go run ./cmd/waldo/ model forecast composes/0003-tinystories-context-512.yaml
+go run ./cmd/waldo/ model train tinystories-context-512-01 \
+  composes/0003-tinystories-context-512.yaml \
+  --hostfile ~/hostfile
+./composes/evaluate-tinystories.sh \
+  tinystories-context-512-01 /tmp/tinystories-context-512-01-eval.jsonl
+./composes/evaluate-tinystories.sh \
+  tinystories-context-512-01 /tmp/tinystories-context-512-01-greedy.jsonl 0 42
+./composes/evaluate-tinystories.sh \
+  tinystories-context-512-01 /tmp/tinystories-context-512-01-eos.jsonl \
+  0.8 42 1536
+```
+
+## Rung 0004: TinyStories capacity pilot — passed
+
+[`0004-tinystories-capacity-pilot.yaml`](0004-tinystories-capacity-pilot.yaml)
+keeps the byte tokenizer, 512-byte context, corpus, batch, optimizer-step count,
+and 245.76M-token budget from rung 0003. It increases only core capacity to a
+30.8M-parameter, 9-layer, width-512 decoder with full multi-head attention.
+The peak learning rate follows square-root model-size scaling from 0.001 to
+0.0006; all other training controls remain fixed.
+
+This is intentionally a capacity pilot at about 8 tokens per parameter, not a
+compute-optimal qualification run. Promote it only if held-out loss and the
+fixed samples materially improve. If capacity helps, a later qualification
+rung can extend the same architecture toward 20 tokens per parameter. If it
+does not help, do not spend the larger token budget.
+
+Validated result on 2026-10-06:
+
+- held-out loss improved another 9.0%, from rung 0003's 0.5375 to 0.4892;
+- loss continued improving through the terminal checkpoint, including from
+  0.5004 at step 12,000 to 0.4892 at step 15,000;
+- all eight temperature-0.8 samples emitted EOS within the calibrated
+  1,536-token horizon, improving from six of eight;
+- obvious greedy loop collapse fell from roughly seven of eight samples to
+  three of eight; and
+- entity and causal fidelity remained inconsistent, so the pilot establishes
+  scaling direction rather than completing the capability gate.
+
+Run it with:
+
+```console
+go run ./cmd/waldo/ model forecast composes/0004-tinystories-capacity-pilot.yaml
+go run ./cmd/waldo/ model train tinystories-capacity-pilot-01 \
+  composes/0004-tinystories-capacity-pilot.yaml \
+  --hostfile ~/hostfile
+./composes/evaluate-tinystories.sh \
+  tinystories-capacity-pilot-01 /tmp/tinystories-capacity-pilot-01-eval.jsonl
+./composes/evaluate-tinystories.sh \
+  tinystories-capacity-pilot-01 /tmp/tinystories-capacity-pilot-01-greedy.jsonl \
+  0 42
+./composes/evaluate-tinystories.sh \
+  tinystories-capacity-pilot-01 /tmp/tinystories-capacity-pilot-01-eos.jsonl \
+  0.8 42 1536
+```
+
+## Rung 0005: TinyStories capacity qualification — behavioral near-miss
+
+[`0005-tinystories-capacity-20tpp.yaml`](0005-tinystories-capacity-20tpp.yaml)
+changes only the training horizon from rung 0004. Its requested 613,611,520
+tokens resolve to 613,613,568 packed tokens: 37,452 optimizer steps and 20.00
+tokens per core parameter. It trains from initialization so the cosine schedule
+covers the complete qualification horizon.
+
+Here "tokens" means built-in byte-tokenizer tokens. The ratio is exact for the
+compose but is not interchangeable with 20 tokens per parameter measured by a
+subword tokenizer. The 613.6M byte tokens represent about 1.34 passes over the
+458.7M source bytes; at the earlier 4.26 bytes/subword measurement they are only
+about 4.7 subword-equivalent tokens per core parameter.
+
+Promotion requires all of the following:
+
+1. Reloaded held-out loss is at least 3% below the pilot, or no more than
+   0.4745, with the selected checkpoint near the end rather than an early
+   overtraining reversal.
+2. At least six of eight temperature-0.8 samples clearly retain the prompt's
+   people, objects, and causal setup for the first 150 generated bytes.
+3. No more than one temperature sample and no more than two greedy samples
+   collapse into an immediate repeated sentence or phrase loop.
+4. At least seven of eight temperature-0.8 samples emit EOS within the
+   corpus-calibrated 1,536-token horizon.
+
+Validated result on 2026-10-07:
+
+- held-out loss improved 9.1%, from 0.4892 to 0.4447, passing the 0.4745
+  numerical gate; the terminal step 37,452 was selected and reloaded;
+- five of eight temperature samples clearly retained the prompt's entities,
+  objects, and causal setup, short of the six-of-eight gate;
+- no temperature sample immediately collapsed into an exact phrase loop, but
+  about four of eight greedy samples did, missing the two-of-eight limit; and
+- seven of eight long-horizon samples emitted EOS, passing the calibrated
+  stopping gate.
+
+Rung 0005 therefore confirms that additional capacity and exposure lower loss,
+improve prose, and teach stopping, but it does not pass causal fidelity or
+greedy-repetition promotion. Do not extend the same byte-token recipe merely
+because its loss was still improving.
+
+Run it with:
+
+```console
+go run ./cmd/waldo/ model forecast composes/0005-tinystories-capacity-20tpp.yaml
+go run ./cmd/waldo/ model train tinystories-capacity-20tpp-01 \
+  composes/0005-tinystories-capacity-20tpp.yaml \
+  --hostfile ~/hostfile
+./composes/evaluate-tinystories.sh \
+  tinystories-capacity-20tpp-01 /tmp/tinystories-capacity-20tpp-01-eval.jsonl
+./composes/evaluate-tinystories.sh \
+  tinystories-capacity-20tpp-01 /tmp/tinystories-capacity-20tpp-01-greedy.jsonl \
+  0 42
+./composes/evaluate-tinystories.sh \
+  tinystories-capacity-20tpp-01 /tmp/tinystories-capacity-20tpp-01-eos.jsonl \
+  0.8 42 1536
+```
+
+## Later rungs
+
+Rung 0006 must be a compose-native compact byte-BPE source-exposure control,
+not another byte-token extension. The measurement compose
+[`experiments/0003-tinystories-bpe-preflight.yaml`](experiments/0003-tinystories-bpe-preflight.yaml)
+trains a 4K BPE on distributable PressBooks, then measures it on the pinned
+TinyStories corpus. This keeps tokenizer training disjoint from the model
+evaluation corpus and avoids weakening the distribution gate. It must be run
+only with `model forecast --preflight`, never `model train`.
+
+Use the measured TinyStories bytes/token, record lengths, and unique targets to
+choose token context and a 1.34-source-pass budget matching rung 0005. Do not
+create the training compose until those measurements are available; token
+counts from different tokenizers are not equivalent. General-corpus mixtures
+come only after these narrow reference
+controls establish stable grammar, consistency, EOS, repetition, and held-out
+behavior.
+
+## Rung 0006: TinyStories BPE source-exposure control — behavioral near-miss
+
+[`0006-tinystories-bpe-source-control.yaml`](0006-tinystories-bpe-source-control.yaml)
+uses the measured PressBooks-trained 4K BPE while retaining rung 0005's
+9-layer, width-512 core, 512-token context, TinyStories revision, optimizer,
+learning rate, dropout, initialization, seed, and evaluation partition.
+
+The preflight measured:
+
+- 3.013 TinyStories bytes/token in training and 3.020 held out;
+- a 1,543-byte effective 512-token context;
+- token-length P50/P90/P95 of 258/475/604;
+- 91.6% of records fitting one sequence, versus 3.8% with byte tokens;
+- 152,610,804 unique packed BPE targets per source pass; and
+- 1.708 expected document/EOS boundaries per sequence.
+
+Rung 0005 consumed 613,613,568 packed byte targets over 458,762,511
+unique packed targets, or 1.337541 effective passes. Applying that exact ratio
+to the BPE source gives a requested budget of 204,123,174 tokens; WALDO rounds
+this to 204,128,256 packed tokens and 1.337574 passes.
+
+The global batch is 12 sequences with three accumulation steps. On four GPUs,
+each micro-batch contains four sequences, one per rank. At measured fertility,
+one optimizer update covers about 18.5K source bytes, close to rung 0005's
+16.4K, and resolves to 33,224 optimizer steps instead of allowing token
+compression to reduce the run to roughly one-third as many updates.
+
+Promotion requires all of the following:
+
+1. Training and artifact reload complete without non-finite loss.
+2. Held-out bits per byte, computed as `loss / (3.020 * ln(2))`, is no worse
+   than rung 0005's 0.6416 byte-token BPB. Raw token losses must not be compared
+   across the two tokenizers.
+3. At least six of eight temperature-0.8 samples clearly retain the prompt's
+   people, objects, and causal setup for the first 150 generated bytes.
+4. No more than one temperature sample and no more than two greedy samples
+   collapse into an immediate repeated sentence or phrase loop.
+5. At least seven of eight temperature-0.8 samples emit EOS within 1,536
+   generated tokens. Record token lengths are now shorter, but the same horizon
+   is retained for a conservative stopping comparison.
+
+Run and evaluate it with:
+
+```console
+go run ./cmd/waldo/ model forecast \
+  composes/0006-tinystories-bpe-source-control.yaml
+go run ./cmd/waldo/ model train tinystories-bpe-source-control-01 \
+  composes/0006-tinystories-bpe-source-control.yaml \
+  --hostfile ~/hostfile
+./composes/evaluate-tinystories.sh \
+  tinystories-bpe-source-control-01 \
+  /tmp/tinystories-bpe-source-control-01-eval.jsonl
+./composes/evaluate-tinystories.sh \
+  tinystories-bpe-source-control-01 \
+  /tmp/tinystories-bpe-source-control-01-greedy.jsonl 0 42
+./composes/evaluate-tinystories.sh \
+  tinystories-bpe-source-control-01 \
+  /tmp/tinystories-bpe-source-control-01-eos.jsonl 0.8 42 1536
+```
+
+Validated result on 2026-10-08:
+
+- model `tinystories-bpe-source-control-01`, ID `e6ddce038dfd`, completed all
+  33,224 steps and selected step 33,000;
+- held-out loss 1.1500 normalizes to 0.54943 bits per byte, improving 14.4%
+  over rung 0005's 0.6416 BPB;
+- the final quarter still improved held-out loss by 3.5%, while late gradient
+  norms remained stable and the final checkpoint showed no material reversal;
+- all eight long-horizon samples emitted EOS;
+- clear greedy collapse fell to two of eight, at the promotion limit; and
+- only five of eight temperature samples clearly preserved prompt entities and
+  causality, missing the six-of-eight promotion gate.
+
+Rung 0006 proves that compact BPE fixes effective context, normalized language
+loss, stopping, and much of the repetition failure. Semantic binding remains
+the limiting capability. Because it used only 6.65 BPE tokens/core parameter,
+ended with measurable learning headroom, and changed several behavioral
+diagnostics in the right direction, one full 20-token/core qualification is
+justified.
+
+## Rung 0007: TinyStories BPE 20-TPP qualification — passed
+
+[`0007-tinystories-bpe-20tpp.yaml`](0007-tinystories-bpe-20tpp.yaml) changes
+only the training horizon from rung 0006. It trains from initialization so the
+cosine schedule spans all 613,611,520 requested BPE tokens. WALDO resolves
+99,872 optimizer steps, 613,613,568 packed targets, and 4.0208 effective source
+passes.
+
+Promotion requires:
+
+1. Selected held-out BPB no greater than 0.5329, a 3% improvement from rung
+   0006, with no material late overtraining reversal.
+2. At least six of eight temperature-0.8 samples clearly retain prompt people,
+   objects, and causal setup for the first 150 generated bytes.
+3. No more than one temperature sample and no more than two greedy samples
+   collapse into an immediate repeated sentence or phrase loop.
+4. At least seven of eight temperature-0.8 samples emit EOS within 1,536
+   generated tokens.
+
+Run and evaluate it with:
+
+```console
+go run ./cmd/waldo/ model forecast composes/0007-tinystories-bpe-20tpp.yaml
+go run ./cmd/waldo/ model train tinystories-bpe-20tpp-01 \
+  composes/0007-tinystories-bpe-20tpp.yaml \
+  --hostfile ~/hostfile
+./composes/evaluate-tinystories.sh \
+  tinystories-bpe-20tpp-01 /tmp/tinystories-bpe-20tpp-01-eval.jsonl
+./composes/evaluate-tinystories.sh \
+  tinystories-bpe-20tpp-01 /tmp/tinystories-bpe-20tpp-01-greedy.jsonl 0 42
+./composes/evaluate-tinystories.sh \
+  tinystories-bpe-20tpp-01 /tmp/tinystories-bpe-20tpp-01-eos.jsonl \
+  0.8 42 1536
+```
+
+Every result must retain the compose, model summary, run ID, telemetry,
+consumption report, temperature samples, greedy samples, and a written gate
+decision.
+
+Validated result on 2026-10-08:
+
+- model `tinystories-bpe-20tpp-01`, ID `5d18938fa102`, run
+  `3ee94d2f3e466ce2`, completed all 99,872 steps and selected the terminal
+  checkpoint;
+- exact held-out loss 1.042866 normalizes to 0.498234 bits per byte, improving
+  9.3% over rung 0006 and passing the 0.5329 gate;
+- held-out loss improved through the final quarter, with no late reversal and
+  exact agreement between live, serialized, and reloaded FP32 evaluation;
+- seven of eight temperature samples clearly retained the prompt's people,
+  objects, and causal setup through the first 150 generated bytes;
+- no temperature sample and one greedy sample collapsed into a clear repeated
+  phrase or sentence loop; and
+- all eight long-horizon samples emitted EOS.
+
+Rung 0007 passes every promotion gate. It is the first qualified TinyStories
+reference for this ladder: compact BPE, sufficient effective context, stable
+multi-host optimization, prompt retention, bounded repetition, and learned
+document stopping all work together.
+
+## Rung 0008: PressBooks real-text control — failed capability gates
+
+Do not jump directly from this narrow reference to the retired broad-mixture
+recipe. First isolate distribution transfer while preserving the qualified
+architecture, tokenizer, context, optimizer, and seed. The measurement compose
+[`experiments/0004-pressbooks-bpe-preflight.yaml`](experiments/0004-pressbooks-bpe-preflight.yaml)
+measures one filtered PressBooks pass with the exact rung-0007 tokenizer.
+PressBooks is the tokenizer's training source and is structured, distributable
+real educational prose, so this is the smallest defensible bridge away from
+synthetic stories.
+
+The completed preflight measured:
+
+- 50.8K included training records and 503.9 MiB of UTF-8 text;
+- 3.463 training bytes/token and 3.500 held-out bytes/token;
+- 1,773 effective context bytes per 512-token sequence;
+- token-length P50/P90/P95 of 1,466/6,907/10,117, with 20.3% of records
+  fitting one sequence;
+- 0.170 expected document/EOS boundaries per sequence; and
+- 152.6M unique packed targets per source pass.
+
+[`0008-pressbooks-bpe-20tpp.yaml`](0008-pressbooks-bpe-20tpp.yaml) therefore
+trains for four source passes. Preflight resolves that to about 610.5M BPE targets,
+essentially the same 20-token/core-parameter horizon and four-source-pass
+exposure as rung 0007. It trains from initialization and changes only the
+filtered model-training distribution; the architecture, tokenizer, context,
+optimizer, learning rate, dropout, initialization, seed, and evaluation policy
+remain fixed.
+
+Promotion requires:
+
+1. Training and artifact reload complete without non-finite loss, selected
+   held-out loss improves at least 70% from initialization, and selection does
+   not expose a material late overtraining reversal.
+2. At least 12 of 15 deterministic general-continuation probes are grammatical
+   and remain on topic through their first sentence.
+3. No more than two deterministic probes and no more than two temperature-0.7
+   probes collapse into an immediate repeated sentence or phrase loop.
+4. At least eight of ten factual stems produce a relevant first sentence.
+   Exact factual recall is scored and retained, but is not yet a hard gate for
+   a 32.8M raw pretraining control.
+
+Run and evaluate it with:
+
+```console
+go run ./cmd/waldo/ model forecast composes/0008-pressbooks-bpe-20tpp.yaml \
+  --preflight
+go run ./cmd/waldo/ model train pressbooks-bpe-20tpp-01 \
+  composes/0008-pressbooks-bpe-20tpp.yaml --hostfile ~/hostfile
+./composes/general-foundation/evaluate-general.sh \
+  pressbooks-bpe-20tpp-01 /tmp/pressbooks-bpe-20tpp-01-greedy.jsonl 0 42
+./composes/general-foundation/evaluate-general.sh \
+  pressbooks-bpe-20tpp-01 /tmp/pressbooks-bpe-20tpp-01-temp07.jsonl 0.7 42
+```
+
+Do not add Wikimedia, Stack Exchange, or PLOS until this real-text control
+passes. This keeps corpus mixture, source exposure, and architecture from
+changing in one experiment.
+
+Validated result on 2026-10-08:
+
+- model `pressbooks-bpe-20tpp-01`, ID `6cf211a17455`, run
+  `2e3f45089a3d8aba`, completed all 99,363 steps and consumed 610,482,555
+  packed targets across four source passes;
+- the selected step-98,500 checkpoint had held-out loss 2.716397 and 1.119853
+  bits per byte, with exact agreement after artifact reload;
+- loss improved 67.7% from the initial 8.400077, missing the precommitted 70%
+  gate; terminal loss 2.723817 was only 0.27% above the selected checkpoint,
+  so there was no material late overtraining reversal;
+- ten of 15 deterministic probes had clearly grammatical, on-topic first
+  sentences, with one additional borderline operating-system continuation,
+  short of the required 12;
+- all 15 deterministic continuations entered a clear repeated phrase or
+  sentence pattern, and nine of 15 temperature-0.7 continuations did so,
+  missing both repetition limits;
+- eight of ten factual stems produced a topically relevant first sentence,
+  passing the relevance gate, but only two were clearly factually correct and
+  one was borderline; exact recall remains diagnostic rather than a hard gate;
+  and
+- neither evaluation emitted EOS within 128 tokens. This is retained as a
+  stopping diagnostic, not a gate for raw continuation pretraining.
+
+Rung 0008 does not promote. The controlled result shows that the qualified
+TinyStories architecture transfers enough syntax and topic association to
+educational prose to lower loss and complete factual stems, but it does not
+have sufficient capacity or training signal for reliable factual recall or
+non-repetitive general continuation. Broadening the corpus now would confound
+that finding, so the active ladder stops here pending a separately designed
+capacity or post-training experiment.
+
+## Forecast before training
+
+`waldo model forecast <compose>` now reports the exact WALDO parameter
+decomposition, core/token-I/O allocation, GQA projections, SwiGLU matrices,
+context fitness, optimizer-step arithmetic, conventional and
+architecture-aware compute, memory components, advisory warnings, and JSON
+fields under `forecast.fitness`.
+
+Add `--preflight` to materialize the compose corpus and make the missing
+measurements without initializing model weights or running an optimizer:
+
+```console
+go run ./cmd/waldo/ model forecast \
+  composes/0005-tinystories-capacity-20tpp.yaml \
+  --preflight
+```
+
+The report includes training and model-held-out fertility, record-length
+percentiles, one-sequence fit rate, packed document/EOS density, unique target
+count, effective corpus passes, and per-corpus exposure. The held-out partition
+is disjoint from model training, but is not claimed to be disjoint from a
+compose-declared tokenizer-training sample.
+
+For a byte tokenizer, token context is also exact byte context. The current
+reference models therefore expose 256 tokens as exactly 256 UTF-8 bytes; after
+150 generated bytes, no more than about 106 prompt bytes can remain visible.
+For BPE and multi-corpus recipes, bytes/token, record percentiles, fit rate,
+packed boundaries, EOS targets, and per-corpus fertility are marked as
+requiring corpus preflight rather than estimated from unrelated manifest token
+counts.
+
+Warnings do not promote, reject, or launch a run. In particular,
+tokens-per-parameter and the Chinchilla allocation are not capability gates.
+Loss prediction is refused until WALDO has a sufficiently large cohort with
+the same corpus/held-out revision, tokenizer, architecture family, context,
+objective, and optimizer recipe. See
+[`docs/MODEL-TRAINING-FITNESS.md`](../docs/MODEL-TRAINING-FITNESS.md).

@@ -1,0 +1,60 @@
+# Gate 2: qualify the 76M architecture near 20 training tokens per parameter.
+# This is a private research compose; distribution_policy is intentionally unset.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 1024
+  vocabulary_size: 50259
+  hidden_size: 640
+  intermediate_size: 1792
+  layers: 10
+  attention_heads: 10
+  key_value_heads: 2
+  dropout: 0.0
+  qk_normalization: true
+  initialization: depth-scaled
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    name: tiktoken/r50k_base
+    revision: tiktoken-r50k-base
+stages:
+  - name: foundation-pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: core/common-pile/wikimedia
+        weight: 5
+      - path: science/plos
+        weight: 2
+      - path: core/common-pile/pressbooks
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      tokens: 1500000000
+      batch_size: 64
+      gradient_accumulation_steps: 4
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: false
+      sequence_length: 1024
+      learning_rate: 0.00025
+      optimizer: adamw
+      schedule: warmup-stable-warmdown
+      seed: 42
+      weight_decay: 0.1
+      warmup_steps: 1144
+      warmdown_steps: 4578
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 1073741824
+      checkpoint_every: 1000
+      evaluate_every: 1000
+      evaluation_max_records: 512
+      evaluation_max_bytes: 16777216

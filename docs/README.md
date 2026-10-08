@@ -37,7 +37,17 @@ Read these in order:
   lineages, native artifacts, and NeMo/Megatron execution.
 - [Reference compose strategy](../composes/README.md): capability ladder,
   promotion gates, and corpus requirements for model experiments.
+- [Training validation and capability plan](TRAINING-ROBUSTNESS-PLAN.md):
+  authoritative audit, stop gates, reference controls, and ordered work before
+  another foundation run.
+- [Model architecture and training fitness](MODEL-TRAINING-FITNESS.md): exact
+  compose forecast formulas, comparable intrinsic metrics, warnings, and
+  evidence gates for empirical loss prediction.
+- [Nanochat corpus coverage](NANOCHAT-CORPUS-COVERAGE.md): exact input,
+  licensing, index, and contamination decisions.
 - [EU GPAI disclosure](EU-GPAI-DISCLOSURE.md): regulatory JSON projection.
+- [Compose corpus licensing audit](COMPOSE-CORPUS-LICENSE-AUDIT.md): reviewed
+  rights evidence, distribution classifications, and unresolved corpus work.
 
 ## Project direction and decisions
 

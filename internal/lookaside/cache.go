@@ -31,14 +31,15 @@ import (
 )
 
 type Cache struct {
-	root     string
-	scratch  string
-	retain   bool
-	maxBytes int64
-	client   *http.Client
-	mirrors  []string
-	mu       sync.Mutex
-	used     map[string]bool
+	root            string
+	scratch         string
+	retain          bool
+	retainCompleted bool
+	maxBytes        int64
+	client          *http.Client
+	mirrors         []string
+	mu              sync.Mutex
+	used            map[string]bool
 }
 
 type ProbeResult struct {
@@ -63,6 +64,13 @@ func WithMirrors(mirrors []string) Option {
 
 func WithPersistentStorage(scratch string, maxBytes int64) Option {
 	return func(cache *Cache) { cache.scratch = scratch; cache.retain = true; cache.maxBytes = maxBytes }
+}
+
+// WithCompletedRetention keeps verified objects after a successful consumer
+// commits so later independent commands can reuse them. The configured cache
+// size remains the LRU bound applied when a new cache instance opens.
+func WithCompletedRetention(retain bool) Option {
+	return func(cache *Cache) { cache.retainCompleted = retain }
 }
 
 func NewCache(root string, client *http.Client, options ...Option) (*Cache, error) {
@@ -107,7 +115,11 @@ func DefaultCache() (*Cache, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewCache(root, nil, WithMirrors(configuration.Lookaside.Mirrors), WithPersistentStorage(scratch, config.EffectiveCacheMaxBytes(configuration)))
+	return NewCache(root, nil,
+		WithMirrors(configuration.Lookaside.Mirrors),
+		WithPersistentStorage(scratch, config.EffectiveCacheMaxBytes(configuration)),
+		WithCompletedRetention(configuration.Lookaside.RetainCompleted),
+	)
 }
 
 func (cache *Cache) Root() string    { return cache.root }
@@ -122,8 +134,9 @@ func (cache *Cache) EnsureScratch() error {
 	}
 	return os.Chmod(cache.scratch, 0o700)
 }
-func (cache *Cache) MaxBytes() int64 { return cache.maxBytes }
-func (cache *Cache) Retained() bool  { return cache.retain }
+func (cache *Cache) MaxBytes() int64       { return cache.maxBytes }
+func (cache *Cache) Retained() bool        { return cache.retain }
+func (cache *Cache) RetainCompleted() bool { return cache.retainCompleted }
 
 func (cache *Cache) Mirrors() []string { return append([]string(nil), cache.mirrors...) }
 
@@ -307,10 +320,16 @@ func (cache *Cache) FetchWithProgress(ctx context.Context, objectURL, digest str
 
 // PurgeUsed removes only objects successfully returned by Fetch on this Cache
 // instance. Callers invoke it after the consuming operation commits; failures
-// deliberately leave objects available for diagnosis and retry. Configured
-// caches use separate download scratch and a size bound, but successful use is
-// not a reason to retain a second copy of an immutable lookaside object.
+// deliberately leave objects available for diagnosis and retry. When completed
+// retention is enabled, it instead releases the in-use protection and applies
+// the configured LRU bound.
 func (cache *Cache) PurgeUsed() (Stats, error) {
+	if cache.retainCompleted {
+		cache.mu.Lock()
+		cache.used = map[string]bool{}
+		cache.mu.Unlock()
+		return Stats{}, cache.prune()
+	}
 	cache.mu.Lock()
 	paths := make([]string, 0, len(cache.used))
 	for path := range cache.used {

@@ -52,7 +52,11 @@ func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 		return Observation{}, err
 	}
 	if request.BOM.RecordFilter == nil {
-		expectedTrainingRecords := (request.BOM.Totals.Docs - request.EvaluationSet.Records) * request.Parameters.Epochs
+		fullyHeldOut := request.EvaluationSet.Records
+		if request.EvaluationSet.Selection == "contiguous-tail-v1" {
+			fullyHeldOut = 0
+		}
+		expectedTrainingRecords := (request.BOM.Totals.Docs - fullyHeldOut) * request.Parameters.Epochs
 		if records != expectedTrainingRecords {
 			return Observation{}, fmt.Errorf("canonical training stream contains %d records, expected %d after held-out selection", records, expectedTrainingRecords)
 		}
@@ -119,7 +123,16 @@ func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 	}
 	var evaluations []Evaluation
 	if request.Parameters.EvaluateEvery > 0 && request.EvaluationSet.Records > 0 {
-		evaluation := Evaluation{Step: request.Parameters.Steps, Tokens: capacity, Metrics: map[string]float64{"heldout_loss": loss, "heldout_perplexity": math.Exp(loss)}}
+		metrics := map[string]float64{
+			"heldout_loss": loss, "heldout_perplexity": math.Exp(loss),
+			"heldout_nll_sum":       loss * float64(request.EvaluationSet.TokenTargets),
+			"heldout_target_tokens": float64(request.EvaluationSet.TokenTargets),
+			"heldout_utf8_bytes":    float64(request.EvaluationSet.TextBytes),
+		}
+		if request.EvaluationSet.TextBytes > 0 {
+			metrics["heldout_bits_per_byte"] = metrics["heldout_nll_sum"] / (math.Ln2 * float64(request.EvaluationSet.TextBytes))
+		}
+		evaluation := Evaluation{Step: request.Parameters.Steps, Tokens: capacity, Metrics: metrics}
 		evaluations = append(evaluations, evaluation)
 		if request.Report != nil {
 			request.Report(Event{Kind: "evaluation", Message: "simulated evaluation completed", Step: evaluation.Step, Tokens: evaluation.Tokens, Evaluation: &evaluation})

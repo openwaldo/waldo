@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/corpus"
+	waldotokenizer "github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/openwaldo/waldo/internal/training"
 	"gopkg.in/yaml.v3"
 )
@@ -132,13 +133,33 @@ type Architecture struct {
 	KeyValueHeads    uint64    `json:"key_value_heads" yaml:"key_value_heads"`
 	Dropout          float64   `json:"dropout,omitempty" yaml:"dropout,omitempty"`
 	TieEmbeddings    bool      `json:"tie_embeddings" yaml:"tie_embeddings"`
+	QKNormalization  bool      `json:"qk_normalization,omitempty" yaml:"qk_normalization,omitempty"`
+	Initialization   string    `json:"initialization,omitempty" yaml:"initialization,omitempty"`
 	ParameterDType   string    `json:"parameter_dtype" yaml:"parameter_dtype"`
 	Tokenizer        Tokenizer `json:"tokenizer" yaml:"tokenizer"`
 }
 
 type Tokenizer struct {
-	Name     string `json:"name" yaml:"name"`
-	Revision string `json:"revision" yaml:"revision"`
+	Name         string                   `json:"name" yaml:"name"`
+	Revision     string                   `json:"revision" yaml:"revision"`
+	ArtifactPath string                   `json:"-" yaml:"artifact_path,omitempty"`
+	Artifact     *waldotokenizer.Artifact `json:"artifact,omitempty" yaml:"artifact,omitempty"`
+	Training     *TokenizerTraining       `json:"training,omitempty" yaml:"training,omitempty"`
+}
+
+const TokenizerAlgorithmByteBPEV1 = "byte-bpe-v1"
+
+// TokenizerTraining declares the deterministic compose phase that creates a
+// tokenizer before the immutable model architecture is persisted.
+type TokenizerTraining struct {
+	Algorithm          string               `json:"algorithm" yaml:"algorithm"`
+	SampleBytes        int64                `json:"sample_bytes" yaml:"sample_bytes"`
+	Seed               uint64               `json:"seed" yaml:"seed"`
+	MaxTokenInflation  float64              `json:"max_token_inflation" yaml:"max_token_inflation"`
+	DistributionPolicy string               `json:"distribution_policy" yaml:"distribution_policy"`
+	Filter             *corpus.RecordFilter `json:"filter,omitempty" yaml:"filter,omitempty"`
+	Corpora            []CorpusSelection    `json:"corpora" yaml:"corpora"`
+	CorpusBOM          *corpus.BOM          `json:"corpus_bom,omitempty" yaml:"-"`
 }
 
 type Stage struct {
@@ -332,9 +353,17 @@ func (stage Stage) trainingParameters() (training.Parameters, error) {
 }
 
 func (stage Stage) RecordFilterPolicy(paths []string) (*corpus.RecordFilterPolicy, error) {
-	configured := stage.Filter != nil
-	policy := corpus.RecordFilterPolicy{Schema: corpus.RecordFilterSchema, Global: stage.Filter}
-	for _, selection := range stage.Corpora {
+	return recordFilterPolicy(stage.Filter, stage.Corpora, paths)
+}
+
+func (training TokenizerTraining) RecordFilterPolicy(paths []string) (*corpus.RecordFilterPolicy, error) {
+	return recordFilterPolicy(training.Filter, training.Corpora, paths)
+}
+
+func recordFilterPolicy(global *corpus.RecordFilter, selections []CorpusSelection, paths []string) (*corpus.RecordFilterPolicy, error) {
+	configured := global != nil
+	policy := corpus.RecordFilterPolicy{Schema: corpus.RecordFilterSchema, Global: global}
+	for _, selection := range selections {
 		if selection.Filter == nil {
 			continue
 		}
@@ -396,24 +425,80 @@ func LoadCompose(path string) (Compose, string, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return Compose{}, "", fmt.Errorf("model compose %s is empty", absolute)
 	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
 	var compose Compose
-	if err := decoder.Decode(&compose); err != nil {
-		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			err = fmt.Errorf("multiple YAML documents are not allowed")
+	if bytes.HasPrefix(bytes.TrimSpace(data), []byte("{")) {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&compose); err != nil {
+			return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
 		}
-		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			if err == nil {
+				err = fmt.Errorf("multiple JSON values are not allowed")
+			}
+			return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
+		}
+	} else {
+		decoder := yaml.NewDecoder(bytes.NewReader(data))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(&compose); err != nil {
+			return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			if err == nil {
+				err = fmt.Errorf("multiple YAML documents are not allowed")
+			}
+			return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
+		}
 	}
 	compose.normalizeLegacyInteraction()
+	if err := resolveComposeTokenizerArtifact(&compose, filepath.Dir(absolute)); err != nil {
+		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
+	}
 	if err := compose.Validate(); err != nil {
 		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
 	}
 	return compose, absolute, nil
+}
+
+func resolveComposeTokenizerArtifact(compose *Compose, directory string) error {
+	tokenizer := &compose.Architecture.Tokenizer
+	if tokenizer.ArtifactPath == "" {
+		return nil
+	}
+	path := tokenizer.ArtifactPath
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(directory, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read tokenizer artifact %s: %w", path, err)
+	}
+	var artifact waldotokenizer.Artifact
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&artifact); err != nil {
+		return fmt.Errorf("decode tokenizer artifact %s: %w", path, err)
+	}
+	if err := artifact.Validate(); err != nil {
+		return fmt.Errorf("validate tokenizer artifact %s: %w", path, err)
+	}
+	if tokenizer.Name != "" && tokenizer.Name != artifact.Name {
+		return fmt.Errorf("tokenizer name %s does not match artifact %s", tokenizer.Name, artifact.Name)
+	}
+	if tokenizer.Revision != "" && tokenizer.Revision != artifact.Revision {
+		return fmt.Errorf("tokenizer revision %s does not match artifact %s", tokenizer.Revision, artifact.Revision)
+	}
+	if compose.Architecture.VocabularySize != uint64(artifact.VocabularySize) {
+		return fmt.Errorf("architecture vocabulary_size %d does not match tokenizer artifact %d", compose.Architecture.VocabularySize, artifact.VocabularySize)
+	}
+	tokenizer.Name = artifact.Name
+	tokenizer.Revision = artifact.Revision
+	tokenizer.ArtifactPath = ""
+	tokenizer.Artifact = &artifact
+	return nil
 }
 
 // normalizeLegacyInteraction preserves schema-1 composes written before tool
@@ -460,7 +545,7 @@ func (compose Compose) Validate() error {
 	if err := compose.Interaction.Validate(); err != nil {
 		return err
 	}
-	inheritedArchitecture := compose.Base != nil && compose.Base.Source != "" && compose.Architecture == (Architecture{})
+	inheritedArchitecture := compose.Base != nil && compose.Architecture == (Architecture{})
 	if !inheritedArchitecture {
 		if err := compose.Architecture.Validate(); err != nil {
 			return err
@@ -600,11 +685,128 @@ func (architecture Architecture) Validate() error {
 	if architecture.ParameterDType != "float32" && architecture.ParameterDType != "float16" && architecture.ParameterDType != "bfloat16" {
 		return fmt.Errorf("unsupported parameter_dtype %q", architecture.ParameterDType)
 	}
+	if architecture.Initialization != "" && architecture.Initialization != "normal" && architecture.Initialization != "depth-scaled" {
+		return fmt.Errorf("unsupported architecture initialization %q", architecture.Initialization)
+	}
+	if err := architecture.Tokenizer.validate(architecture.VocabularySize); err != nil {
+		return err
+	}
+	if architecture.Tokenizer.Training != nil && architecture.Tokenizer.Artifact == nil {
+		_, err := architecture.Forecast()
+		return err
+	}
 	if architecture.Tokenizer.Name == "" || architecture.Tokenizer.Revision == "" {
 		return fmt.Errorf("tokenizer name and immutable revision are required")
 	}
+	if architecture.Tokenizer.ArtifactPath != "" {
+		return fmt.Errorf("tokenizer artifact_path must be resolved before architecture validation")
+	}
+	if waldotokenizer.IsTrainedName(architecture.Tokenizer.Name) || architecture.Tokenizer.Artifact != nil {
+		if _, _, err := architecture.ResolveTokenizer(); err != nil {
+			return err
+		}
+	}
 	_, err := architecture.Forecast()
 	return err
+}
+
+func (tokenizer Tokenizer) validate(vocabularySize uint64) error {
+	if tokenizer.ArtifactPath != "" && tokenizer.Training != nil {
+		return fmt.Errorf("tokenizer artifact_path and training cannot be combined")
+	}
+	if tokenizer.Training == nil {
+		return nil
+	}
+	training := tokenizer.Training
+	if training.Algorithm != TokenizerAlgorithmByteBPEV1 {
+		return fmt.Errorf("unsupported tokenizer training algorithm %q", training.Algorithm)
+	}
+	if vocabularySize < 259 || vocabularySize > 100_000 {
+		return fmt.Errorf("trained tokenizer vocabulary_size must be in 259..100000")
+	}
+	if training.SampleBytes < 1 {
+		return fmt.Errorf("tokenizer training sample_bytes must be positive")
+	}
+	if training.MaxTokenInflation < 0 || training.MaxTokenInflation > 1 || math.IsNaN(training.MaxTokenInflation) || math.IsInf(training.MaxTokenInflation, 0) {
+		return fmt.Errorf("tokenizer training max_token_inflation must be finite and in 0..1")
+	}
+	if training.DistributionPolicy != corpus.DistributionPolicyDistributable {
+		return fmt.Errorf("tokenizer training distribution_policy must be %q", corpus.DistributionPolicyDistributable)
+	}
+	if len(training.Corpora) == 0 {
+		return fmt.Errorf("tokenizer training requires at least one index path in corpora")
+	}
+	seen := map[string]bool{}
+	for _, selection := range training.Corpora {
+		if selection.Path == "" || seen[selection.Path] {
+			return fmt.Errorf("tokenizer training contains an empty or duplicate corpus path %q", selection.Path)
+		}
+		seen[selection.Path] = true
+		if selection.Weight != nil {
+			return fmt.Errorf("tokenizer training corpus %s cannot declare weight; sampling is balanced", selection.Path)
+		}
+		if selection.Filter != nil {
+			if err := selection.Filter.Validate(); err != nil {
+				return fmt.Errorf("tokenizer training corpus %s filter: %w", selection.Path, err)
+			}
+		}
+	}
+	if training.Filter != nil {
+		if err := training.Filter.Validate(); err != nil {
+			return fmt.Errorf("tokenizer training filter: %w", err)
+		}
+	}
+	if tokenizer.Artifact == nil {
+		if training.CorpusBOM != nil {
+			return fmt.Errorf("unresolved tokenizer training cannot declare corpus_bom")
+		}
+		if tokenizer.Name != "" || tokenizer.Revision != "" {
+			return fmt.Errorf("unresolved tokenizer training cannot declare name or revision")
+		}
+		return nil
+	}
+	if training.CorpusBOM == nil {
+		return nil
+	}
+	if err := training.CorpusBOM.Validate(); err != nil {
+		return fmt.Errorf("tokenizer training corpus_bom: %w", err)
+	}
+	if len(training.CorpusBOM.Paths) != len(training.Corpora) {
+		return fmt.Errorf("tokenizer training corpus_bom paths differ from its declaration")
+	}
+	for _, selection := range training.Corpora {
+		if _, err := resolveSelectedPath(selection.Path, training.CorpusBOM.Paths); err != nil {
+			return fmt.Errorf("tokenizer training corpus_bom: %w", err)
+		}
+	}
+	if _, err := corpus.ReviewDistributable(*training.CorpusBOM); err != nil {
+		return fmt.Errorf("tokenizer training corpus_bom distributable gate: %w", err)
+	}
+	bomHash, err := canonicalHash(training.CorpusBOM)
+	if err != nil {
+		return err
+	}
+	if bomHash != tokenizer.Artifact.CorpusBOMSHA256 {
+		return fmt.Errorf("trained tokenizer corpus_bom differs from its artifact")
+	}
+	return nil
+}
+
+func (architecture Architecture) HasUnresolvedTokenizerTraining() bool {
+	return architecture.Tokenizer.Training != nil && architecture.Tokenizer.Artifact == nil
+}
+
+func (architecture Architecture) ResolveTokenizer() (training.TokenizerSpec, training.TokenCodec, error) {
+	spec := training.TokenizerSpec{
+		Name: architecture.Tokenizer.Name, Revision: architecture.Tokenizer.Revision,
+		VocabularySize: int(architecture.VocabularySize), Artifact: architecture.Tokenizer.Artifact,
+	}
+	if spec.Artifact != nil {
+		spec.PadID = spec.Artifact.PadID
+		spec.BOSID = spec.Artifact.BOSID
+		spec.EOSID = spec.Artifact.EOSID
+	}
+	return training.ResolveTokenizerSpec(spec)
 }
 
 func (architecture Architecture) Forecast() (ArchitectureForecast, error) {

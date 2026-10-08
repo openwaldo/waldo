@@ -24,6 +24,12 @@ success cleanup, leaving its verified objects available for retry.
 `lookaside.cache.max-size` remains an LRU bound for objects retained by
 incomplete work. It does not describe post-success retention.
 
+Amended 2026-09-30: purging remains the default, but operators running repeated
+experiments over the same immutable corpus may set
+`lookaside.cache.retain-completed=true`. In that mode successful commands keep
+verified objects and `lookaside.cache.max-size` bounds the retained working
+set. Multi-host launch propagates the rank-0 policy and bound to workers.
+
 ## Consequences
 
 - Successful audit, verification, export, calibration, and training release
@@ -31,5 +37,7 @@ incomplete work. It does not describe post-success retention.
 - Exact retries after failure or interruption can still reuse verified bytes.
 - A later independent command redownloads an object purged by an earlier
   successful command.
+- Opt-in completed retention trades bounded local disk for reuse across later
+  independent commands.
 - Durable model artifacts, index state, published lookaside objects, and
   ingestion recovery state are unaffected.

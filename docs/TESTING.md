@@ -19,6 +19,19 @@ Run the complete local suite with:
 ./testing/all.sh
 ```
 
+Run the independent PyTorch numerical conformance gate with:
+
+```bash
+./testing/training-conformance.sh
+```
+
+This loads WALDO's production shared PyTorch model and compares it with a
+separate functional oracle for logits, masked causal loss, every gradient, one
+AdamW update and optimizer state, saved/reloaded logits, and next-token argmax.
+It always runs the FP64 CPU comparison and additionally runs FP32 CUDA when a
+CUDA device is available. The test requires PyTorch when invoked directly;
+`testing/all.sh` reports a skip on development hosts without PyTorch.
+
 The complete suite runs unit tests, static analysis, ingestion lifecycles, the
 structured-conversation ingestion and training lifecycle, the general fake
 model lifecycle, and hardware-dependent MLX, PyTorch, and TorchTitan
@@ -33,6 +46,7 @@ Individual end-to-end tests are available under `testing/e2e/`:
 ./testing/e2e/model-fake.sh
 ./testing/e2e/model-mlx.sh
 ./testing/e2e/model-pytorch.sh
+./testing/e2e/model-pytorch-memorization.sh
 ./testing/e2e/model-torchtitan.sh
 ./testing/e2e/model-torchtitan-multinode.sh
 ```
@@ -48,6 +62,31 @@ WALDO_E2E_MULTINODE=1 ./testing/e2e/model-torchtitan-multinode.sh
 It is not a substitute for the two-host acceptance test in
 [Multi-host training](MULTI-NODE-TRAINING.md), which additionally exercises
 hostfile parsing, SSH staging, routing, firewall, and inter-host NCCL.
+
+Before a production multi-host run, execute the required acceptance gate with
+the real hostfile and a deliberately small existing structured-conversation
+corpus:
+
+```bash
+./testing/training-acceptance.sh \
+  --hostfile ~/hostfile \
+  --corpus post-train/sft/waldo-project-v1
+```
+
+The hostfile test uses the configured index, lookaside, caches, credentials,
+NCCL settings, and model root. It creates a uniquely named two-stage model with
+10 optimizer steps per stage,
+removes it after success, and preserves it plus its temporary compose after a
+failure. It does not ingest or publish test corpus objects.
+
+The acceptance script runs numerical conformance before it starts any training
+lifecycle, so a reference-math failure stops the GPU tests immediately. It then
+runs a disposable compose-driven memorization control through the normal
+`waldo model train` interface. That control must reduce held-out loss by at
+least 90%, reach a held-out loss no greater than 0.25, reproduce the fixed
+held-out continuation, and terminate it with EOS. This distinguishes a backend
+that can merely execute from one that can demonstrably learn and publish the
+learned weights.
 
 ## Live tests
 

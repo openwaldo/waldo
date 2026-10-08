@@ -22,7 +22,7 @@ func TestLookasideCacheStatusAndClean(t *testing.T) {
 	cacheRoot, scratchRoot, modelRoot := t.TempDir(), t.TempDir(), t.TempDir()
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	if err := config.Save(config.Config{
-		Lookaside: config.Lookaside{Cache: cacheRoot, Scratch: scratchRoot, CacheMaxBytes: 1 << 20},
+		Lookaside: config.Lookaside{Cache: cacheRoot, Scratch: scratchRoot, CacheMaxBytes: 1 << 20, RetainCompleted: true},
 		Model:     config.Model{Root: modelRoot},
 	}); err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestLookasideCacheStatusAndClean(t *testing.T) {
 	if code := Run([]string{"lookaside", "cache", "status"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("status code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), cacheRoot) || !strings.Contains(stdout.String(), "objects        1") {
+	if !strings.Contains(stdout.String(), cacheRoot) || !strings.Contains(stdout.String(), "objects        1") || !strings.Contains(stdout.String(), "retain completed true") {
 		t.Fatalf("status output = %q", stdout.String())
 	}
 	stdout.Reset()

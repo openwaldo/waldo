@@ -1,0 +1,65 @@
+# Measurement only: train a compact distributable English BPE on PressBooks,
+# then measure its fertility and source exposure on the pinned TinyStories
+# reference corpus. Do not pass this compose to `model train`; use
+# `model forecast --preflight`. A promoted rung is written only after these
+# measurements determine its source-equivalent token budget.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 512
+  vocabulary_size: 4096
+  hidden_size: 512
+  intermediate_size: 1536
+  layers: 9
+  attention_heads: 8
+  key_value_heads: 8
+  dropout: 0.2
+  qk_normalization: false
+  initialization: depth-scaled
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    training:
+      algorithm: byte-bpe-v1
+      sample_bytes: 134217728
+      seed: 42
+      max_token_inflation: 0.50
+      distribution_policy: distributable
+      filter:
+        main_content: true
+        exclude:
+          repetitive_content: true
+          boilerplate_content: true
+      corpora:
+        - core/common-pile/pressbooks
+stages:
+  - name: tinystories-bpe-measurement
+    type: pre-training
+    objective: causal-language-modeling
+    corpora:
+      - core/synthetic/tinystories-reference
+    parameters:
+      profile: causal-pretrain-shuffled
+      parallelism: auto
+      epochs: 1
+      batch_size: 32
+      gradient_accumulation_steps: 8
+      compute_precision: auto
+      activation_checkpointing: false
+      compile: false
+      sequence_length: 512
+      learning_rate: 0.0006
+      optimizer: adamw
+      schedule: cosine
+      seed: 42
+      weight_decay: 0.1
+      warmup_steps: 100
+      checkpoint_every: 250
+      evaluate_every: 250
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 1073741824
+      evaluation_selection: lowest-sha256-v1
+      evaluation_fraction: 0.01
+      evaluation_max_records: 512
+      evaluation_max_bytes: 16777216

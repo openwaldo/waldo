@@ -216,6 +216,43 @@ func TestConfiguredCachePurgesSuccessfulObjectAndCleansScratch(t *testing.T) {
 	}
 }
 
+func TestConfiguredCacheCanRetainSuccessfulObject(t *testing.T) {
+	root, scratch := t.TempDir(), t.TempDir()
+	content := "reusable verified object"
+	digest := digestOf(content)
+	transport := &fakeTransport{content: content}
+	cache, err := NewCache(root, &http.Client{Transport: transport},
+		WithPersistentStorage(scratch, 1<<20),
+		WithCompletedRetention(true),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := cache.Fetch(context.Background(), "https://objects.example/item", digest, int64(len(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if purged, err := cache.PurgeUsed(); err != nil || purged.Objects != 0 || purged.Bytes != 0 {
+		t.Fatalf("PurgeUsed() = %+v, %v", purged, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("retained cache object = %v", err)
+	}
+	second, err := NewCache(root, &http.Client{Transport: transport},
+		WithPersistentStorage(scratch, 1<<20),
+		WithCompletedRetention(true),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Fetch(context.Background(), "https://objects.example/item", digest, int64(len(content))); err != nil {
+		t.Fatal(err)
+	}
+	if transport.requests != 1 {
+		t.Fatalf("retained cache made %d requests, want 1", transport.requests)
+	}
+}
+
 func TestConfiguredCacheRetainsObjectUntilSuccessfulConsumerPurges(t *testing.T) {
 	root, scratch := t.TempDir(), t.TempDir()
 	content := "resume after interruption"

@@ -15,9 +15,11 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/openwaldo/waldo/internal/pytorchruntime"
 )
 
-const PyTorchRevision = "builtin-pytorch-worker-schema-1-r7"
+const PyTorchRevision = "builtin-pytorch-worker-schema-1-r16"
 
 //go:embed workers/pytorch.py
 var pyTorchWorker []byte
@@ -34,6 +36,7 @@ func (backend PyTorch) Descriptor() Descriptor {
 		Framework: BackendPyTorch,
 		Capabilities: Capabilities{
 			Objectives: []string{"causal-language-modeling", "assistant-response-modeling"}, CheckpointResume: true, Safetensors: true,
+			ActivationCheckpointing: true, Compile: true,
 		},
 	}
 }
@@ -43,7 +46,7 @@ func (backend PyTorch) Run(ctx context.Context, request Request) (Observation, e
 	if device == "" {
 		device = "cpu"
 	}
-	return runPythonWorker(ctx, "PyTorch", backend.Python, string(pyTorchWorker), request, device)
+	return runPythonWorker(ctx, "PyTorch", backend.Python, pytorchruntime.WithModel(pyTorchWorker), request, device)
 }
 
 type pyTorchProbe struct {
@@ -89,7 +92,7 @@ func (resolver PyTorchResolver) Resolve(ctx context.Context, request ResolveRequ
 	if architecture.Family != "decoder-transformer" {
 		return Selection{}, fmt.Errorf("PyTorch backend does not support architecture family %q", architecture.Family)
 	}
-	if _, _, err := ResolveTokenizer(architecture.Tokenizer.Name, architecture.Tokenizer.Revision, architecture.VocabularySize); err != nil {
+	if err := ValidateArchitectureTokenizer(request.Architecture); err != nil {
 		return Selection{}, fmt.Errorf("PyTorch backend: %w", err)
 	}
 	candidates := resolver.Candidates

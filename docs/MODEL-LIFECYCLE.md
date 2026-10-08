@@ -22,8 +22,18 @@ Defaults are `~/.waldo/models` and a user-scoped lookaside cache beneath the
 operating system's temporary directory. Verified objects remain available
 while an operation is active and across a failure or interruption. After a
 successful operation commits, WALDO removes every cache object that operation
-used. `lookaside.cache.max-size` bounds recovery objects left by incomplete
-operations; it is not a post-success retention target.
+used by default. Repeated experiments over the same large corpus can opt into
+reuse and set a sufficient LRU bound:
+
+```bash
+waldo config set lookaside.cache.retain-completed true
+waldo config set lookaside.cache.max-size 30GiB
+```
+
+With retention disabled, `lookaside.cache.max-size` bounds recovery objects
+left by incomplete operations. With retention enabled, it also bounds objects
+kept after successful commands. Set it above the complete reusable working set;
+the cache may temporarily exceed the bound while an operation is active.
 Multi-stage composes materialize only the stage about to run. A successful
 stage releases its objects before the next stage is materialized; a failed or
 interrupted stage retains its verified objects for retry. Operators can inspect
@@ -146,10 +156,54 @@ Real backends commit checkpoint directories containing model weights,
 optimizer state, runtime random state, and state metadata before reporting the
 checkpoint to WALDO. Repeating the exact `model train` command after Ctrl-C
 resumes the same run ID and immutable run BOM. WALDO verifies every checkpoint
-member, restores the pinned backend revision, replays the deterministic input
-stream without optimization to the saved step, and continues. `RUN.json`
+member, restores the pinned backend revision, positions the deterministic input
+stream at the saved step, and continues. Backends that cannot seek replay the
+prefix without optimization; the multi-node node-local stream skips that
+already-trained prefix before worker handoff. `RUN.json`
 records each attempt. A changed corpus, epoch count, profile, backend, or
 execution environment is a new run rather than an unsafe resume.
+
+PyTorch and TorchTitan resumable checkpoints keep FP32 master weights even
+when the architecture declares a reduced portable `parameter_dtype`. This
+preserves exact optimizer continuation. WALDO converts only the selected
+terminal artifact, then verifies that representation against the held-out set.
+
+When a held-out set exists, WALDO evaluates step 1, every configured periodic
+boundary, and the terminal step. Compiled PyTorch/TorchTitan runs add early
+safety boundaries at steps 100 and 1000 when those steps exist.
+`evaluate_every: 0` disables periodic evaluation but never the terminal
+artifact-quality gate. PyTorch and TorchTitan compare compiled
+compute-precision execution, eager compute-precision execution, eager FP32
+master weights, and the reloaded publishable artifact under the same FP32
+semantics used by chat inference. They fail immediately on material drift at
+any boundary. Training also stops before an optimizer update when loss or the
+optimizer-step gradient norm is non-finite. WALDO publishes the
+persisted candidate with the lowest finite publishable `heldout_loss`, not
+necessarily the last optimizer step. It reloads the selected terminal artifact
+and evaluates that saved file again before completion. `RUN.json` records the
+selected step, token count, metric, and value. Summaries distinguish the last
+optimizer-step metric from the selected and reloaded artifact metrics. The
+full requested training budget still runs when validation passes; this
+selection rule is not early stopping.
+
+PyTorch/TorchTitan training, artifact verification, and chat inference execute
+one embedded model implementation owned by `internal/pytorchruntime`. Runtime
+configuration must match the immutable model architecture before chat starts.
+This prevents shape-preserving features such as QK normalization from silently
+differing between training and inference.
+
+Standard Llama-based Hugging Face, MLX-LM, GGUF, and Ollama exports fail closed
+when the WALDO architecture enables parameter-free QK normalization. Those
+runtimes cannot currently preserve its attention math. Native WALDO artifacts
+remain usable; portable export requires an exact runtime implementation first.
+
+One compatibility exception repairs a WALDO-derived value rather than a user
+change. If an older fixed-token run exhausted its input because WALDO pinned too
+few deterministic source passes, a verified checkpoint may resume with only
+that pass limit increased. The immutable run BOM remains unchanged, while the
+new `RUN.json` attempt records `fixed-token-capacity-v1` and the complete
+effective parameters. Corpus identity, held-out split, target steps, optimizer,
+schedule, backend, topology, and every other parameter must still match.
 
 Epoch boundaries remain part of one continuous-EOS token stream, while each
 epoch gets a deterministic seed-derived shuffle. Exact low-level or multi-stage
@@ -220,6 +274,7 @@ waldo model chat small
 waldo model chat small "Once upon a time"
 printf 'Once upon a time' | waldo model chat small
 waldo --json model chat small "Once" --max-tokens 64 --temperature 0 --seed 7
+waldo model chat conversation --run-id <completed-run-id> --raw --temperature 0 "Linux is"
 ```
 
 No generation option is required. Defaults are 256 maximum tokens,
@@ -231,6 +286,12 @@ invalid UTF-8 bytes are escaped so model output cannot emit terminal control
 sequences. Redirected output is rendered once without cursor controls. JSON is
 one-shot and includes model and run identity, prompt, text, token count, finish
 reason, and generation duration.
+
+`--run-id` selects the verified published artifact from a specific completed
+real run instead of the model's current run. This supports stage-by-stage
+regression diagnosis without changing model state. `--raw` bypasses the model
+interaction template and performs causal continuation, which is useful when
+testing a pretraining artifact before conversation tuning.
 
 The built-in byte-tokenizer models are causal pretraining models and carry no
 chat template. Interactive mode therefore performs raw continuation;
@@ -366,17 +427,31 @@ WALDO resolves and hash-verifies every stage and creates the active model at
 architecture and tokenizer hash must exactly match the compose; a mismatch is
 refused with guidance to use a new model name. WALDO removes corpus paths
 already present in that model's completed run BOMs, then appends stages for
-the remaining paths without replacing the model. If no paths remain, the
-model is unchanged. This is path-level reuse, not record- or shard-level delta
-detection. Durable transaction metadata beneath
+the remaining paths without replacing the model. If no paths remain, WALDO
+does not infer completion from path history alone: the final successful run
+lineage must also match every requested stage, including its order, filter,
+conversation transform, corpus selection, and resolved training parameters.
+The current published model artifacts are hash-verified as part of this check.
+Only then is the model unchanged; otherwise WALDO refuses to
+silently treat the changed compose as complete and directs the operator to use
+a new model name. Corpus reuse itself remains path-level, not record- or
+shard-level delta detection. Durable transaction metadata beneath
 `<model.root>/.waldo-compose` pins the compose, every corpus BOM, the model ID,
 and the starting run ordinal.
+
+For `--hostfile` runs, WALDO performs this local completion check before
+probing or staging secondary hosts. A verified no-op therefore has no remote
+side effects.
+
 Passing `--audit` audits every materialized stage before the transaction starts.
 Interactive terminals receive byte-level materialization progress; redirected
 logs receive one completion line for every shard. The optional audit is shown
 as a separate phase. Deterministic held-out selection enumerates the row counts
 pinned by the corpus BOM, reports shard and record progress, and reads only the
-bounded candidate rows before backend selection. While a compose is running,
+bounded candidate rows before backend selection. The optional
+`contiguous-tail-v1` policy instead requires exactly one eligible text row and
+pins a UTF-8 byte offset that keeps its prefix in training and its suffix in
+evaluation. While a compose is running,
 ordinary `model list` and `model summary` operations see its current state at
 the standard model path.
 After Ctrl-C or process loss, repeating the exact command discovers the active
@@ -384,7 +459,8 @@ model, marks an abandoned running attempt interrupted, and resumes the same
 stage and run from its newest verified checkpoint. Different inputs are refused
 while that transaction is unfinished. Completed-path skipping is disabled for
 an unfinished transaction so its checkpoint selection remains exact. A failed
-stage is cleared; interrupted work is retained.
+attempt with a complete verified checkpoint is retained and resumable; a failed
+attempt without one remains terminal and is restarted as a new run.
 
 ## Durable layout
 
@@ -419,7 +495,8 @@ stage is cleared; interrupted work is retained.
 - `RUN-BOM.json` embeds the hash-pinned corpus OpenWALDO BOM and pins
   architecture, backend, objective, parameters, and execution environment
   before launch. It also pins `PREFLIGHT.json`, which records the exact
-  held-out row selection and any epoch-derived optimizer-step count. An exact
+  held-out row selection, any partial-record byte split, and any epoch-derived
+  optimizer-step count. An exact
   retry reuses that verified result instead of rescanning every record; a
   changed corpus, filter, tokenizer, architecture, or stage rebuilds it.
   Runs created before this artifact existed remain valid and perform the scan.
@@ -543,6 +620,59 @@ per row, unrounded inputs, aggregate run count, measured seconds and FLOPs, and
 a hash of the contributing evidence.
 
 ## Backend boundary
+
+Before changing a compose tokenizer, train and inspect a bounded candidate:
+
+```text
+waldo model train-tokenizer core/common-pile/wikimedia \
+  core/common-pile/pressbooks science/plos \
+  --output composes/tokenizers/foundation-16k.json \
+  --vocabulary-size 16000 --sample-bytes 268435456
+```
+
+The command requires every selected corpus to pass the distributable gate,
+pins the complete corpus BOM and deterministic balanced sample identity,
+trains ordered byte-level BPE merges, and reports bytes per token beside
+`r50k_base`. Select an approved candidate from a compose with
+`tokenizer.artifact_path`; WALDO validates and embeds the artifact so multi-host
+training and inference use the same bytes. The resulting artifact remains a
+candidate until domain compression and capability tests approve it.
+
+A model compose can instead declare `architecture.tokenizer.training`. In that
+form, `model forecast` validates the tokenizer recipe without executing it and
+`model train` performs tokenizer sampling, training, vocabulary-size checking,
+and the declared r50k token-inflation gate before model initialization. The
+resolved artifact and its producing recipe are embedded in the immutable model
+architecture before any multi-host training plan is published.
+
+Create a pinned evaluation BOM from a reviewed definition and index selection:
+
+```yaml
+kind: waldo-evaluation-definition
+schema: 1
+name: core-v1
+task: multiple-choice
+split: test
+corpora: [evaluation/core-v1]
+metrics:
+  - {name: accuracy, direction: max, threshold: 0.50}
+contamination:
+  max_exact_records: 0
+  max_fuzzy_records: 0
+  fuzzy_ratio: 0.80
+  shingle_words: 13
+```
+
+```text
+waldo model evaluation-bom core-v1.yaml core-v1.bom.json
+waldo model gate conversation2 core-v1.bom.json core-v1.results.json core-v1.gate.json
+```
+
+The evaluator-owned results file uses kind `openwaldo-evaluation-results`,
+schema 1, the evaluation BOM SHA-256, and a `results` array of metric/value
+pairs. The gate re-materializes every completed real training BOM, scans each
+corpus once for exact and fuzzy overlap, and fails promotion on contamination
+or threshold errors. Simulated runs can never pass this release gate.
 
 Model composes never select MLX, PyTorch, TensorFlow, or TorchTitan. Before a
 run is written, the environment-aware resolver chooses an adapter and records

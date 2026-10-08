@@ -17,24 +17,47 @@ import (
 )
 
 func TestParseModelChatSupportsOneShotGenerationOptions(t *testing.T) {
-	context, args, err := parseCobraCommand(t, []string{"model", "chat"}, []string{"foo", "hello world", "--max-tokens", "12", "--temperature", "0", "--top-p", "1", "--seed", "9"})
+	context, args, err := parseCobraCommand(t, []string{"model", "chat"}, []string{"foo", "hello world", "--max-tokens", "12", "--temperature", "0", "--top-p", "1", "--seed", "9", "--run-id", "run1", "--raw"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	name, prompt, options, err := cobraModelChatOptions(context, args)
+	name, prompt, options, runID, raw, err := cobraModelChatOptions(context, args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "foo" || prompt == nil || *prompt != "hello world" || options.MaxTokens != 12 || options.Temperature != 0 || options.TopP != 1 || options.Seed == nil || *options.Seed != 9 {
-		t.Fatalf("name = %q, prompt = %v, options = %+v", name, prompt, options)
+	if name != "foo" || prompt == nil || *prompt != "hello world" || options.MaxTokens != 12 || options.Temperature != 0 || options.TopP != 1 || options.Seed == nil || *options.Seed != 9 || runID != "run1" || !raw {
+		t.Fatalf("name = %q, prompt = %v, options = %+v, run = %q, raw = %t", name, prompt, options, runID, raw)
 	}
 	context, args, err = parseCobraCommand(t, []string{"model", "chat"}, []string{"foo", "--temperature", "-1"})
-	if _, _, _, err := cobraModelChatOptions(context, args); err == nil {
+	if _, _, _, _, _, err := cobraModelChatOptions(context, args); err == nil {
 		t.Fatal("negative temperature accepted")
 	}
 	context, args, err = parseCobraCommand(t, []string{"model", "chat"}, []string{"foo", "--top-p", "NaN"})
-	if _, _, _, err := cobraModelChatOptions(context, args); err == nil {
+	if _, _, _, _, _, err := cobraModelChatOptions(context, args); err == nil {
 		t.Fatal("NaN top-p accepted")
+	}
+}
+
+func TestSelectModelChatRunRequiresCompletedRealRun(t *testing.T) {
+	inspection := model.Inspection{Model: model.ModelRecord{Name: "example"}, BOM: model.ModelBOM{
+		CurrentRunID: "current",
+		Runs: []model.ModelBOMRun{
+			{ID: "complete", State: model.RunComplete},
+			{ID: "running", State: model.RunRunning},
+			{ID: "simulated", State: model.RunComplete, Simulated: true},
+		},
+	}}
+	selected, err := selectModelChatRun(inspection, "complete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.BOM.CurrentRunID != "complete" || inspection.BOM.CurrentRunID != "current" {
+		t.Fatalf("selected current run = %q, original = %q", selected.BOM.CurrentRunID, inspection.BOM.CurrentRunID)
+	}
+	for _, runID := range []string{"running", "simulated", "missing"} {
+		if _, err := selectModelChatRun(inspection, runID); err == nil {
+			t.Fatalf("run %q accepted", runID)
+		}
 	}
 }
 

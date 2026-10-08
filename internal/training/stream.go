@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/openwaldo/waldo/internal/record"
 	"github.com/openwaldo/waldo/internal/shard"
@@ -42,7 +43,9 @@ type Record struct {
 type RecordPartition struct {
 	Evaluation        EvaluationSet
 	selected          map[string]bool
+	evaluationSplits  map[string]int64
 	eligibleRecords   map[string]int64
+	selectionSummary  RecordSelectionSummary
 	evaluationRecords []Record
 	inputs            []Input
 	parameters        ResolvedParameters
@@ -51,26 +54,46 @@ type RecordPartition struct {
 	conversation      ConversationTransform
 }
 
+// RecordSelectionSummary records the result of applying stage record filters.
+// IncludedRecords includes held-out evaluation records; the records available
+// to the trainer are therefore IncludedRecords minus HeldOutRecords.
+type RecordSelectionSummary struct {
+	InputRecords            int64            `json:"input_records"`
+	IncludedRecords         int64            `json:"included_records"`
+	SkippedRecords          int64            `json:"skipped_records"`
+	HeldOutRecords          int64            `json:"held_out_records,omitempty"`
+	PartiallyHeldOutRecords int64            `json:"partially_held_out_records,omitempty"`
+	IncludedLicenses        map[string]int64 `json:"included_licenses,omitempty"`
+	SkippedLicenses         map[string]int64 `json:"skipped_licenses,omitempty"`
+}
+
 const (
 	StagePreflightKind   = "openwaldo-stage-preflight"
-	StagePreflightSchema = 1
+	StagePreflightSchema = 2
 )
+
+type EvaluationSplit struct {
+	SelectionID string `json:"selection_id"`
+	ByteOffset  int64  `json:"byte_offset"`
+}
 
 // StagePreflight is the immutable result of the expensive, deterministic
 // record-partition scan. The model run BOM pins the serialized artifact.
 type StagePreflight struct {
-	Kind             string             `json:"kind"`
-	Schema           int                `json:"schema"`
-	IdentitySHA256   string             `json:"identity_sha256"`
-	Evaluation       EvaluationSet      `json:"evaluation"`
-	SelectedRecords  []string           `json:"selected_records"`
-	EligibleRecords  map[string]int64   `json:"eligible_records,omitempty"`
-	Parameters       ResolvedParameters `json:"parameters"`
-	CapacityVerified bool               `json:"capacity_verified,omitempty"`
+	Kind             string                 `json:"kind"`
+	Schema           int                    `json:"schema"`
+	IdentitySHA256   string                 `json:"identity_sha256"`
+	Evaluation       EvaluationSet          `json:"evaluation"`
+	SelectedRecords  []string               `json:"selected_records"`
+	EvaluationSplits []EvaluationSplit      `json:"evaluation_splits,omitempty"`
+	EligibleRecords  map[string]int64       `json:"eligible_records,omitempty"`
+	SelectionSummary RecordSelectionSummary `json:"selection_summary,omitempty"`
+	Parameters       ResolvedParameters     `json:"parameters"`
+	CapacityVerified bool                   `json:"capacity_verified,omitempty"`
 }
 
 func (snapshot StagePreflight) Validate() error {
-	if snapshot.Kind != StagePreflightKind || snapshot.Schema != StagePreflightSchema {
+	if snapshot.Kind != StagePreflightKind || snapshot.Schema < 1 || snapshot.Schema > StagePreflightSchema {
 		return fmt.Errorf("unsupported stage preflight artifact %q schema %d", snapshot.Kind, snapshot.Schema)
 	}
 	identity, err := hex.DecodeString(snapshot.IdentitySHA256)
@@ -85,10 +108,25 @@ func (snapshot StagePreflight) Validate() error {
 			return fmt.Errorf("stage preflight selected record IDs are not unique and sorted")
 		}
 	}
+	for index, split := range snapshot.EvaluationSplits {
+		if split.SelectionID == "" || split.ByteOffset <= 0 || index > 0 && split.SelectionID <= snapshot.EvaluationSplits[index-1].SelectionID {
+			return fmt.Errorf("stage preflight evaluation splits are invalid")
+		}
+		position, found := slices.BinarySearch(snapshot.SelectedRecords, split.SelectionID)
+		if !found || position < 0 {
+			return fmt.Errorf("stage preflight evaluation split is not selected")
+		}
+	}
+	if snapshot.Evaluation.Selection == "contiguous-tail-v1" && len(snapshot.EvaluationSplits) != 1 {
+		return fmt.Errorf("stage preflight contiguous-tail evaluation requires one split")
+	}
 	for corpus, records := range snapshot.EligibleRecords {
 		if strings.TrimSpace(corpus) == "" || records < 0 {
 			return fmt.Errorf("stage preflight eligible record count is invalid")
 		}
+	}
+	if err := snapshot.SelectionSummary.validate(); err != nil {
+		return fmt.Errorf("stage preflight selection summary: %w", err)
 	}
 	return nil
 }
@@ -101,11 +139,41 @@ func (partition RecordPartition) Preflight(identity string, parameters ResolvedP
 		selected = append(selected, key)
 	}
 	sort.Strings(selected)
+	splits := make([]EvaluationSplit, 0, len(partition.evaluationSplits))
+	for key, offset := range partition.evaluationSplits {
+		splits = append(splits, EvaluationSplit{SelectionID: key, ByteOffset: offset})
+	}
+	sort.Slice(splits, func(i, j int) bool { return splits[i].SelectionID < splits[j].SelectionID })
 	return StagePreflight{
 		Kind: StagePreflightKind, Schema: StagePreflightSchema, IdentitySHA256: identity,
-		Evaluation: partition.Evaluation, SelectedRecords: selected, EligibleRecords: cloneRecordCounts(partition.eligibleRecords), Parameters: parameters,
+		Evaluation: partition.Evaluation, SelectedRecords: selected, EvaluationSplits: splits, EligibleRecords: cloneRecordCounts(partition.eligibleRecords), SelectionSummary: partition.SelectionSummary(), Parameters: parameters,
 		CapacityVerified: capacityVerified,
 	}
+}
+
+// SelectionSummary returns a detached copy of the stage's filter accounting.
+func (partition RecordPartition) SelectionSummary() RecordSelectionSummary {
+	result := partition.selectionSummary
+	result.IncludedLicenses = cloneRecordCounts(result.IncludedLicenses)
+	result.SkippedLicenses = cloneRecordCounts(result.SkippedLicenses)
+	return result
+}
+
+func (summary RecordSelectionSummary) validate() error {
+	if summary.InputRecords == 0 && summary.IncludedRecords == 0 && summary.SkippedRecords == 0 && summary.HeldOutRecords == 0 && summary.PartiallyHeldOutRecords == 0 && len(summary.IncludedLicenses) == 0 && len(summary.SkippedLicenses) == 0 {
+		return nil // Legacy schema-1 preflight without selection accounting.
+	}
+	if summary.InputRecords < 0 || summary.IncludedRecords < 0 || summary.SkippedRecords < 0 || summary.HeldOutRecords < 0 || summary.PartiallyHeldOutRecords < 0 || summary.IncludedRecords+summary.SkippedRecords != summary.InputRecords || summary.HeldOutRecords+summary.PartiallyHeldOutRecords > summary.IncludedRecords {
+		return fmt.Errorf("record counts are inconsistent")
+	}
+	for label, values := range map[string]map[string]int64{"included": summary.IncludedLicenses, "skipped": summary.SkippedLicenses} {
+		for license, records := range values {
+			if strings.TrimSpace(license) == "" || records <= 0 {
+				return fmt.Errorf("%s license count is invalid", label)
+			}
+		}
+	}
+	return nil
 }
 
 // ZeroEligibleCorpora returns selected corpora for which the stage filters and
@@ -178,6 +246,10 @@ func NewRecordPartitionFromPreflight(ctx context.Context, inputs []Input, parame
 		}
 		selected = append(selected, evaluationCandidate{key: key, corpus: ordered[inputPosition].Corpus, input: inputPosition, row: row})
 	}
+	splitOffsets := make(map[string]int64, len(snapshot.EvaluationSplits))
+	for _, split := range snapshot.EvaluationSplits {
+		splitOffsets[split.SelectionID] = split.ByteOffset
+	}
 	sizes, err := evaluationCandidateSizes(ctx, ordered, selected)
 	if err != nil {
 		return RecordPartition{}, err
@@ -185,9 +257,15 @@ func NewRecordPartitionFromPreflight(ctx context.Context, inputs []Input, parame
 	var textBytes int64
 	for index := range selected {
 		selected[index].textBytes = sizes[selected[index].key]
+		if offset, ok := splitOffsets[selected[index].key]; ok {
+			if offset <= 0 || offset >= selected[index].textBytes {
+				return RecordPartition{}, fmt.Errorf("stage preflight evaluation split offset is outside its record")
+			}
+			selected[index].textBytes -= offset
+		}
 		textBytes += selected[index].textBytes
 	}
-	records, tokenTargets, err := readEvaluationRecords(ctx, ordered, selected, codec, objective, conversation)
+	records, tokenTargets, err := readEvaluationRecords(ctx, ordered, selected, splitOffsets, codec, objective, conversation)
 	if err != nil {
 		return RecordPartition{}, err
 	}
@@ -195,7 +273,11 @@ func NewRecordPartitionFromPreflight(ctx context.Context, inputs []Input, parame
 	selectedMap := make(map[string]bool, len(selected))
 	for _, candidate := range selected {
 		selectedMap[candidate.key] = true
-		_, _ = fmt.Fprintln(hasher, candidate.key)
+		if offset, ok := splitOffsets[candidate.key]; ok {
+			_, _ = fmt.Fprintf(hasher, "%s:%d\n", candidate.key, offset)
+		} else {
+			_, _ = fmt.Fprintln(hasher, candidate.key)
+		}
 	}
 	evaluation := EvaluationSet{
 		Selection: snapshot.Evaluation.Selection, Seed: snapshot.Evaluation.Seed,
@@ -206,7 +288,7 @@ func NewRecordPartitionFromPreflight(ctx context.Context, inputs []Input, parame
 		return RecordPartition{}, fmt.Errorf("stage preflight held-out evidence does not match the selected records")
 	}
 	return RecordPartition{
-		Evaluation: evaluation, selected: selectedMap, eligibleRecords: cloneRecordCounts(snapshot.EligibleRecords), evaluationRecords: records,
+		Evaluation: evaluation, selected: selectedMap, evaluationSplits: splitOffsets, eligibleRecords: cloneRecordCounts(snapshot.EligibleRecords), selectionSummary: snapshot.SelectionSummary, evaluationRecords: records,
 		inputs: ordered, parameters: parameters, codec: codec, objective: objective, conversation: conversation,
 	}, nil
 }
@@ -217,6 +299,19 @@ type PartitionProgress struct {
 	Records      int64
 	Bytes        int64
 	TotalBytes   int64
+}
+
+// CapacityProgress reports deterministic training-stream scans used to prove
+// that a token-budget stage can supply its requested optimizer steps.
+type CapacityProgress struct {
+	CurrentPass       int64
+	CompletedPasses   int64
+	Records           int64
+	Sequences         int64
+	RequiredSequences int64
+	PassComplete      bool
+	Complete          bool
+	Sufficient        bool
 }
 
 type evaluationCandidate struct {
@@ -276,6 +371,7 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 	ordered := orderedInputs(inputs)
 	partition := RecordPartition{selected: make(map[string]bool), eligibleRecords: make(map[string]int64), inputs: ordered, parameters: parameters, codec: codec, objective: objective, conversation: conversation}
 	for _, input := range ordered {
+		partition.selectionSummary.InputRecords += input.Records
 		if input.Corpus != "" {
 			partition.eligibleRecords[input.Corpus] += 0
 		}
@@ -291,6 +387,7 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 				partition.eligibleRecords[input.Corpus] += input.Records
 			}
 		}
+		partition.selectionSummary.IncludedRecords = partition.selectionSummary.InputRecords
 		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: parameters.Seed, SHA256: emptyEvaluationDigest()}
 		return partition, nil
 	}
@@ -312,11 +409,18 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 		if physicalRecords != input.Records {
 			return RecordPartition{}, fmt.Errorf("shard %s contains %d records, corpus BOM declares %d", input.SHA256, physicalRecords, input.Records)
 		}
-		addCandidate := func(row int64) error {
+		addCandidate := func(row int64, license string) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			records++
+			partition.selectionSummary.IncludedRecords++
+			if license != "" {
+				if partition.selectionSummary.IncludedLicenses == nil {
+					partition.selectionSummary.IncludedLicenses = map[string]int64{}
+				}
+				partition.selectionSummary.IncludedLicenses[license]++
+			}
 			if input.Corpus != "" {
 				partition.eligibleRecords[input.Corpus]++
 			}
@@ -345,15 +449,20 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 		}
 		if input.RecordFilter == nil {
 			for row := int64(0); row < input.Records; row++ {
-				if err := addCandidate(row); err != nil {
+				if err := addCandidate(row, ""); err != nil {
 					return RecordPartition{}, err
 				}
 			}
 		} else if err := shard.WalkRecords(input.Path, func(row int64, view shard.RecordView) error {
 			if !inputAllows(input, view) {
+				partition.selectionSummary.SkippedRecords++
+				if partition.selectionSummary.SkippedLicenses == nil {
+					partition.selectionSummary.SkippedLicenses = map[string]int64{}
+				}
+				partition.selectionSummary.SkippedLicenses[selectionLicense(view.License)]++
 				return nil
 			}
-			return addCandidate(row)
+			return addCandidate(row, selectionLicense(view.License))
 		}); err != nil {
 			return RecordPartition{}, fmt.Errorf("apply record filters to shard %s: %w", input.SHA256, err)
 		}
@@ -367,6 +476,49 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 	}
 	if evaluationDisabled {
 		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: parameters.Seed, SHA256: emptyEvaluationDigest()}
+		return partition, nil
+	}
+	if policy.Selection == "contiguous-tail-v1" {
+		if objective != "causal-language-modeling" {
+			return RecordPartition{}, fmt.Errorf("contiguous-tail-v1 evaluation requires causal-language-modeling")
+		}
+		if records != 1 || candidates.Len() != 1 {
+			return RecordPartition{}, fmt.Errorf("contiguous-tail-v1 evaluation requires exactly one eligible canonical record; found %d", records)
+		}
+		candidate := candidates[0]
+		var text string
+		err := shard.ReadRecordsAt(ordered[candidate.input].Path, []int64{candidate.row}, func(_ int64, view shard.RecordView) error {
+			text = view.Text
+			return nil
+		})
+		if err != nil {
+			return RecordPartition{}, fmt.Errorf("read contiguous-tail evaluation record: %w", err)
+		}
+		offset := int64(math.Floor(float64(len(text)) * (1 - policy.Fraction)))
+		for offset < int64(len(text)) && offset > 0 && !utf8.RuneStart(text[offset]) {
+			offset++
+		}
+		if offset <= 0 || offset >= int64(len(text)) || !utf8.ValidString(text[:offset]) || !utf8.ValidString(text[offset:]) {
+			return RecordPartition{}, fmt.Errorf("contiguous-tail-v1 evaluation cannot split the eligible record at fraction %.6f", policy.Fraction)
+		}
+		evaluationBytes := int64(len(text)) - offset
+		if evaluationBytes > policy.MaxBytes {
+			return RecordPartition{}, fmt.Errorf("contiguous-tail-v1 evaluation needs %d bytes, exceeding evaluation_max_bytes=%d", evaluationBytes, policy.MaxBytes)
+		}
+		partition.evaluationSplits = map[string]int64{candidate.key: offset}
+		partition.selected[candidate.key] = true
+		partition.selectionSummary.PartiallyHeldOutRecords = 1
+		records, tokenTargets, err := readEvaluationRecords(ctx, ordered, []evaluationCandidate{candidate}, partition.evaluationSplits, codec, objective, conversation)
+		if err != nil {
+			return RecordPartition{}, err
+		}
+		hasher := sha256.New()
+		_, _ = fmt.Fprintf(hasher, "%s:%d\n", candidate.key, offset)
+		partition.evaluationRecords = records
+		partition.Evaluation = EvaluationSet{
+			Selection: policy.Selection, Seed: parameters.Seed, Records: 1,
+			TokenTargets: tokenTargets, TextBytes: evaluationBytes, SHA256: hex.EncodeToString(hasher.Sum(nil)),
+		}
 		return partition, nil
 	}
 	desired := int(math.Ceil(float64(records) * policy.Fraction))
@@ -440,7 +592,7 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 	if desired > 0 && len(selected) == 0 {
 		return RecordPartition{}, fmt.Errorf("no held-out record fits evaluation_max_bytes=%d; increase the limit or explicitly disable evaluation", policy.MaxBytes)
 	}
-	evaluationRecords, tokenTargets, err := readEvaluationRecords(ctx, ordered, selected, codec, objective, conversation)
+	evaluationRecords, tokenTargets, err := readEvaluationRecords(ctx, ordered, selected, nil, codec, objective, conversation)
 	if err != nil {
 		return RecordPartition{}, err
 	}
@@ -458,7 +610,15 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 		Selection: policy.Selection, Seed: parameters.Seed, Records: int64(len(selected)),
 		TokenTargets: tokenTargets, TextBytes: selectedBytes, SHA256: hex.EncodeToString(hasher.Sum(nil)),
 	}
+	partition.selectionSummary.HeldOutRecords = int64(len(selected))
 	return partition, nil
+}
+
+func selectionLicense(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "(unset)"
+	}
+	return value
 }
 
 func flattenEvaluationCandidates(groups map[string][]evaluationCandidate) []evaluationCandidate {
@@ -499,7 +659,7 @@ func evaluationCandidateSizes(ctx context.Context, inputs []Input, candidates []
 	return sizes, nil
 }
 
-func readEvaluationRecords(ctx context.Context, inputs []Input, selected []evaluationCandidate, codec TokenCodec, objective string, conversation ConversationTransform) ([]Record, int64, error) {
+func readEvaluationRecords(ctx context.Context, inputs []Input, selected []evaluationCandidate, splitOffsets map[string]int64, codec TokenCodec, objective string, conversation ConversationTransform) ([]Record, int64, error) {
 	grouped := make(map[int][]evaluationCandidate)
 	for _, candidate := range selected {
 		grouped[candidate.input] = append(grouped[candidate.input], candidate)
@@ -524,8 +684,14 @@ func readEvaluationRecords(ctx context.Context, inputs []Input, selected []evalu
 				return err
 			}
 			record := recordFromView(input, row, view)
+			if offset, ok := splitOffsets[record.SelectionID]; ok {
+				if offset <= 0 || offset >= int64(len(record.Text)) || !utf8.ValidString(record.Text[:offset]) || !utf8.ValidString(record.Text[offset:]) {
+					return fmt.Errorf("evaluation split for %s is outside a UTF-8 record boundary", record.SelectionID)
+				}
+				record.Text = record.Text[offset:]
+			}
 			if record.Conversation == nil && objective == "causal-language-modeling" {
-				tokenTargets += int64(codec.Count(view.Text))
+				tokenTargets += int64(codec.Count(record.Text))
 				records = append(records, record)
 				return nil
 			}
@@ -553,7 +719,15 @@ func (partition RecordPartition) TrainingRecords() (RecordSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	return filteredRecordSource{source: source, include: func(record Record) bool { return !partition.selected[record.SelectionID] }}, nil
+	return partitionedRecordSource{source: source, partition: partition}, nil
+}
+
+// TrainingMeasurementRecords streams each eligible non-evaluation record once
+// in immutable shard order. It deliberately skips training shuffle and corpus
+// balancing so corpus/tokenizer preflight can measure the unique source without
+// allocating the configured shuffle buffer or replaying epochs.
+func (partition RecordPartition) TrainingMeasurementRecords() RecordSource {
+	return partitionedRecordSource{source: rawRecordSource{inputs: partition.inputs}, partition: partition}
 }
 
 func (partition RecordPartition) EvaluationRecords() RecordSource {
@@ -562,7 +736,14 @@ func (partition RecordPartition) EvaluationRecords() RecordSource {
 
 func (partition RecordPartition) TrainingByteTargets(ctx context.Context) (int64, error) {
 	var perEpoch int64
-	err := rawRecordSource{inputs: partition.inputs, include: func(record Record) bool { return !partition.selected[record.SelectionID] }}.Stream(ctx, func(record Record) error {
+	err := rawRecordSource{inputs: partition.inputs}.Stream(ctx, func(record Record) error {
+		record, keep, err := partition.trainingRecord(record)
+		if err != nil {
+			return err
+		}
+		if !keep {
+			return nil
+		}
 		_, mask, err := tokenizeRecord(record, partition.codec, partition.objective, partition.conversation)
 		if err != nil {
 			return err
@@ -596,6 +777,10 @@ func (partition RecordPartition) TrainingByteTargets(ctx context.Context) (int64
 // requested optimizer steps. It stops as soon as the request is satisfiable;
 // an exhausted stream returns its exact smaller capacity.
 func (partition RecordPartition) TrainingStepCapacity(ctx context.Context, requested int64) (int64, bool, error) {
+	return partition.trainingStepCapacityWithProgress(ctx, requested, nil)
+}
+
+func (partition RecordPartition) trainingStepCapacityWithProgress(ctx context.Context, requested int64, progress func(records, sequences int64)) (int64, bool, error) {
 	if requested <= 0 || partition.parameters.BatchSize <= 0 || partition.parameters.SequenceLength <= 0 {
 		return 0, false, fmt.Errorf("requested steps, batch size, and sequence length must be positive")
 	}
@@ -603,7 +788,7 @@ func (partition RecordPartition) TrainingStepCapacity(ctx context.Context, reque
 	if overflow {
 		return 0, false, fmt.Errorf("requested training sequence count overflows int64")
 	}
-	sequences, sufficient, err := partition.trainingSequenceCapacity(ctx, requiredSequences)
+	sequences, sufficient, err := partition.trainingSequenceCapacityWithProgress(ctx, requiredSequences, progress)
 	if err != nil {
 		return 0, false, err
 	}
@@ -615,6 +800,120 @@ func (partition RecordPartition) TrainingStepCapacity(ctx context.Context, reque
 		steps++
 	}
 	return steps, steps >= requested, nil
+}
+
+// WithMinimumEpochsForSteps returns the smallest deterministic pass count that
+// can supply the requested optimizer steps. Token-budget stages use this during
+// preflight so a finite corpus cannot run out after accelerators have started.
+func (partition RecordPartition) WithMinimumEpochsForSteps(ctx context.Context, requested int64) (RecordPartition, int64, error) {
+	return partition.WithMinimumEpochsForStepsProgress(ctx, requested, nil)
+}
+
+// WithMinimumEpochsForStepsProgress is WithMinimumEpochsForSteps with bounded
+// scan progress suitable for user-facing preflight status.
+func (partition RecordPartition) WithMinimumEpochsForStepsProgress(ctx context.Context, requested int64, progress func(CapacityProgress)) (RecordPartition, int64, error) {
+	if requested <= 0 || partition.parameters.BatchSize <= 0 || partition.parameters.SequenceLength <= 0 {
+		return RecordPartition{}, 0, fmt.Errorf("requested steps, batch size, and sequence length must be positive")
+	}
+	requiredSequences, overflow := multiplyInt64(requested, partition.parameters.BatchSize)
+	if overflow {
+		return RecordPartition{}, 0, fmt.Errorf("requested training sequence count overflows int64")
+	}
+	source, err := partition.capacityEpochSource()
+	if err != nil {
+		return RecordPartition{}, 0, err
+	}
+	epochs, err := minimumEpochsForSequences(ctx, source, partition.codec, partition.objective, partition.conversation, int(partition.parameters.SequenceLength), requested, requiredSequences, progress)
+	if err != nil {
+		return RecordPartition{}, 0, err
+	}
+	partition.parameters.Epochs = epochs
+	return partition, epochs, nil
+}
+
+func minimumEpochsForSequences(ctx context.Context, source epochRecordSource, codec TokenCodec, objective string, conversation ConversationTransform, sequenceLength int, requested, requiredSequences int64, progress func(CapacityProgress)) (int64, error) {
+	const maximumEpochs = int64(1_000_000)
+	packer := sequenceCapacityPacker{sequenceLength: sequenceLength}
+	var records, reportedSequences int64
+	report := func(event CapacityProgress) {
+		if progress != nil {
+			if event.Sequences < reportedSequences {
+				event.Sequences = reportedSequences
+			} else {
+				reportedSequences = event.Sequences
+			}
+			progress(event)
+		}
+	}
+	reached := errors.New("requested training step capacity reached")
+	for epoch := int64(0); epoch < maximumEpochs; epoch++ {
+		currentPass := epoch + 1
+		report(CapacityProgress{CurrentPass: currentPass, CompletedPasses: epoch, Records: records, Sequences: packer.sequences, RequiredSequences: requiredSequences})
+		var epochTargets bool
+		err := source.streamEpoch(ctx, epoch, func(record Record) error {
+			records++
+			tokens, mask, err := tokenizeRecord(record, codec, objective, conversation)
+			if err != nil {
+				return err
+			}
+			epochTargets = epochTargets || slices.Contains(mask, true)
+			if packer.add(tokens, mask, requiredSequences) {
+				return reached
+			}
+			if records == 1 || records%10_000 == 0 {
+				report(CapacityProgress{CurrentPass: currentPass, CompletedPasses: epoch, Records: records, Sequences: packer.sequences, RequiredSequences: requiredSequences})
+			}
+			return nil
+		})
+		if errors.Is(err, reached) {
+			report(CapacityProgress{CurrentPass: currentPass, CompletedPasses: epoch, Records: records, Sequences: requiredSequences, RequiredSequences: requiredSequences, Complete: true, Sufficient: true})
+			return currentPass, nil
+		}
+		if err != nil {
+			return 0, err
+		}
+		if !epochTargets {
+			return 0, fmt.Errorf("training stream contains no usable optimizer steps")
+		}
+		testedSequences := packer.terminalSequences()
+		if testedSequences >= requiredSequences {
+			report(CapacityProgress{CurrentPass: currentPass, CompletedPasses: currentPass, Records: records, Sequences: requiredSequences, RequiredSequences: requiredSequences, PassComplete: true, Complete: true, Sufficient: true})
+			return currentPass, nil
+		}
+		report(CapacityProgress{CurrentPass: currentPass, CompletedPasses: currentPass, Records: records, Sequences: testedSequences, RequiredSequences: requiredSequences, PassComplete: true})
+	}
+	return 0, fmt.Errorf("training stream cannot supply %d optimizer steps within %d epochs", requested, maximumEpochs)
+}
+
+type epochRecordSource interface {
+	streamEpoch(context.Context, int64, func(Record) error) error
+}
+
+type partitionedEpochRecordSource struct {
+	source    epochRecordSource
+	partition RecordPartition
+}
+
+func (source partitionedEpochRecordSource) streamEpoch(ctx context.Context, epoch int64, consume func(Record) error) error {
+	return source.source.streamEpoch(ctx, epoch, func(record Record) error {
+		record, keep, err := source.partition.trainingRecord(record)
+		if err != nil || !keep {
+			return err
+		}
+		return consume(record)
+	})
+}
+
+func (partition RecordPartition) capacityEpochSource() (epochRecordSource, error) {
+	value, err := NewCanonicalRecordSourceWithTokenizer(partition.inputs, partition.parameters, partition.codec)
+	if err != nil {
+		return nil, err
+	}
+	source, ok := value.(*canonicalRecordSource)
+	if !ok {
+		return nil, fmt.Errorf("canonical record source does not support incremental epoch scans")
+	}
+	return partitionedEpochRecordSource{source: source, partition: partition}, nil
 }
 
 // TrainingSteps scans the finite epoch stream and returns its exact optimizer
@@ -635,58 +934,84 @@ func (partition RecordPartition) TrainingSteps(ctx context.Context) (int64, erro
 }
 
 func (partition RecordPartition) trainingSequenceCapacity(ctx context.Context, requiredSequences int64) (int64, bool, error) {
+	return partition.trainingSequenceCapacityWithProgress(ctx, requiredSequences, nil)
+}
+
+func (partition RecordPartition) trainingSequenceCapacityWithProgress(ctx context.Context, requiredSequences int64, progress func(records, sequences int64)) (int64, bool, error) {
 	source, err := partition.TrainingRecords()
 	if err != nil {
 		return 0, false, err
 	}
-	var buffered int
-	var masks []bool
-	var sequences int64
+	packer := sequenceCapacityPacker{sequenceLength: int(partition.parameters.SequenceLength)}
+	var records int64
 	reached := errors.New("requested training step capacity reached")
-	addSequence := func(targets []bool) error {
-		if slices.Contains(targets, true) {
-			sequences++
-			if requiredSequences > 0 && sequences >= requiredSequences {
-				return reached
-			}
-		}
-		return nil
-	}
 	err = source.Stream(ctx, func(record Record) error {
+		records++
 		tokens, recordMask, err := tokenizeRecord(record, partition.codec, partition.objective, partition.conversation)
 		if err != nil {
 			return err
 		}
-		recordTokens := len(tokens) + 1 // Worker framing appends EOS.
-		buffered += recordTokens
-		masks = append(masks, recordMask...)
-		window := int(partition.parameters.SequenceLength) + 1
-		for buffered >= window {
-			if err := addSequence(masks[1:window]); err != nil {
-				return err
-			}
-			buffered -= int(partition.parameters.SequenceLength)
-			masks = masks[int(partition.parameters.SequenceLength):]
+		if packer.add(tokens, recordMask, requiredSequences) {
+			return reached
+		}
+		if progress != nil && (records == 1 || records%10_000 == 0) {
+			progress(records, packer.sequences)
 		}
 		return nil
 	})
 	if errors.Is(err, reached) {
-		return sequences, true, nil
+		if progress != nil {
+			progress(records, packer.sequences)
+		}
+		return packer.sequences, true, nil
 	}
 	if err != nil {
 		return 0, false, err
 	}
-	if buffered > 1 {
-		if err := addSequence(masks[1:]); errors.Is(err, reached) {
-			return sequences, true, nil
-		}
+	sequences := packer.terminalSequences()
+	if progress != nil {
+		progress(records, sequences)
 	}
-	return sequences, false, nil
+	return sequences, requiredSequences > 0 && sequences >= requiredSequences, nil
 }
 
-type filteredRecordSource struct {
-	source  RecordSource
-	include func(Record) bool
+type sequenceCapacityPacker struct {
+	sequenceLength int
+	buffered       int
+	masks          []bool
+	sequences      int64
+}
+
+// add preserves the worker's continuous-EOS packing window. It reports
+// whether at least one supervised sequence was completed by this record.
+func (packer *sequenceCapacityPacker) add(tokens []int, mask []bool, requiredSequences int64) bool {
+	packer.buffered += len(tokens) + 1 // Worker framing appends EOS.
+	packer.masks = append(packer.masks, mask...)
+	window := packer.sequenceLength + 1
+	for packer.buffered >= window {
+		if slices.Contains(packer.masks[1:window], true) {
+			packer.sequences++
+			if requiredSequences > 0 && packer.sequences >= requiredSequences {
+				return true
+			}
+		}
+		packer.buffered -= packer.sequenceLength
+		packer.masks = packer.masks[packer.sequenceLength:]
+	}
+	return false
+}
+
+func (packer *sequenceCapacityPacker) terminalSequences() int64 {
+	sequences := packer.sequences
+	if packer.buffered > 1 && slices.Contains(packer.masks[1:], true) {
+		sequences++
+	}
+	return sequences
+}
+
+type partitionedRecordSource struct {
+	source    RecordSource
+	partition RecordPartition
 }
 
 type sliceRecordSource []Record
@@ -703,13 +1028,28 @@ func (source sliceRecordSource) Stream(ctx context.Context, consume func(Record)
 	return nil
 }
 
-func (source filteredRecordSource) Stream(ctx context.Context, consume func(Record) error) error {
+func (source partitionedRecordSource) Stream(ctx context.Context, consume func(Record) error) error {
 	return source.source.Stream(ctx, func(record Record) error {
-		if !source.include(record) {
-			return nil
+		record, keep, err := source.partition.trainingRecord(record)
+		if err != nil || !keep {
+			return err
 		}
 		return consume(record)
 	})
+}
+
+func (partition RecordPartition) trainingRecord(record Record) (Record, bool, error) {
+	if offset, ok := partition.evaluationSplits[record.SelectionID]; ok {
+		if record.Conversation != nil {
+			return Record{}, false, fmt.Errorf("contiguous evaluation split cannot partition a conversation record")
+		}
+		if offset <= 0 || offset >= int64(len(record.Text)) || !utf8.ValidString(record.Text[:offset]) {
+			return Record{}, false, fmt.Errorf("training split for %s is outside a UTF-8 record boundary", record.SelectionID)
+		}
+		record.Text = record.Text[:offset]
+		return record, true, nil
+	}
+	return record, !partition.selected[record.SelectionID], nil
 }
 
 type rawRecordSource struct {
@@ -1013,6 +1353,13 @@ func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, ep
 		emitted[selected] += int64(source.codec.Count(record.Text)) + 1
 		item, ok := <-streams[selected]
 		if !ok {
+			// A weighted epoch ends when its first corpus is exhausted. Draining
+			// the remaining corpora would silently change the declared token
+			// ratios for the rest of the epoch. The capacity preflight increases
+			// the epoch count when another weighted pass is needed.
+			if len(source.weights) != 0 {
+				return nil
+			}
 			active[selected] = false
 			activeCount--
 			continue

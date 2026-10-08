@@ -57,11 +57,12 @@ type AI struct {
 }
 
 type Lookaside struct {
-	Cache         string   `json:"cache,omitempty"`
-	CacheMaxBytes int64    `json:"cache_max_bytes,omitempty"`
-	Scratch       string   `json:"scratch,omitempty"`
-	Mirrors       []string `json:"mirrors,omitempty"`
-	Publish       *Publish `json:"publish,omitempty"`
+	Cache           string   `json:"cache,omitempty"`
+	CacheMaxBytes   int64    `json:"cache_max_bytes,omitempty"`
+	RetainCompleted bool     `json:"retain_completed,omitempty"`
+	Scratch         string   `json:"scratch,omitempty"`
+	Mirrors         []string `json:"mirrors,omitempty"`
+	Publish         *Publish `json:"publish,omitempty"`
 }
 
 type Publish struct {

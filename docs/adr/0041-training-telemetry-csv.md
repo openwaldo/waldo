@@ -3,6 +3,9 @@
 Status: accepted
 - Date: 2026-08-09
 
+The schema-1 header below remains supported. ADR 0081 defines the additive
+schema-2 header used for new files and the append-only compatibility rule.
+
 ## Context
 
 `RUN.json` preserves verified checkpoints, evaluations, and terminal outcome,

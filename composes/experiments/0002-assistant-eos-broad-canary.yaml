@@ -1,0 +1,51 @@
+# Controlled follow-up: retain the EOS-supervised assistant objective while
+# replacing the narrow interaction-contract mixture with broad conversations.
+kind: waldo-model-compose
+schema: 1
+base:
+  model: foundation-small-language-full-bpe-01
+  model_id: 3587a82e93488cf709a14c5b9f0dfcca18839f12de2ba336121e5db25cc8aa07
+  run_id: 11c4dd9bde7821c3
+interaction:
+  template: user-assistant-v1
+stages:
+  - name: assistant-eos-sft
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/oasst2
+        weight: 4
+      - path: post-train/sft/helpsteer2
+        weight: 2
+      - path: post-train/sft/dolly
+        weight: 2
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      tokens: 10000000
+      batch_size: 16
+      gradient_accumulation_steps: 1
+      compute_precision: bfloat16
+      activation_checkpointing: true
+      compile: false
+      sequence_length: 1024
+      learning_rate: 0.000012
+      optimizer: adamw
+      schedule: cosine
+      seed: 44
+      weight_decay: 0.04
+      warmup_steps: 12
+      shuffle_buffer_records: 8192
+      shuffle_buffer_bytes: 134217728
+      checkpoint_every: 122
+      evaluate_every: 122
+      evaluation_max_records: 512
+      evaluation_max_bytes: 16777216
