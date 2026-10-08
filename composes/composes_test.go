@@ -264,6 +264,31 @@ func TestTinyStoriesBPEPreflightIsMeasurementOnlyAndPreservesCore(t *testing.T) 
 	}
 }
 
+func TestPressBooksBPEPreflightIsMeasurementOnlyAndPreservesQualifiedModel(t *testing.T) {
+	measurement := loadCompose(t, "experiments/0004-pressbooks-bpe-preflight.yaml")
+	qualified := loadCompose(t, "0007-tinystories-bpe-20tpp.yaml")
+	if !reflect.DeepEqual(measurement.Architecture, qualified.Architecture) {
+		t.Fatalf("PressBooks measurement changes the qualified architecture")
+	}
+	if len(measurement.Stages) != 1 {
+		t.Fatalf("PressBooks measurement stages = %d, want 1", len(measurement.Stages))
+	}
+	stage := measurement.Stages[0]
+	if stage.Parameters.Epochs != 1 || stage.Parameters.Tokens != 0 {
+		t.Fatalf("PressBooks measurement budget = %d epochs/%d tokens, want one epoch", stage.Parameters.Epochs, stage.Parameters.Tokens)
+	}
+	if !reflect.DeepEqual(corpusPaths(stage.Corpora), []string{"core/common-pile/pressbooks"}) {
+		t.Fatalf("PressBooks measurement corpus = %v", corpusPaths(stage.Corpora))
+	}
+	qualifiedParameters := qualified.Stages[0].Parameters
+	measurementParameters := stage.Parameters
+	measurementParameters.Epochs = 0
+	qualifiedParameters.Tokens = 0
+	if !reflect.DeepEqual(measurementParameters, qualifiedParameters) {
+		t.Fatalf("PressBooks measurement changes qualified training controls: got=%+v want=%+v", measurementParameters, qualifiedParameters)
+	}
+}
+
 func TestFoundationLadderKeepsOneControlledRecipe(t *testing.T) {
 	generalCorpora := []string{
 		"core/common-pile/wikimedia",
