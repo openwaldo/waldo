@@ -435,7 +435,7 @@ reference for this ladder: compact BPE, sufficient effective context, stable
 multi-host optimization, prompt retention, bounded repetition, and learned
 document stopping all work together.
 
-## Rung 0008: PressBooks real-text control — ready
+## Rung 0008: PressBooks real-text control — failed capability gates
 
 Do not jump directly from this narrow reference to the retired broad-mixture
 recipe. First isolate distribution transfer while preserving the qualified
@@ -493,6 +493,37 @@ go run ./cmd/waldo/ model train pressbooks-bpe-20tpp-01 \
 Do not add Wikimedia, Stack Exchange, or PLOS until this real-text control
 passes. This keeps corpus mixture, source exposure, and architecture from
 changing in one experiment.
+
+Validated result on 2026-10-08:
+
+- model `pressbooks-bpe-20tpp-01`, ID `6cf211a17455`, run
+  `2e3f45089a3d8aba`, completed all 99,363 steps and consumed 610,482,555
+  packed targets across four source passes;
+- the selected step-98,500 checkpoint had held-out loss 2.716397 and 1.119853
+  bits per byte, with exact agreement after artifact reload;
+- loss improved 67.7% from the initial 8.400077, missing the precommitted 70%
+  gate; terminal loss 2.723817 was only 0.27% above the selected checkpoint,
+  so there was no material late overtraining reversal;
+- ten of 15 deterministic probes had clearly grammatical, on-topic first
+  sentences, with one additional borderline operating-system continuation,
+  short of the required 12;
+- all 15 deterministic continuations entered a clear repeated phrase or
+  sentence pattern, and nine of 15 temperature-0.7 continuations did so,
+  missing both repetition limits;
+- eight of ten factual stems produced a topically relevant first sentence,
+  passing the relevance gate, but only two were clearly factually correct and
+  one was borderline; exact recall remains diagnostic rather than a hard gate;
+  and
+- neither evaluation emitted EOS within 128 tokens. This is retained as a
+  stopping diagnostic, not a gate for raw continuation pretraining.
+
+Rung 0008 does not promote. The controlled result shows that the qualified
+TinyStories architecture transfers enough syntax and topic association to
+educational prose to lower loss and complete factual stems, but it does not
+have sufficient capacity or training signal for reliable factual recall or
+non-repetitive general continuation. Broadening the corpus now would confound
+that finding, so the active ladder stops here pending a separately designed
+capacity or post-training experiment.
 
 ## Forecast before training
 
