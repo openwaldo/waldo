@@ -630,7 +630,10 @@ func (session *hostfileSession) workerPIDPath(rank int) string {
 func (session *hostfileSession) remoteWorkerInvocation(rank int, arguments []string) string {
 	path := strings.Join([]string{session.pythonDir, "/usr/local/bin", "/usr/bin", "/bin"}, ":")
 	pidPath := shellQuote(session.workerPIDPath(rank))
-	return fmt.Sprintf("umask 077; env PATH=%s %s <&0 & child=$!; printf '%%s\\n' \"$child\" > %s; trap 'kill -TERM \"$child\" 2>/dev/null || true; wait \"$child\"; exit 143' HUP INT TERM; wait \"$child\"; status=$?; rm -f -- %s; exit \"$status\"",
+	// POSIX shells may connect an asynchronous command's standard input to
+	// /dev/null when job control is disabled. Preserve the SSH stream on a
+	// dedicated descriptor before starting the worker in the background.
+	return fmt.Sprintf("umask 077; exec 3<&0; env PATH=%s %s <&3 & child=$!; exec 3<&-; printf '%%s\\n' \"$child\" > %s; trap 'kill -TERM \"$child\" 2>/dev/null || true; wait \"$child\"; exit 143' HUP INT TERM; wait \"$child\"; status=$?; rm -f -- %s; exit \"$status\"",
 		shellQuote(path), joinRemoteArguments(arguments), pidPath, pidPath)
 }
 

@@ -648,7 +648,7 @@ func TestHostfileRemoteWorkerInvocationPublishesPIDAndForwardsTermination(t *tes
 	session := hostfileSession{pythonDir: "/opt/waldo-python/bin", remoteRoot: "/tmp/waldo/session"}
 	invocation := session.remoteWorkerInvocation(2, []string{"/tmp/waldo", "model", "train-worker"})
 	for _, expected := range []string{
-		`env PATH='/opt/waldo-python/bin:/usr/local/bin:/usr/bin:/bin' '/tmp/waldo' 'model' 'train-worker' <&0 & child=$!`,
+		`exec 3<&0; env PATH='/opt/waldo-python/bin:/usr/local/bin:/usr/bin:/bin' '/tmp/waldo' 'model' 'train-worker' <&3 & child=$!; exec 3<&-`,
 		`printf '%s\n' "$child" > '/tmp/waldo/session/worker-2.pid'`,
 		`trap 'kill -TERM "$child" 2>/dev/null || true; wait "$child"; exit 143' HUP INT TERM`,
 		`rm -f -- '/tmp/waldo/session/worker-2.pid'`,
