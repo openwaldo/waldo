@@ -525,6 +525,46 @@ non-repetitive general continuation. Broadening the corpus now would confound
 that finding, so the active ladder stops here pending a separately designed
 capacity or post-training experiment.
 
+## Rung 0009: PressBooks capacity pilot — ready
+
+[`0009-pressbooks-capacity-pilot.yaml`](0009-pressbooks-capacity-pilot.yaml)
+tests the narrowest explanation for rung 0008's failure: the 30.7M-parameter
+core was too small for the more varied PressBooks distribution. It increases
+only the decoder core to 15 layers at width 640 with full 10-head attention.
+The 4K tokenizer, 512-token context, filtered PressBooks corpus, four source
+passes, batch geometry, optimizer, schedule, dropout, initialization, seed,
+and evaluation policy remain fixed. The peak learning rate decreases from
+0.0006 to 0.00038 by square-root core-parameter scaling.
+
+This is a capacity pilot at roughly eight training tokens per core parameter,
+not a 20-token-per-parameter qualification. Promotion requires:
+
+1. Training and artifact reload complete without non-finite loss, selected
+   held-out bits per byte improve at least 3% from rung 0008's 1.119853, or no
+   more than 1.0863 BPB, and there is no material late reversal.
+2. At least 12 of 15 deterministic general probes have grammatical, on-topic
+   first sentences.
+3. No more than two deterministic probes and no more than two temperature-0.7
+   probes enter an immediate repeated sentence or phrase loop.
+4. At least eight of ten factual stems have a relevant first sentence. Exact
+   factual correctness is retained as a diagnostic rather than a hard gate.
+
+Run and evaluate it with:
+
+```console
+go run ./cmd/waldo/ model forecast \
+  composes/0009-pressbooks-capacity-pilot.yaml --preflight
+go run ./cmd/waldo/ model train pressbooks-capacity-pilot-01 \
+  composes/0009-pressbooks-capacity-pilot.yaml --hostfile ~/hostfile
+./composes/general-foundation/evaluate-general.sh \
+  pressbooks-capacity-pilot-01 /tmp/pressbooks-capacity-pilot-01-greedy.jsonl 0 42
+./composes/general-foundation/evaluate-general.sh \
+  pressbooks-capacity-pilot-01 /tmp/pressbooks-capacity-pilot-01-temp07.jsonl 0.7 42
+```
+
+Do not change context length, corpus mixture, post-training data, or token
+horizon until this capacity-only result is evaluated.
+
 ## Forecast before training
 
 `waldo model forecast <compose>` now reports the exact WALDO parameter
