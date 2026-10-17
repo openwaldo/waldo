@@ -580,8 +580,8 @@ func modelGGUFMetadata(record model.ModelRecord) ([]ggufMetadata, error) {
 	if err := validateStandardLlamaArchitecture(architecture, "GGUF/Ollama"); err != nil {
 		return nil, err
 	}
-	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
-		return nil, fmt.Errorf("GGUF export currently requires byte@builtin-byte-schema-1 with vocabulary_size 259")
+	if err := validateByteTokenizerExport(architecture, "GGUF"); err != nil {
+		return nil, err
 	}
 	for name, value := range map[string]uint64{
 		"context_tokens": architecture.ContextTokens, "hidden_size": architecture.HiddenSize,

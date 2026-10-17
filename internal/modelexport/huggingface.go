@@ -100,6 +100,9 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	if err := validateStandardLlamaArchitecture(record.Architecture, format); err != nil {
 		return "", err
 	}
+	if err := validateByteTokenizerExport(record.Architecture, format); err != nil {
+		return "", err
+	}
 	artifacts, err := inference.ResolveArtifacts(inspection)
 	if err != nil {
 		return "", err
@@ -198,6 +201,13 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 func validateStandardLlamaArchitecture(architecture model.Architecture, format string) error {
 	if architecture.QKNormalization {
 		return fmt.Errorf("%s export cannot preserve WALDO qk_normalization; use the native waldo export until this runtime has an exact architecture implementation", format)
+	}
+	return nil
+}
+
+func validateByteTokenizerExport(architecture model.Architecture, format string) error {
+	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
+		return fmt.Errorf("%s export currently requires byte@builtin-byte-schema-1 with vocabulary_size 259", format)
 	}
 	return nil
 }

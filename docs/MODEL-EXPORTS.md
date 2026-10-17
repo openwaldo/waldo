@@ -65,6 +65,13 @@ managed architecture enables parameter-free `qk_normalization`; those runtimes
 would otherwise accept the same tensor shapes while producing different
 logits. Use the native `waldo` package until an exact portable binding exists.
 
+All four derived formats currently require `byte@builtin-byte-schema-1` with
+vocabulary size 259. Hugging Face and MLX include that byte tokenizer and its
+special-token IDs, so exporting a subword model would produce a package whose
+tokenizer does not match its weights. Use the native `waldo` package for models
+with `r50k_base`, `cl100k_base`, or another tokenizer until a matching portable
+tokenizer package is available.
+
 ## Prerequisites and selection
 
 The model name resolves beneath the configured `model.root`, which defaults to
@@ -487,6 +494,7 @@ should use the JSON result rather than parse the human sentence.
 | Destination is inside the source model | Export beside or outside the managed model so source and release cannot overlap. |
 | No current weights | Download a supported open-weight origin or complete a real training run; simulated artifacts cannot become runtime releases. |
 | Artifact hash, size, or model pin mismatch | Treat the managed model as corrupted or inconsistent and audit it; WALDO will not convert unverified bytes. |
+| Derived export requires the schema-1 byte tokenizer | Use `--format waldo` for a model with a subword or other unsupported tokenizer. |
 | Unsupported GGUF tensor, tokenizer, or dtype | Use a supported schema-1 decoder model or add a reviewed format adapter rather than guessing metadata. |
 | `llama-quantize` or `llama-imatrix` is unavailable | Install llama.cpp and put the required executable in `PATH`; WALDO never silently substitutes a quantizer. |
 | Signing is configured but fails | Install/configure `cosign`, fix authentication or the configured key, and rerun. WALDO will not fall back to unsigned output. |
