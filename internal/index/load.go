@@ -256,8 +256,9 @@ func indexedManifestPath(logicalPath string) (string, bool, error) {
 	}
 	name := filepath.Base(logicalPath)
 	var matches []string
+	var entries []Entry
 	for _, entry := range directory.Entries {
-		if entry.Type != "manifest" || filepath.Base(entry.Name) != entry.Name {
+		if entry.Type != "manifest" || !ValidEntryName(entry.Name) {
 			continue
 		}
 		extension := strings.ToLower(filepath.Ext(entry.Name))
@@ -266,6 +267,7 @@ func indexedManifestPath(logicalPath string) (string, bool, error) {
 		}
 		if strings.TrimSuffix(entry.Name, filepath.Ext(entry.Name)) == name {
 			matches = append(matches, filepath.Join(dir, entry.Name))
+			entries = append(entries, entry)
 		}
 	}
 	if len(matches) == 0 {
@@ -274,10 +276,11 @@ func indexedManifestPath(logicalPath string) (string, bool, error) {
 	if len(matches) > 1 {
 		return "", false, fmt.Errorf("logical corpus path is ambiguous; matches %s", strings.Join(matches, ", "))
 	}
-	if _, err := os.Stat(matches[0]); err != nil {
+	path, err := EntryPath(dir, entries[0])
+	if err != nil {
 		return "", false, err
 	}
-	return matches[0], true, nil
+	return path, true, nil
 }
 
 func isFilesystemPath(value string) bool {
@@ -359,6 +362,11 @@ func LoadDirectory(dir string) (Directory, error) {
 	if err != nil {
 		return Directory{}, err
 	}
+	if info, err := os.Lstat(path); err != nil {
+		return Directory{}, err
+	} else if !info.Mode().IsRegular() {
+		return Directory{}, fmt.Errorf("%s: index metadata must be a regular file, not a symbolic link or special file", path)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Directory{}, err
@@ -391,6 +399,36 @@ func LoadManifest(path string) (Manifest, error) {
 	return manifest, nil
 }
 
+// ValidEntryName reports whether name can appear in index directory metadata:
+// a single path component other than "." or "..".
+func ValidEntryName(name string) bool {
+	return name != "" && name != "." && name != ".." && filepath.Base(name) == name
+}
+
+// EntryPath resolves an indexed entry to its path beneath dir. The name must
+// be a single path component, and the filesystem object must match the
+// declared type without following symbolic links, so walking the index can
+// neither leave the checkout nor revisit a directory.
+func EntryPath(dir string, entry Entry) (string, error) {
+	if !ValidEntryName(entry.Name) {
+		return "", fmt.Errorf("invalid entry name %q", entry.Name)
+	}
+	path := filepath.Join(dir, entry.Name)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("indexed entry %q: %w", entry.Name, err)
+	}
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		return "", fmt.Errorf("indexed entry %q is a symbolic link", entry.Name)
+	case entry.Type == "dir" && !info.IsDir():
+		return "", fmt.Errorf("entry %q is declared as a directory but is not a directory", entry.Name)
+	case entry.Type == "manifest" && !info.Mode().IsRegular():
+		return "", fmt.Errorf("entry %q is declared as a manifest but is not a regular file", entry.Name)
+	}
+	return path, nil
+}
+
 // WalkCorpora visits every manifest indexed beneath target. Filesystem content
 // absent from the directory's index metadata is deliberately ignored.
 func WalkCorpora(target Target, visit func(Corpus) error) error {
@@ -414,7 +452,11 @@ func walkDirectory(root, dir string, visit func(Corpus) error) error {
 		return err
 	}
 	for _, entry := range index.Entries {
-		path := filepath.Join(dir, entry.Name)
+		path, err := EntryPath(dir, entry)
+		if err != nil {
+			directoryPath, _ := DirectoryPath(dir)
+			return fmt.Errorf("%s: %w", directoryPath, err)
+		}
 		switch entry.Type {
 		case "dir":
 			if err := walkDirectory(root, path, visit); err != nil {

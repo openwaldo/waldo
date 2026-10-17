@@ -133,7 +133,11 @@ func runIndexShow(context Context, args []string, stdout, stderr io.Writer) erro
 			return err
 		}
 		if len(directory.Entries) == 1 && directory.Entries[0].Type == "manifest" {
-			target.Abs = filepath.Join(target.Abs, directory.Entries[0].Name)
+			manifestPath, err := waldoindex.EntryPath(target.Abs, directory.Entries[0])
+			if err != nil {
+				return err
+			}
+			target.Abs = manifestPath
 			target.Rel = filepath.ToSlash(filepath.Join(target.Rel, directory.Entries[0].Name))
 		} else {
 			if context.JSON {
