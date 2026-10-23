@@ -1,5 +1,340 @@
 # Model compose guide
 
+## Schema 2 native envelope
+
+Schema 2 supports the native training engine through explicit discriminators:
+
+```yaml
+kind: waldo-model-compose
+schema: 2
+training:
+  engine: waldo-native
+architecture:
+  provider: waldo-native
+  config:
+    # All existing native architecture fields, including tokenizer, go here.
+```
+
+`base`, `interaction`, and `stages` retain schema-1 syntax and semantics.
+The native reader requires the engine, provider, and config mapping, rejects
+unknown fields, and normalizes the document to the existing schema-1 domain
+representation. Archived compose history uses that normalized form. Equivalent
+native composes retain the same architecture and training identities.
+
+The complete [native schema-2 example](examples/planned-schema2-tool-use.yaml)
+can be used with normal forecast and train commands when its managed parent is
+available. An experimental Transformers engine is described below. The rest of
+this guide describes the native representation shared by both input schemas.
+
+## Experimental Transformers engine
+
+[transformers-smoke.yaml](examples/transformers-smoke.yaml) is an executable
+two-step experiment, with no pretrained checkpoint. It selects
+`training.engine: huggingface-transformers` and a matching
+`architecture.provider`. `model_class`, `config_class`, and the nested `config`
+select the Transformers model implementation. The supported pairs are:
+
+| Model class | Config class |
+| --- | --- |
+| `LlamaForCausalLM` | `LlamaConfig` |
+| `Qwen2ForCausalLM` | `Qwen2Config` |
+| `Qwen3ForCausalLM` | `Qwen3Config` |
+| `MistralForCausalLM` | `MistralConfig` |
+| `Gemma2ForCausalLM` | `Gemma2Config` |
+| `Phi3ForCausalLM` | `Phi3Config` |
+| `Olmo2ForCausalLM` | `Olmo2Config` |
+| `MixtralForCausalLM` | `MixtralConfig` |
+| `Qwen3_5ForCausalLM` | `Qwen3_5TextConfig` |
+
+One embedded registry owns the pairs for compose validation, training, and
+inference. Classes come from the verified installed package, never remote model
+code. Qwen3.5 support is text-only, not its multimodal wrapper. Its tiny hybrid
+smoke contains both linear-attention and full-attention layers and uses the
+package's built-in fallback kernels. Optional external kernels are not required.
+
+Mixtral requires explicit `num_local_experts`, `num_experts_per_tok`, and
+`output_router_logits: true`. Its objective includes the configured
+`router_aux_loss_coef` times router balancing loss, scaled with target-weighted
+gradient accumulation. Padding is excluded from router balancing via an
+attention mask; assistant loss masking does not remove prompt context from
+attention. Held-out loss remains pure token-weighted cross entropy.
+Forecast totals include all resident experts and report a separate estimated
+active-parameter count; `runtime.json` records measured total and expert
+parameters plus the same active-parameter definition. Hybrid forecasts are only
+dense-decoder proxies, not recurrent-state or memory estimates, and report their
+decomposition as `unavailable`. Use measured runtime counts rather than treating
+forecasts as exact.
+
+### Supported-feature matrix
+
+This is a bounded integration for the class pairs above, not general support for
+all Transformers models, tasks, Trainer options, or extension points.
+
+| Area | Implemented | Boundary |
+| --- | --- | --- |
+| Initialization | Random weights from explicit config; compatible managed `base.model` | No HF checkpoint import through `base.source` |
+| Objectives | Causal LM and WALDO assistant-response masking | No arbitrary task heads, HF chat-template training, or custom Trainer subclasses |
+| Training | Standard `Trainer`, listed argument allowlist, gradient accumulation, ADR 0044 safety evaluations, optional `evaluate_every`, ADR 0079 best-candidate publication with reloaded-artifact verification | No resumable checkpoints (`checkpoint_every`), distributed training, or exact optimizer-state resume |
+| Continuation | Verified completed-run weights and the same immutable architecture/tokenizer | New optimizer/scheduler state; not an exact continuation of optimizer history |
+| Tokenizers | Byte, tiktoken training, pinned data-only HF fast tokenizers | Chat and export support byte/HF only; no automatic acquisition or remote tokenizer code |
+| Devices | CPU or one visible CUDA/ROCm GPU; FP16/BF16 training subject to device checks | No Apple MPS or multi-GPU execution; ROCm has not been hardware-validated |
+| Chat | Streaming, temperature/top-p, seed, EOS/stop strings, bounded context, cancellation | No KV/recurrent-state cache, upstream HF chat templates, or multimodal input |
+| Export | Provider-native Hugging Face weights, tokenizer assets, hashed provenance and signing hook | No provider-native conversion to MLX/GGUF/Ollama or quantization |
+| Integrity | Exact Transformers wheel/source verification, artifact and tokenizer hashes | Interpreter and transitive dependencies are trusted, not fully hash-locked |
+
+CPU smoke tests cover the listed families. Single-GPU CUDA lifecycle tests on
+NVIDIA GB10 cover all listed families in FP32; the Mistral/Gemma2/Phi3/OLMo2/
+Mixtral/Qwen3.5 matrix also passed FP16 and BF16 training. The byte/HF tokenizer
+end-to-end matrix uses custom Qwen3 models in FP32. These are tiny-model mechanics
+tests, not evidence of convergence, production-scale capacity, or equivalent
+behavior across every configuration. See [testing evidence and remaining audit
+coverage](TESTING.md#transformers-validation-scope).
+
+The [custom Qwen3 smoke compose](examples/transformers-qwen3-smoke.yaml) uses
+two layers, hidden size 64, intermediate size 160, four attention heads, two KV
+heads, and head dimension 16. It runs two optimizer steps from random weights
+with the byte tokenizer. This tests architecture/config forwarding, not language
+quality or the pretrained Qwen tokenizer. Its measured size is 102,976 parameters.
+
+Retained internal composes use the normalized schema-1 domain representation:
+the architecture's `transformers` object retains the pinned package, classes,
+and provider config, while parameters' `trainer` object retains the class and
+arguments. These are internal serialization fields, not the recommended input
+syntax. Author new provider composes using the schema-2 envelope above.
+
+No parameter-count field is required. Declare `vocab_size`, `hidden_size`,
+`intermediate_size`, `num_hidden_layers`, `num_attention_heads`,
+`num_key_value_heads`, and `max_position_embeddings` in `architecture.config`.
+Other recognized configuration values are forwarded to the selected config
+class. Unknown config keys fail during runtime preflight. The forecast reports
+an `estimated` family-aware structural count, or a labelled dense proxy for the
+hybrid. It is not an exact provider count; see [provider fitness
+semantics](MODEL-TRAINING-FITNESS.md#provider-fitness-semantics). The worker
+records the actual parameter count and resolved config after construction.
+
+`architecture.tokenizer` supports WALDO's `{name, revision}` byte/tiktoken
+contracts, or `name: huggingface` with an immutable 40-character Hub commit
+`revision` and a `huggingface` object. That object declares `source`
+(`owner/repository`), `files` (filename-to-SHA256 map), `pad_id`, `eos_id`, and
+optional `bos_id`. Omit `bos_id` when the tokenizer has no BOS; set the model
+config's `bos_token_id` to null. Special IDs must match the loaded tokenizer
+and model config. Model vocabulary may be padded but must contain every ID.
+
+Set `WALDO_HF_TOKENIZER_DIR` to locally acquired files. WALDO does not download
+tokenizers. Both `tokenizer.json` and `tokenizer_config.json` must be pinned;
+`special_tokens_map.json` and `chat_template.jinja` are optional pinned assets.
+Only data-only fast tokenizers load, offline, through the verified Transformers
+package; custom code and asset-path redirects are rejected. Unpinned files in
+the source directory are not loaded. Planning and training use the same encoder
+with `add_special_tokens=False`; WALDO appends one EOS per record and no BOS.
+Conversation formatting remains WALDO's, not the upstream chat template.
+See the [standard Qwen tokenizer smoke compose](examples/transformers-qwen3-tokenizer-smoke.yaml).
+Omitting `base` constructs the model from its config with random weights.
+`base.model` can initialize from a compatible verified managed-model run;
+`base.source` is not supported by this adapter.
+
+Each stage declares `trainer.class: Trainer` and `trainer.arguments`.
+`per_device_train_batch_size` and `learning_rate` are required here, not under
+`parameters`. Optional `gradient_accumulation_steps` defaults to 1. Despite the
+Trainer name, the product of the two is the portable global optimizer batch in
+the [ADR 0071](adr/0071-global-batch-gradient-accumulation.md) sense: the number
+of packed sequences in each optimizer step. It does not scale with the number of
+devices on a host. A future multi-process adapter must keep that global batch
+fixed. The allowed passthroughs are:
+
+- `per_device_train_batch_size`, `per_device_eval_batch_size`,
+  `gradient_accumulation_steps`, `learning_rate`, `weight_decay`;
+- `adam_beta1`, `adam_beta2`, `adam_epsilon`, `optim`, `optim_args`,
+  `lr_scheduler_type`, `lr_scheduler_kwargs`, `warmup_steps`, `max_grad_norm`;
+- `bf16`, `fp16`, `gradient_checkpointing`, `gradient_checkpointing_kwargs`,
+  `use_cache`, `logging_steps`, and `full_determinism`.
+
+The installed TrainingArguments implementation validates values. `parameters`
+continues to own the token/step/epoch budget, sequence length, seed, corpus
+selection, weighted ordering, bounded shuffle, and deterministic held-out
+selection. WALDO supplies already-tokenized, packed, shifted labels to Trainer,
+including assistant-response loss masks.
+
+`trainer.arguments` is the only authority for a Transformers stage's execution
+facts. The native `parameters` fields `batch_size`, `learning_rate`,
+`gradient_accumulation_steps`, `compute_precision`, `activation_checkpointing`,
+`compile`, `optimizer`, `schedule`, `weight_decay`, `warmup_steps`,
+`warmdown_steps`, `minimum_learning_rate_ratio`, and `checkpoint_every` are
+rejected even when they would agree. `evaluate_every` is a WALDO lifecycle
+cadence, not a Trainer argument, and remains a native stage parameter; for a
+Transformers stage it defaults to `0`, so only the step-1 and terminal safety
+evaluations run unless a periodic interval is set. Each of these evaluations is
+a standard `evaluation` event and run-record entry with the
+[ADR 0081](adr/0081-version-intrinsic-loss-telemetry.md) exact intrinsic
+metrics of the publishable candidate: the summed NLL over exactly the run BOM's
+pinned held-out targets, those targets, the pinned UTF-8 bytes, token loss and
+perplexity, and bits per byte. WALDO rejects a completion whose metrics do not
+match that pinned evidence. Selection still uses held-out token loss within the
+run; BPB is an intrinsic cross-tokenizer comparison, not a capability or
+promotion signal. Candidates are not resume points, so an interrupted
+Transformers run restarts at step 0 and its abandoned evaluations remain only
+in telemetry. WALDO derives the
+resolved native facts from the Trainer arguments, using these provider defaults
+when an argument is omitted:
+
+| Resolved fact | Derived from | Default when omitted |
+| --- | --- | --- |
+| `batch_size` (global) | `per_device_train_batch_size` × `gradient_accumulation_steps` | required |
+| `gradient_accumulation_steps` | `gradient_accumulation_steps` | 1 |
+| `learning_rate` | `learning_rate` | required |
+| `compute_precision` | `fp16: true` → `float16`; `bf16: true` → `bfloat16` | `auto`: the config `dtype` |
+| `activation_checkpointing` | `gradient_checkpointing` | false |
+| Forecast warmup | `warmup_steps`: a value of at least 1 is a step count; a smaller value is a fraction of optimizer steps, rounded up | 0 |
+
+`fp16` and `bf16` are mutually exclusive. `fp16` requires `dtype: float32`, and
+`bf16` requires `float32` or `bfloat16`. Forecasts and fitness reports use the
+derived global batch, micro-batch, recomputation, and warmup. Native
+optimizer/scheduler defaults are not recorded as claims about a Transformers
+run; Trainer's optimizer, scheduler, and their defaults stay provider facts.
+
+Before a run ID exists, the selected host's verified pinned package constructs
+the exact TrainingArguments the worker will use and reports the effective value
+of every allowlisted argument, defaults included, plus its resolved warmup
+steps. WALDO rejects the stage if any requested argument resolves to a
+different value, if the resolution disagrees with the derived batch,
+accumulation, learning rate, precision, or recomputation, or if the host cannot
+execute it, for example `fp16` on CPU. The run BOM records the requested
+arguments as `parameters.trainer` and this resolution as
+`parameters.trainer_resolution`. The worker rebuilds TrainingArguments, fails
+unless they reproduce the recorded resolution exactly, and fails unless the
+executed micro-batches, sequences, output-head compute dtype, and gradient
+checkpointing match the resolved plan. The `execution` object in the hashed
+`runtime.json` artifact records those observed values, and the full resolved
+TrainingArguments remain a hashed `training_args.json` artifact.
+
+WALDO owns output paths, stopping rules, data loaders, topology, and publication.
+Arguments such as `output_dir`, `max_steps`, `push_to_hub`, `report_to`, and
+distributed configuration are rejected rather than silently overriding the
+compose. The experimental worker runs on CPU or one visible GPU. Resumable
+checkpoint scheduling and optimizer-checkpoint resume are not implemented. An
+interrupted attempt restarts that stage; completed stages can supply verified
+weights to subsequent stages.
+
+The lifecycle contracts apply to this engine without exception. With held-out
+data, the worker implements
+[ADR 0044](adr/0044-verify-persisted-training-artifacts.md) and
+[ADR 0079](adr/0079-publish-best-heldout-checkpoint.md) as follows:
+
+- Every optimizer step fails closed, before the update, when the training loss
+  or the gradient norm Trainer computes ahead of `optimizer.step()` is
+  non-finite. This applies whether or not `max_grad_norm` clips. Mixtral's
+  router auxiliary loss must also be finite.
+- Step 1, every `evaluate_every` boundary, and the terminal step are
+  evaluation boundaries. Each evaluates the live model under the Trainer's
+  compute precision (`live_eager_compute_heldout_loss`) and, for `fp16`/`bf16`,
+  the same live parameters without autocast (`live_eager_heldout_loss`). It
+  then persists the candidate as `artifacts/checkpoints/step-NNNNNNNN/model.safetensors`,
+  reloads it into a new model exactly as chat does (config dtype on CUDA, FP32
+  on CPU, eager, no autocast), and records that result as
+  `publishable_checkpoint_heldout_loss` and `heldout_loss`. Compute-precision
+  or serialization/dtype drift beyond the greater of 0.02 loss or one percent
+  fails the run. `torch.compile` is not supported, so no compiled comparison
+  exists.
+- After the full requested budget, WALDO publishes the persisted candidate with
+  the lowest finite `heldout_loss`; ties select the earliest step. This is
+  not early stopping. The worker reloads that candidate, writes
+  `artifacts/model.safetensors` from it, reloads the written file, and requires
+  `artifact_heldout_loss` to match the selection within the same tolerance.
+- Completion requires the selected checkpoint to be the best persisted
+  evaluated candidate and to carry verified artifact metrics; otherwise the run
+  fails. Numerical- and artifact-integrity failures are terminal.
+- Candidate checkpoints are publication evidence only. They hold weights, not
+  optimizer, scheduler, or RNG state, and are not reported as resume points.
+  Evaluations are therefore delivered with the completion observation rather
+  than as durable mid-run evaluation events.
+
+Continuation from a completed Transformers stage loads its published, verified
+`model.safetensors`: the selected candidate, which need not be the last
+optimizer step. Without held-out data, the final weights are published and no
+selection is recorded. Resume from verified checkpoint bundles under
+[ADR 0029](adr/0029-resumable-training-checkpoints.md) is planned and must not
+be relied on until implemented.
+
+### Package pin and local runtime
+
+`WALDO_TRANSFORMERS_DEVICE=auto|cpu|cuda` controls both training and inference;
+the default is `auto`. The shared WALDO PyTorch hardware probe selects an
+available CUDA/ROCm device, records its identity/memory, and executes a real
+device operation. Explicit `cuda` fails if unavailable; it never falls back to
+CPU. Select exactly one visible GPU using `CUDA_VISIBLE_DEVICES` (or ROCm's
+equivalent). Multiple visible GPUs and distributed launch are rejected. Apple
+MPS is not implemented; auto uses CPU on macOS.
+
+Trainer `fp16` and `bf16` options are mutually exclusive and GPU-only here.
+`fp16` scaling requires float32 model parameters. BF16 requires device support.
+These device checks run during Trainer resolution, before run creation, and
+again in the worker, and Trainer's actual device/topology must match resolution. Run evidence includes the selected
+hardware and resolved Trainer arguments. GPU execution requires operator-run
+hardware tests before claiming validation on that hardware; CPU tests are not
+evidence of GPU correctness.
+
+`training.package` requires `distribution: transformers`, an exact release
+`version`, its matching `transformers-VERSION-py3-none-any.whl` artifact name,
+and a lowercase SHA-256 hash. These pins contribute to the architecture's
+interpretation identity and the execution/run provenance. WALDO does not install
+packages automatically. Prepare an isolated environment, then set:
+
+```bash
+export WALDO_TRANSFORMERS_PYTHON=/absolute/path/to/venv/bin/python
+export WALDO_TRANSFORMERS_WHEEL=/absolute/path/to/transformers-5.16.1-py3-none-any.whl
+```
+
+The environment needs the pinned wheel installed plus compatible `torch` and
+`accelerate` dependencies. `model.backend` `auto` or `pytorch` selects this
+adapter from the compose engine; an explicit `fake`, `mlx`, or `torchtitan`
+preference conflicts and fails before a run is created. The adapter supports CPU or one visible CUDA/ROCm GPU; explicit
+GPU selection fails rather than falling back to CPU when unavailable.
+The worker hashes the local wheel, checks the installed distribution version,
+compares installed package files with wheel contents, and compiles verified
+source rather than trusting bytecode caches. It repeats verification at run
+startup. This assumes a trusted local Python interpreter, not a hostile runtime.
+Dependencies are version-inventoried but are not transitively wheel-locked.
+See [runtime setup for acceptance tests](TESTING.md#runtime-setup-for-acceptance-tests)
+for the environment prerequisites, pinned wheel checks, and tested DGX stack.
+
+### Reproducibility boundaries
+
+- Preserve the compose, corpus/run BOMs, tokenizer files, exact wheel, and saved
+  artifacts. A version string alone does not identify package or corpus bytes.
+- `runtime.json` records dependency versions and hardware, but is an inventory,
+  not a complete environment lock. Preserve the Python environment or container
+  digest and driver details separately. Container tags can change.
+- Seeds and `full_determinism` do not promise bit-identical results across
+  framework versions, devices, kernels, or precision settings. Exact reload
+  parity tests apply to their tested runtime and fixtures only.
+- Completed-run continuation restores weights, not optimizer/scheduler/RNG state.
+  Interrupted-stage retry is not checkpoint resume. Plan accordingly before
+  expensive training runs.
+- Non-finite objective values and final floating-point tensors fail before final
+  artifacts are published; finite values do not establish model quality.
+- Hashes and signatures establish identity/integrity, not truthful behavior of a
+  hostile interpreter, model usefulness, or license/legal compliance.
+
+Final artifacts include provider-native `model.safetensors`, resolved
+`config.json`, the WALDO `tokenizer.json` descriptor, `training_args.json`, and
+`runtime.json`. For Hugging Face tokenizers, `tokenizer.json` contains the real
+upstream tokenizer; its WALDO descriptor is `waldo_tokenizer.json`, and all
+pinned tokenizer assets are saved byte-for-byte. WALDO verifies their hashes
+through the normal lifecycle.
+Hugging Face release export supports byte and pinned fast tokenizers and carries
+the package pin, Trainer settings, and runtime evidence through the existing
+release-signing callback. `waldo model chat` supports Transformers inference
+for byte and pinned fast tokenizers through the same verified package runtime.
+Native format conversion,
+quantization, and tiktoken release packaging are explicitly unsupported.
+
+The [Qwen3.5 design example](examples/planned-transformers-qwen35-tool-use.yaml)
+remains planned because of its tokenizer/chat-template syntax; the executable
+text-only hybrid smoke is [transformers-qwen35-smoke.yaml](examples/transformers-qwen35-smoke.yaml).
+Upstream chat-template rendering, additional model/task families, arbitrary
+Trainer subclasses, distributed execution, and a fully locked dependency closure still require
+implementation; this experiment does not claim to support all of Transformers.
+
 A model compose is a strict, portable YAML or JSON document that declares a
 model architecture and one or more ordered training stages. Use one when WALDO
 must create a model, train several stages as one resumable transaction, or
@@ -7,7 +342,10 @@ preserve an exact experiment for later review.
 
 The compose does not select MLX, PyTorch, TorchTitan, particular GPUs, paths,
 credentials, or other machine-local policy. WALDO selects a compatible backend
-and physical topology on the machine that runs the compose. A stage may request
+and physical topology on the machine that runs the compose. A schema-2 compose
+may name a training engine, `waldo-native` or `huggingface-transformers`. The
+engine defines the model and training semantics, not the machine; see
+[ADR 0083](adr/0083-portable-training-engines-and-host-backends.md). A stage may request
 a portable parallelism strategy, but `auto` is the default.
 
 ```bash
@@ -47,7 +385,8 @@ and objective, so their exact tokens, steps, and added runtime are reported
 during training preflight rather than guessed.
 
 Forecast JSON includes a versioned `forecast.fitness` object. It decomposes
-WALDO's exact bias-free RoPE/RMSNorm/GQA/SwiGLU architecture, reports both
+WALDO's exact bias-free RoPE/RMSNorm/GQA/SwiGLU architecture, labels provider
+decompositions as `estimated` or `unavailable`, reports both
 conventional `6ND` and architecture-aware compute approximations, separates
 memory components, and shows batch arithmetic for compatible world sizes.
 Corpus-dependent fields explicitly say `requires-corpus-preflight` (the stable
@@ -579,7 +918,7 @@ must use one representation or the other, never both.
 | `warmdown_steps` | no | half of the run for `warmup-stable-warmdown`, otherwise `0` | Linear warmdown duration. Warmup plus warmdown cannot exceed the run. |
 | `minimum_learning_rate_ratio` | no | `0.1` for cosine, `0` for warmup-stable-warmdown; `0..1` | Final learning rate as a fraction of the peak. |
 | `checkpoint_every` | no | `min(500, steps)`; `0..steps` | Checkpoint interval. Explicit zero disables periodic checkpoints. |
-| `evaluate_every` | no | `min(500, steps)`; `0..steps` | Held-out evaluation interval. Explicit zero disables periodic evaluation; real backends still run safety and terminal artifact-quality evaluations whenever a held-out set exists. |
+| `evaluate_every` | no | `min(500, steps)`; Transformers `0`; `0..steps` | Held-out evaluation interval. Explicit zero disables periodic evaluation; real backends still run safety and terminal artifact-quality evaluations whenever a held-out set exists. |
 | `shuffle_buffer_records` | no | default `1024`; `1..1000000` | Maximum records retained by deterministic bounded shuffle. |
 | `shuffle_buffer_bytes` | no | default 64 MiB; `1 B..16 GiB` | Maximum record text retained by deterministic bounded shuffle. |
 | `corpus_weights` | only for `causal-pretrain-weighted`; legacy form | each weight `1..1000000` | Integer relative token exposure keyed by every selected corpus path. Configured corpus `weight` fields are preferred. |
@@ -791,8 +1130,10 @@ creates a different run contract and prevents an incompatible checkpoint from
 being resumed.
 
 The compose remains portable because backend selection and hardware are not
-part of it. Portability means WALDO can select any backend that implements the
-declared architecture and objective; it does not promise that every compose
+part of it. A training engine is part of the compose because it defines the
+architecture and objective; it narrows which hosts can run the compose but adds
+no machine facts. Portability means WALDO can select any backend that implements
+the declared engine, architecture, and objective; it does not promise that every compose
 fits every machine. Run `waldo model forecast` before allocating substantial
 compute.
 

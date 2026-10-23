@@ -108,8 +108,17 @@ func TestLoadComposeEmbedsTrainedTokenizerArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text := "small tokenizer"; codec.Decode(codec.Encode(text)) != text {
-		t.Fatalf("trained tokenizer round trip = %q", codec.Decode(codec.Encode(text)))
+	text := "small tokenizer"
+	tokens, err := codec.EncodeChecked(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := codec.DecodeChecked(tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded != text {
+		t.Fatalf("trained tokenizer round trip = %q", decoded)
 	}
 
 	portable, err := json.Marshal(compose)

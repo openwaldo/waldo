@@ -1,0 +1,240 @@
+# PLANNED EXAMPLE: Qwen3.5, external tokenizers, and checkpoint schedules are
+# not implemented by the experimental Transformers CPU adapter.
+# This file is a design input and cannot currently be passed to
+# `waldo model forecast` or `waldo model train`.
+#
+# Train a text-only, tool-capable Qwen3.5-style model from random initialization.
+# There is deliberately no `base` block. The pinned Qwen repository contributes
+# tokenizer and chat-template artifacts only; WALDO does not load its weights.
+kind: waldo-model-compose
+schema: 2
+
+training:
+  engine: huggingface-transformers
+  package:
+    distribution: transformers
+    version: 5.16.1
+    artifact: transformers-5.16.1-py3-none-any.whl
+    sha256: 2f2d5b98a5ad3718713653734298fa620754ed683702a635ebb587df3ed29c7e
+
+interaction:
+  template: tokenizer-chat-template
+  tools: true
+  arguments:
+    enable_thinking: false
+
+architecture:
+  provider: huggingface-transformers
+  model_class: Qwen3_5ForCausalLM
+  config_class: Qwen3_5TextConfig
+  config:
+    model_type: qwen3_5_text
+    vocab_size: 248320
+    hidden_size: 1024
+    intermediate_size: 3584
+    num_hidden_layers: 24
+
+    # Repeat three Gated DeltaNet blocks followed by one full-attention block.
+    # The resolved list is explicit because it contributes to model identity.
+    layer_types:
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+    num_attention_heads: 8
+    num_key_value_heads: 2
+    head_dim: 256
+    attn_output_gate: true
+    attention_bias: false
+    attention_dropout: 0.0
+
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_num_key_heads: 16
+    linear_num_value_heads: 16
+    mamba_ssm_dtype: float32
+
+    hidden_act: silu
+    initializer_range: 0.02
+    rms_norm_eps: 0.000001
+    tie_word_embeddings: true
+    max_position_embeddings: 262144
+    dtype: bfloat16
+    use_cache: true
+    bos_token_id: null
+    eos_token_id: 248044
+    pad_token_id: 248044
+
+    rope_parameters:
+      rope_type: default
+      rope_theta: 10000000
+      partial_rotary_factor: 0.25
+      mrope_interleaved: true
+      mrope_section: [11, 11, 10]
+
+    mtp_num_hidden_layers: 1
+    mtp_use_dedicated_embeddings: false
+
+  tokenizer:
+    class: AutoTokenizer
+    source: huggingface://Qwen/Qwen3.5-0.8B@2fc06364715b967f1860aea9cf38778875588b17
+    use: [tokenizer, chat-template]
+
+stages:
+  # A random model needs a language foundation before conversation or tool SFT.
+  - name: pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - {path: core/books/gutenberg, weight: 3}
+      - {path: core/common-pile/wikimedia, weight: 4}
+      - {path: government/regulations, weight: 1}
+      - {path: science/plos, weight: 2}
+    parameters:
+      profile: causal-pretrain-weighted
+      tokens: 12000000000
+      sequence_length: 4096
+      seed: 42
+      shuffle_buffer_records: 65536
+      shuffle_buffer_bytes: 2147483648
+      evaluation_fraction: 0.01
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
+    trainer:
+      class: Trainer
+      arguments:
+        per_device_train_batch_size: 2
+        per_device_eval_batch_size: 2
+        gradient_accumulation_steps: 16
+        learning_rate: 0.00013
+        weight_decay: 0.15
+        adam_beta1: 0.9
+        adam_beta2: 0.95
+        adam_epsilon: 0.00000001
+        lr_scheduler_type: cosine
+        warmup_steps: 3662
+        bf16: true
+        gradient_checkpointing: true
+        use_cache: false
+        save_strategy: steps
+        save_steps: 18310
+        eval_strategy: steps
+        eval_steps: 18310
+        logging_steps: 100
+
+  - name: conversational-midtrain
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: tokenizer-chat-template
+      supervised_roles: [assistant]
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - {path: post-train/sft/oasst1, weight: 3}
+      - {path: post-train/sft/oasst2, weight: 5}
+      - {path: post-train/sft/aya, weight: 3}
+      - {path: post-train/sft/dolly, weight: 2}
+    parameters:
+      profile: causal-pretrain-weighted
+      epochs: 3
+      sequence_length: 4096
+      seed: 43
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 536870912
+      evaluation_fraction: 0.01
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
+    trainer:
+      class: Trainer
+      arguments:
+        per_device_train_batch_size: 2
+        per_device_eval_batch_size: 2
+        gradient_accumulation_steps: 8
+        learning_rate: 0.00004
+        weight_decay: 0.08
+        lr_scheduler_type: cosine
+        warmup_steps: 305
+        bf16: true
+        gradient_checkpointing: true
+        use_cache: false
+        save_strategy: steps
+        save_steps: 1017
+        eval_strategy: steps
+        eval_steps: 1017
+        logging_steps: 50
+
+  # This is the tool specialization from 0003, now applied only after the
+  # same compose has established language and conversation behavior.
+  - name: tool-use-sft
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: tokenizer-chat-template
+      supervised_roles: [assistant]
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - {path: post-train/sft/hermes-function-calling, weight: 4}
+      - {path: post-train/sft/interaction-contract-v1, weight: 4}
+      - {path: post-train/sft/helpsteer2, weight: 2}
+    parameters:
+      profile: causal-pretrain-weighted
+      tokens: 20000000
+      sequence_length: 4096
+      seed: 44
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 536870912
+      evaluation_fraction: 0.01
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
+    trainer:
+      class: Trainer
+      arguments:
+        per_device_train_batch_size: 2
+        per_device_eval_batch_size: 2
+        gradient_accumulation_steps: 8
+        learning_rate: 0.000004
+        weight_decay: 0.03
+        lr_scheduler_type: cosine
+        warmup_steps: 61
+        bf16: true
+        gradient_checkpointing: true
+        use_cache: false
+        save_strategy: steps
+        save_steps: 152
+        eval_strategy: steps
+        eval_steps: 152
+        logging_steps: 25

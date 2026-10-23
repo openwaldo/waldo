@@ -50,6 +50,7 @@ type Accelerator struct {
 // Execution is the immutable environment selected for a build. It is
 // persisted by the model domain; adapters never write lifecycle records.
 type Execution struct {
+	Package      *PackagePin   `json:"package,omitempty"`
 	Backend      Identity      `json:"backend"`
 	Framework    string        `json:"framework"`
 	Runtime      string        `json:"runtime"`
@@ -244,59 +245,65 @@ func (function ResolverFunc) Resolve(ctx context.Context, request ResolveRequest
 }
 
 type Parameters struct {
-	Profile                 string            `json:"profile,omitempty" yaml:"profile,omitempty"`
-	Parallelism             string            `json:"parallelism,omitempty" yaml:"parallelism,omitempty"`
-	Epochs                  int64             `json:"epochs,omitempty" yaml:"epochs,omitempty"`
-	Tokens                  int64             `json:"tokens,omitempty" yaml:"tokens,omitempty"`
-	Steps                   int64             `json:"steps,omitempty" yaml:"steps,omitempty"`
-	BatchSize               int64             `json:"batch_size" yaml:"batch_size"`
-	GradientAccumulation    int64             `json:"gradient_accumulation_steps,omitempty" yaml:"gradient_accumulation_steps,omitempty"`
-	ComputePrecision        string            `json:"compute_precision,omitempty" yaml:"compute_precision,omitempty"`
-	ActivationCheckpointing bool              `json:"activation_checkpointing,omitempty" yaml:"activation_checkpointing,omitempty"`
-	Compile                 bool              `json:"compile,omitempty" yaml:"compile,omitempty"`
-	DistributionPolicy      string            `json:"distribution_policy,omitempty" yaml:"distribution_policy,omitempty"`
-	SequenceLength          int64             `json:"sequence_length" yaml:"sequence_length"`
-	LearningRate            float64           `json:"learning_rate" yaml:"learning_rate"`
-	Optimizer               string            `json:"optimizer,omitempty" yaml:"optimizer,omitempty"`
-	Schedule                string            `json:"schedule,omitempty" yaml:"schedule,omitempty"`
-	Seed                    uint64            `json:"seed" yaml:"seed"`
-	WeightDecay             *float64          `json:"weight_decay,omitempty" yaml:"weight_decay,omitempty"`
-	WarmupSteps             *int64            `json:"warmup_steps,omitempty" yaml:"warmup_steps,omitempty"`
-	WarmdownSteps           *int64            `json:"warmdown_steps,omitempty" yaml:"warmdown_steps,omitempty"`
-	MinimumRateRatio        *float64          `json:"minimum_learning_rate_ratio,omitempty" yaml:"minimum_learning_rate_ratio,omitempty"`
-	CheckpointEvery         *int64            `json:"checkpoint_every,omitempty" yaml:"checkpoint_every,omitempty"`
-	EvaluateEvery           *int64            `json:"evaluate_every,omitempty" yaml:"evaluate_every,omitempty"`
-	ShuffleBufferRecords    *int              `json:"shuffle_buffer_records,omitempty" yaml:"shuffle_buffer_records,omitempty"`
-	ShuffleBufferBytes      *int64            `json:"shuffle_buffer_bytes,omitempty" yaml:"shuffle_buffer_bytes,omitempty"`
-	CorpusWeights           map[string]uint64 `json:"corpus_weights,omitempty" yaml:"corpus_weights,omitempty"`
-	EvaluationFraction      *float64          `json:"evaluation_fraction,omitempty" yaml:"evaluation_fraction,omitempty"`
-	EvaluationSelection     string            `json:"evaluation_selection,omitempty" yaml:"evaluation_selection,omitempty"`
-	EvaluationMaxRecords    *int              `json:"evaluation_max_records,omitempty" yaml:"evaluation_max_records,omitempty"`
-	EvaluationMaxBytes      *int64            `json:"evaluation_max_bytes,omitempty" yaml:"evaluation_max_bytes,omitempty"`
+	Trainer                 *TransformersTrainer `json:"trainer,omitempty" yaml:"trainer,omitempty"`
+	Profile                 string               `json:"profile,omitempty" yaml:"profile,omitempty"`
+	Parallelism             string               `json:"parallelism,omitempty" yaml:"parallelism,omitempty"`
+	Epochs                  int64                `json:"epochs,omitempty" yaml:"epochs,omitempty"`
+	Tokens                  int64                `json:"tokens,omitempty" yaml:"tokens,omitempty"`
+	Steps                   int64                `json:"steps,omitempty" yaml:"steps,omitempty"`
+	BatchSize               int64                `json:"batch_size" yaml:"batch_size"`
+	GradientAccumulation    int64                `json:"gradient_accumulation_steps,omitempty" yaml:"gradient_accumulation_steps,omitempty"`
+	ComputePrecision        string               `json:"compute_precision,omitempty" yaml:"compute_precision,omitempty"`
+	ActivationCheckpointing bool                 `json:"activation_checkpointing,omitempty" yaml:"activation_checkpointing,omitempty"`
+	Compile                 bool                 `json:"compile,omitempty" yaml:"compile,omitempty"`
+	DistributionPolicy      string               `json:"distribution_policy,omitempty" yaml:"distribution_policy,omitempty"`
+	SequenceLength          int64                `json:"sequence_length" yaml:"sequence_length"`
+	LearningRate            float64              `json:"learning_rate" yaml:"learning_rate"`
+	Optimizer               string               `json:"optimizer,omitempty" yaml:"optimizer,omitempty"`
+	Schedule                string               `json:"schedule,omitempty" yaml:"schedule,omitempty"`
+	Seed                    uint64               `json:"seed" yaml:"seed"`
+	WeightDecay             *float64             `json:"weight_decay,omitempty" yaml:"weight_decay,omitempty"`
+	WarmupSteps             *int64               `json:"warmup_steps,omitempty" yaml:"warmup_steps,omitempty"`
+	WarmdownSteps           *int64               `json:"warmdown_steps,omitempty" yaml:"warmdown_steps,omitempty"`
+	MinimumRateRatio        *float64             `json:"minimum_learning_rate_ratio,omitempty" yaml:"minimum_learning_rate_ratio,omitempty"`
+	CheckpointEvery         *int64               `json:"checkpoint_every,omitempty" yaml:"checkpoint_every,omitempty"`
+	EvaluateEvery           *int64               `json:"evaluate_every,omitempty" yaml:"evaluate_every,omitempty"`
+	ShuffleBufferRecords    *int                 `json:"shuffle_buffer_records,omitempty" yaml:"shuffle_buffer_records,omitempty"`
+	ShuffleBufferBytes      *int64               `json:"shuffle_buffer_bytes,omitempty" yaml:"shuffle_buffer_bytes,omitempty"`
+	CorpusWeights           map[string]uint64    `json:"corpus_weights,omitempty" yaml:"corpus_weights,omitempty"`
+	EvaluationFraction      *float64             `json:"evaluation_fraction,omitempty" yaml:"evaluation_fraction,omitempty"`
+	EvaluationSelection     string               `json:"evaluation_selection,omitempty" yaml:"evaluation_selection,omitempty"`
+	EvaluationMaxRecords    *int                 `json:"evaluation_max_records,omitempty" yaml:"evaluation_max_records,omitempty"`
+	EvaluationMaxBytes      *int64               `json:"evaluation_max_bytes,omitempty" yaml:"evaluation_max_bytes,omitempty"`
 }
 
 type ResolvedParameters struct {
-	Profile                 string            `json:"profile"`
-	ProfileSchema           int               `json:"profile_schema"`
-	Epochs                  int64             `json:"epochs,omitempty"`
-	RequestedTokens         int64             `json:"requested_tokens,omitempty"`
-	Steps                   int64             `json:"steps"`
-	BatchSize               int64             `json:"batch_size"`
-	GradientAccumulation    int64             `json:"gradient_accumulation_steps,omitempty"`
-	ComputePrecision        string            `json:"compute_precision,omitempty"`
-	ActivationCheckpointing bool              `json:"activation_checkpointing,omitempty"`
-	Compile                 bool              `json:"compile,omitempty"`
-	DistributionPolicy      string            `json:"distribution_policy,omitempty"`
-	SequenceLength          int64             `json:"sequence_length"`
-	LearningRate            float64           `json:"learning_rate"`
-	Seed                    uint64            `json:"seed"`
-	Optimizer               Optimizer         `json:"optimizer"`
-	Schedule                Schedule          `json:"schedule"`
-	Data                    DataPlan          `json:"data"`
-	Evaluation              *EvaluationPolicy `json:"evaluation,omitempty"`
-	CheckpointEvery         int64             `json:"checkpoint_every"`
-	EvaluateEvery           int64             `json:"evaluate_every"`
-	PlannedTokenCapacity    int64             `json:"planned_token_capacity"`
+	Trainer                 *TransformersTrainer `json:"trainer,omitempty"`
+	Profile                 string               `json:"profile"`
+	ProfileSchema           int                  `json:"profile_schema"`
+	Epochs                  int64                `json:"epochs,omitempty"`
+	RequestedTokens         int64                `json:"requested_tokens,omitempty"`
+	Steps                   int64                `json:"steps"`
+	BatchSize               int64                `json:"batch_size"`
+	GradientAccumulation    int64                `json:"gradient_accumulation_steps,omitempty"`
+	ComputePrecision        string               `json:"compute_precision,omitempty"`
+	ActivationCheckpointing bool                 `json:"activation_checkpointing,omitempty"`
+	Compile                 bool                 `json:"compile,omitempty"`
+	DistributionPolicy      string               `json:"distribution_policy,omitempty"`
+	SequenceLength          int64                `json:"sequence_length"`
+	LearningRate            float64              `json:"learning_rate"`
+	Seed                    uint64               `json:"seed"`
+	Optimizer               Optimizer            `json:"optimizer,omitzero"`
+	Schedule                Schedule             `json:"schedule,omitzero"`
+	Data                    DataPlan             `json:"data"`
+	Evaluation              *EvaluationPolicy    `json:"evaluation,omitempty"`
+	CheckpointEvery         int64                `json:"checkpoint_every"`
+	EvaluateEvery           int64                `json:"evaluate_every"`
+	PlannedTokenCapacity    int64                `json:"planned_token_capacity"`
+
+	// TrainerResolution is set only after the selected host's pinned package
+	// has resolved the trainer, before the run BOM is written.
+	TrainerResolution *TransformersTrainerResolution `json:"trainer_resolution,omitempty"`
 }
 
 type Optimizer struct {
@@ -364,6 +371,7 @@ type Request struct {
 	ArchitectureSHA256     string
 	Architecture           json.RawMessage
 	Tokenizer              TokenizerSpec
+	TokenizerCodec         TokenCodec
 	BOM                    corpus.BOM
 	Inputs                 []Input
 	Parameters             ResolvedParameters
@@ -475,4 +483,10 @@ type Evaluation struct {
 type Backend interface {
 	Descriptor() Descriptor
 	Run(context.Context, Request) (Observation, error)
+}
+
+// TrainerResolver is implemented by engines whose provider owns training
+// settings. It runs on the selected host before a run exists.
+type TrainerResolver interface {
+	ResolveTrainer(context.Context, json.RawMessage, ResolvedParameters) (ResolvedParameters, error)
 }

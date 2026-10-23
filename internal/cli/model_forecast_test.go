@@ -204,3 +204,31 @@ func TestWriteModelForecastRecommendsRemoteComputeWithoutCatalogFit(t *testing.T
 		}
 	}
 }
+
+func TestWriteModelForecastLabelsTransformersUncertainty(t *testing.T) {
+	for name, want := range map[string][]string{
+		"mixtral": {"PARAMETERS:  64.0K (64,000) estimated", "BASIS:", "ACTIVE:      39.4K (39,424) estimated per token (2 of 4 experts)", "active 6ND", "(provider estimate)", "NOTE:        only single-GPU"},
+		"qwen35":  {"PARAMETERS:  26.9K (26,880) estimated", "dense-decoder proxy", "STRUCTURE:   unavailable", "tokens/core parameter unavailable", "architecture-aware unavailable"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			compose, _, err := model.LoadCompose("../../docs/examples/transformers-" + name + "-smoke.yaml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			report, err := model.ForecastCompose(compose)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			writeModelForecast(&output, report, model.HostForecast{}, true, &compose.Architecture)
+			for _, text := range want {
+				if !strings.Contains(output.String(), text) {
+					t.Fatalf("forecast output lacks %q:\n%s", text, output.String())
+				}
+			}
+			if name == "qwen35" && strings.Contains(output.String(), "TOKEN I/O:") {
+				t.Fatalf("hybrid proxy rendered a decomposition:\n%s", output.String())
+			}
+		})
+	}
+}

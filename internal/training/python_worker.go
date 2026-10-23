@@ -295,9 +295,13 @@ func tokenizedWorkerSources(request Request) (RecordSource, RecordSource, error)
 	records, evaluationRecords := request.Records, request.EvaluationRecords
 	tokenizer := defaultedTokenizer(request.Tokenizer)
 	if request.PreTokenize || tokenizer.Name != "byte" || request.Objective == "assistant-response-modeling" || request.Conversation.Template != "" {
-		_, codec, err := ResolveTokenizerSpec(tokenizer)
-		if err != nil {
-			return nil, nil, err
+		codec := request.TokenizerCodec
+		if codec == nil {
+			var err error
+			_, codec, err = ResolveTokenizerSpec(tokenizer)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 		records = tokenizedRecordSource{source: records, codec: codec, objective: request.Objective, conversation: request.Conversation}
 		if evaluationRecords != nil {

@@ -37,8 +37,16 @@ func TestResolveTokenizerSpecUsesEmbeddedTrainedArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := "hello world"
-	if resolved.Revision != artifact.Revision || codec.Decode(codec.Encode(text)) != text {
-		t.Fatalf("resolved = %+v, round trip = %q", resolved, codec.Decode(codec.Encode(text)))
+	tokens, err := codec.EncodeChecked(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := codec.DecodeChecked(tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Revision != artifact.Revision || decoded != text {
+		t.Fatalf("resolved = %+v, round trip = %q", resolved, decoded)
 	}
 
 	missing := spec
@@ -73,9 +81,13 @@ func TestCL100KTokenizerRoundTripAndSpecialFraming(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := "France: Paris — 日本"
-	tokens := codec.Encode(text)
-	if len(tokens) == 0 || codec.Decode(tokens) != text {
-		t.Fatalf("round trip = %q through %v", codec.Decode(tokens), tokens)
+	tokens, err := codec.EncodeChecked(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := codec.(localCodecAdapter)
+	if len(tokens) == 0 || local.Decode(tokens) != text {
+		t.Fatalf("round trip = %q through %v", local.Decode(tokens), tokens)
 	}
 	if spec.PadID != 100256 || spec.BOSID != 100257 || spec.EOSID != 100258 || spec.VocabularySize != 100259 {
 		t.Fatalf("special framing = %+v", spec)
@@ -93,9 +105,13 @@ func TestR50KTokenizerRoundTripAndSpecialFraming(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := "Once upon a time, there was a compact language model."
-	tokens := codec.Encode(text)
-	if len(tokens) == 0 || codec.Decode(tokens) != text {
-		t.Fatalf("round trip = %q through %v", codec.Decode(tokens), tokens)
+	tokens, err := codec.EncodeChecked(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := codec.(localCodecAdapter)
+	if len(tokens) == 0 || local.Decode(tokens) != text {
+		t.Fatalf("round trip = %q through %v", local.Decode(tokens), tokens)
 	}
 	if spec.PadID != 50256 || spec.BOSID != 50257 || spec.EOSID != 50258 || spec.VocabularySize != 50259 {
 		t.Fatalf("special framing = %+v", spec)

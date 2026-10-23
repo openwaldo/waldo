@@ -26,6 +26,10 @@ const (
 )
 
 func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
+	parameters, err := ProjectTrainerParameters(parameters)
+	if err != nil {
+		return ResolvedParameters{}, err
+	}
 	steps, requestedTokens, err := resolveTrainingBudget(parameters)
 	if err != nil {
 		return ResolvedParameters{}, err
@@ -39,6 +43,10 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 // ResolvePlanningParameters validates parameters needed to select and scan a
 // training stream before an epoch-derived step count is known.
 func ResolvePlanningParameters(parameters Parameters) (ResolvedParameters, error) {
+	parameters, err := ProjectTrainerParameters(parameters)
+	if err != nil {
+		return ResolvedParameters{}, err
+	}
 	steps, requestedTokens, err := resolveTrainingBudget(parameters)
 	if err != nil {
 		return ResolvedParameters{}, err
@@ -52,6 +60,10 @@ func ResolvePlanningParameters(parameters Parameters) (ResolvedParameters, error
 // ResolveParametersForSteps pins the step count derived from a finite epoch
 // stream. The declarative parameters remain epoch-driven.
 func ResolveParametersForSteps(parameters Parameters, steps int64) (ResolvedParameters, error) {
+	parameters, err := ProjectTrainerParameters(parameters)
+	if err != nil {
+		return ResolvedParameters{}, err
+	}
 	declaredSteps, requestedTokens, err := resolveTrainingBudget(parameters)
 	if err != nil {
 		return ResolvedParameters{}, err
@@ -280,7 +292,8 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 	} else if len(weights) != 0 {
 		return ResolvedParameters{}, fmt.Errorf("corpus_weights require training profile %q", WeightedProfile)
 	}
-	return ResolvedParameters{
+	resolved := ResolvedParameters{
+		Trainer: parameters.Trainer,
 		Profile: profile, ProfileSchema: profileSchema,
 		Epochs: epochs, RequestedTokens: requestedTokens, Steps: steps, BatchSize: parameters.BatchSize, GradientAccumulation: gradientAccumulation,
 		ComputePrecision: computePrecision, ActivationCheckpointing: parameters.ActivationCheckpointing, Compile: parameters.Compile,
@@ -292,7 +305,50 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 		Data:            DataPlan{Order: order, ShuffleBufferRecords: shuffleBuffer, ShuffleBufferBytes: shuffleBufferBytes, Packing: "continuous-eos-v1", CorpusWeights: weights, RepeatUntilSteps: requestedTokens > 0},
 		Evaluation:      &EvaluationPolicy{Selection: selection, Fraction: evaluationFraction, MaxRecords: evaluationMaxRecords, MaxBytes: evaluationMaxBytes},
 		CheckpointEvery: checkpointEvery, EvaluateEvery: evaluateEvery,
-	}, nil
+	}
+	if parameters.Trainer != nil {
+		// Native optimizer/schedule defaults are not assertions about Trainer.
+		resolved.Optimizer = Optimizer{}
+		resolved.Schedule = Schedule{}
+		resolved.CheckpointEvery = 0
+		if parameters.EvaluateEvery == nil {
+			resolved.EvaluateEvery = 0
+		}
+	}
+	return resolved, nil
+}
+
+// ProjectTrainerParameters makes stage.trainer the sole authority for a
+// Transformers stage's batch, accumulation, learning rate, precision, and
+// recomputation. Native fields may only restate the projected values, as
+// retained normalized composes do; recipe fields the Trainer owns are rejected.
+func ProjectTrainerParameters(parameters Parameters) (Parameters, error) {
+	if parameters.Trainer == nil {
+		return parameters, nil
+	}
+	if err := parameters.Trainer.Validate(); err != nil {
+		return Parameters{}, err
+	}
+	if parameters.Optimizer != "" || parameters.Schedule != "" || parameters.WeightDecay != nil || parameters.WarmupSteps != nil || parameters.WarmdownSteps != nil || parameters.MinimumRateRatio != nil || parameters.Compile {
+		return Parameters{}, fmt.Errorf("Transformers optimizer, schedule, and compile settings belong in trainer.arguments or are unsupported")
+	}
+	if parameters.CheckpointEvery != nil && *parameters.CheckpointEvery != 0 {
+		return Parameters{}, fmt.Errorf("Transformers periodic resumable checkpoints are not supported yet")
+	}
+	execution, err := parameters.Trainer.Execution()
+	if err != nil {
+		return Parameters{}, err
+	}
+	batch := execution.GlobalBatchSize()
+	if (parameters.BatchSize != 0 && parameters.BatchSize != batch) || (parameters.LearningRate != 0 && parameters.LearningRate != execution.LearningRate) ||
+		(parameters.GradientAccumulation != 0 && parameters.GradientAccumulation != execution.GradientAccumulation) ||
+		(parameters.ComputePrecision != "" && parameters.ComputePrecision != execution.ComputePrecision) ||
+		(parameters.ActivationCheckpointing && !execution.ActivationCheckpointing) {
+		return Parameters{}, fmt.Errorf("native batch_size, learning_rate, gradient_accumulation_steps, compute_precision, or activation_checkpointing conflicts with trainer.arguments")
+	}
+	parameters.BatchSize, parameters.LearningRate, parameters.GradientAccumulation = batch, execution.LearningRate, execution.GradientAccumulation
+	parameters.ComputePrecision, parameters.ActivationCheckpointing = execution.ComputePrecision, execution.ActivationCheckpointing
+	return parameters, nil
 }
 
 // ValidateBatchTopology ensures every rank receives the same number of unique

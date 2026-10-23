@@ -57,8 +57,16 @@ func TestLoadTokenizerUsesEmbeddedTrainedArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := "portable tokenizer"
-	if spec.Revision != artifact.Revision || codec.Decode(codec.Encode(text)) != text {
-		t.Fatalf("spec = %+v, round trip = %q", spec, codec.Decode(codec.Encode(text)))
+	tokens, err := codec.EncodeChecked(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := codec.DecodeChecked(tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Revision != artifact.Revision || decoded != text {
+		t.Fatalf("spec = %+v, round trip = %q", spec, decoded)
 	}
 }
 

@@ -55,6 +55,13 @@ func TestHistoricalArchitectureDecomposition(t *testing.T) {
 			if analysis.AttentionParameters+analysis.MLPParameters+analysis.OtherParameters != analysis.NonEmbeddingParameters {
 				t.Fatalf("core components do not sum: %+v", analysis)
 			}
+			if analysis.ParameterCountStatus != FitnessExact || analysis.DecompositionStatus != FitnessExact || analysis.ActiveParameterStatus != FitnessExact ||
+				analysis.ActiveParametersPerToken == nil || *analysis.ActiveParametersPerToken != test.total {
+				t.Fatalf("native statuses = %+v", analysis)
+			}
+			if _, err := architectureFitness(architecture, forecast.ApproximateParameters+1); err == nil {
+				t.Fatal("native decomposition accepted a mismatched forecast")
+			}
 		})
 	}
 }

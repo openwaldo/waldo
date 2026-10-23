@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"math"
 	"sort"
+
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 const (
@@ -134,8 +136,14 @@ func forecastPlanWithCalibration(plan Plan, calibrations []ForecastCalibration) 
 			report.EpochDerivedStages = append(report.EpochDerivedStages, stage.Name)
 		}
 	}
+	provider := plan.Architecture.Transformers != nil
 	for _, profile := range acceleratorCatalog {
 		for _, count := range profile.counts {
+			// The Transformers engine runs on CPU or one visible CUDA/ROCm
+			// GPU. Multi-GPU and Apple MPS rows would not be executable.
+			if provider && (count != 1 || profile.manufacturer == "Apple") {
+				continue
+			}
 			required, err := requiredMemoryPerGPU(plan, count)
 			if err != nil {
 				return ResourceForecast{}, err
@@ -179,6 +187,8 @@ func forecastPlanWithCalibration(plan Plan, calibrations []ForecastCalibration) 
 	}
 	if len(report.Configurations) == 0 {
 		report.CatalogNote = fmt.Sprintf("no configuration in forecast catalog %s has sufficient memory for this workload", forecastCatalog)
+	} else if provider {
+		report.CatalogNote = "only single-GPU CUDA/ROCm configurations are listed; the Transformers engine does not execute multi-GPU or Apple MPS topologies"
 	}
 	sort.Slice(report.Configurations, func(i, j int) bool {
 		left, right := report.Configurations[i], report.Configurations[j]
@@ -248,11 +258,15 @@ func maximumActivationWorkspace(plan Plan, GPUs int) (uint64, error) {
 	}
 	var maxActivations uint64
 	for _, stage := range plan.Stages {
-		accumulation := max(int64(1), stage.Parameters.GradientAccumulation)
-		globalMicroBatch := divideRoundUp(uint64(stage.Parameters.BatchSize), uint64(accumulation))
+		parameters, err := training.ProjectTrainerParameters(stage.Parameters)
+		if err != nil {
+			return 0, fmt.Errorf("stage %s: %w", stage.Name, err)
+		}
+		accumulation := max(int64(1), parameters.GradientAccumulation)
+		globalMicroBatch := divideRoundUp(uint64(parameters.BatchSize), uint64(accumulation))
 		batch := divideRoundUp(globalMicroBatch, uint64(GPUs))
 		activationFactor := uint64(72)
-		if stage.Parameters.ActivationCheckpointing {
+		if parameters.ActivationCheckpointing {
 			// Layer checkpointing retains inputs instead of every intermediate.
 			// Keep this deliberately conservative until calibrated GPU evidence
 			// supports a tighter backend-specific estimate.

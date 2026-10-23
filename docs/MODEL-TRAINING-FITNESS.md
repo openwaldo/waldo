@@ -66,6 +66,56 @@ decomposition that does not exactly equal WALDO's architecture forecast.
 "Core" or "non-embedding" means total parameters minus both input and untied
 output token matrices.
 
+## Provider fitness semantics
+
+Every `forecast.fitness.architecture` object states how much of it is known:
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `parameter_count_status` | `exact`, `estimated` | `exact` only when WALDO constructs the modules itself |
+| `decomposition_status` | `exact`, `estimated`, `unavailable` | Token I/O, attention, MLP, normalization, and bias components |
+| `active_parameter_status` | `exact`, `estimated`, `unavailable` | `active_parameters_per_token`; `null` when unavailable |
+| `basis` | text | The authority for the values and where the measured count is recorded |
+
+Native WALDO architectures are `exact` throughout, and the exact
+decomposition invariant above is unchanged.
+`forecast.fitness.compute.architecture_aware_status` is `estimated` because that
+figure is always an approximation. It is `unavailable` when WALDO does not model
+the layer structure.
+
+Hugging Face Transformers classes construct their own modules from
+`architecture.config`, so a WALDO count is never exact before construction. The
+worker records the measured count in `runtime.json`; that count is
+authoritative. For the dense registry families and Mixtral, forecast models
+the pinned classes' parameter-bearing modules: the configured `head_dim` or the
+class default (Qwen3 128, Gemma2 256, otherwise `hidden_size /
+num_attention_heads`), the class default for `tie_word_embeddings` (Gemma2
+tied, others untied), honored `attention_bias`/`mlp_bias` flags, Qwen2's fixed
+Q/K/V biases, Qwen3 and OLMo2 QK norms, and Gemma2's four per-layer norms. The
+forecast total equals this decomposition, which is labelled `estimated`. The
+estimates matched measured counts for every shipped example and the tested
+config variants with Transformers 5.16.1. Other versions or config fields can
+still differ.
+
+For Mixtral, `total_parameters` and memory use resident parameters, including
+every expert and router. `active_parameters_per_token` counts all non-expert
+parameters plus `experts_per_token` experts. It uses the same definition as
+`runtime.json`'s `active_parameters_estimate` and is not activation memory.
+`active_conventional_training_flops` is `6 * active * planned tokens`, and
+architecture-aware compute counts only routed experts plus the router.
+
+WALDO does not decompose the Qwen3.5 linear-attention/full-attention hybrid.
+Its total is a dense-decoder proxy, labelled `estimated` by its `basis`. The
+decomposition, active parameters, tokens per core parameter, and
+architecture-aware compute are `unavailable`; their numeric fields are zero or
+`null` and must not be read as measurements. Memory is sized from that proxy
+and excludes recurrent state.
+
+The Transformers engine executes one process on CPU or one visible CUDA/ROCm
+GPU. Its stages therefore report only world size 1, with
+`world_size_topology_note`. `--compare-hosts` lists only single-GPU, non-Apple
+catalog configurations and states why in `catalog_note`.
+
 ## Historical architecture audit
 
 All token matrices below are tied; "other" is RMSNorm because these models
@@ -121,7 +171,8 @@ For every fixed-budget stage forecast reports requested and rounded planned
 tokens, `batch_size * sequence_length` global target capacity per optimizer
 step, optimizer steps, tokens per total and core parameter, and warmup/warmdown
 percentages. Valid 1/2/4/8-rank proposals report global batch, global physical
-micro-batch, and rank-local micro-batch.
+micro-batch, and rank-local micro-batch. Provider engines report only the
+topologies they can execute.
 
 WALDO's global `batch_size` is invariant across world sizes. With a fixed seed,
 compose, pinned corpus preflight, and global batch, its prepared sequence

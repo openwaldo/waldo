@@ -770,7 +770,11 @@ func newIndexedRecordPartition(ctx context.Context, partition RecordPartition, p
 		partition.evaluationRecords = append(partition.evaluationRecords, candidate.record)
 		_, _ = fmt.Fprintln(hasher, candidate.key)
 		if candidate.record.Conversation == nil && objective == "causal-language-modeling" {
-			tokenTargets += int64(codec.Count(candidate.record.Text))
+			count, err := countTokens(codec, candidate.record.Text)
+			if err != nil {
+				return RecordPartition{}, err
+			}
+			tokenTargets += int64(count)
 			continue
 		}
 		_, mask, err := tokenizeRecord(candidate.record, codec, objective, conversation)
@@ -1002,7 +1006,11 @@ func readEvaluationRecords(ctx context.Context, inputs []Input, selected []evalu
 				record.Text = record.Text[offset:]
 			}
 			if record.Conversation == nil && objective == "causal-language-modeling" {
-				tokenTargets += int64(codec.Count(record.Text))
+				count, err := countTokens(codec, record.Text)
+				if err != nil {
+					return err
+				}
+				tokenTargets += int64(count)
 				records = append(records, record)
 				return nil
 			}
@@ -1305,7 +1313,11 @@ func addRecordCapacity(packer *sequenceCapacityPacker, record Record, codec Toke
 	if record.Conversation == nil && objective == "causal-language-modeling" {
 		tokenCount := record.tokenCount
 		if !record.tokensCounted {
-			tokenCount = codec.Count(record.Text)
+			var err error
+			tokenCount, err = countTokens(codec, record.Text)
+			if err != nil {
+				return false, false, err
+			}
 		}
 		return true, packer.addFullySupervised(tokenCount, requiredSequences), nil
 	}
@@ -1724,11 +1736,15 @@ func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, ep
 			groupSource.seed ^= uint64(groupPosition+1) * 0x9e3779b97f4a7c15
 			err := groupSource.streamInputGroup(streamContext, epoch, values, func(record Record) error {
 				if parallelTokenization {
+					var err error
 					if record.Conversation == nil {
-						record.preparedTokens = codecs[groupPosition].Encode(record.Text)
+						record.preparedTokens, err = encodeTokens(codecs[groupPosition], record.Text)
 						record.tokenCount = len(record.preparedTokens)
 					} else {
-						record.tokenCount = codecs[groupPosition].Count(record.Text)
+						record.tokenCount, err = countTokens(codecs[groupPosition], record.Text)
+					}
+					if err != nil {
+						return err
 					}
 					record.tokensCounted = true
 				}
@@ -1771,8 +1787,11 @@ func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, ep
 		}
 		record := heads[selected].record
 		if !record.tokensCounted {
-			record.tokenCount = source.codec.Count(record.Text)
-			record.tokensCounted = true
+			count, err := countTokens(source.codec, record.Text)
+			if err != nil {
+				return err
+			}
+			record.tokenCount, record.tokensCounted = count, true
 		}
 		if err := consume(record); err != nil {
 			return err

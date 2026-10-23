@@ -213,8 +213,13 @@ func runModelIndexForecast(context Context, paths []string, stdout, warnings io.
 }
 
 func writeModelForecast(stdout io.Writer, report model.ResourceForecast, hostForecast model.HostForecast, compareHosts bool, architecture *model.Architecture) {
-	fmt.Fprintf(stdout, "PARAMETERS:  %s\n", humanModelParameters(report.ApproximateParameters))
 	fitness := report.Fitness
+	if status := fitness.Architecture.ParameterCountStatus; status != "" && status != model.FitnessExact {
+		fmt.Fprintf(stdout, "PARAMETERS:  %s %s\n", humanModelParameters(report.ApproximateParameters), status)
+		fmt.Fprintf(stdout, "BASIS:       %s\n", fitness.Architecture.Basis)
+	} else {
+		fmt.Fprintf(stdout, "PARAMETERS:  %s\n", humanModelParameters(report.ApproximateParameters))
+	}
 	if architecture != nil && fitness.Architecture.TotalParameters == 0 {
 		if architecture.Validate() == nil {
 			fallback, err := model.AnalyzeArchitecture(*architecture)
@@ -230,7 +235,9 @@ func writeModelForecast(stdout io.Writer, report model.ResourceForecast, hostFor
 			fitness.Architecture.TokenIOPercent = 100 * float64(tokenParameters) / float64(report.ApproximateParameters)
 		}
 	}
-	if architecture != nil && report.ApproximateParameters > 0 {
+	if fitness.Architecture.DecompositionStatus == model.FitnessUnavailable {
+		fmt.Fprintln(stdout, "STRUCTURE:   unavailable; no token I/O, component, or active-parameter decomposition is reported")
+	} else if architecture != nil && report.ApproximateParameters > 0 {
 		tokenParameters := fitness.Architecture.TokenIOParameters
 		share := fitness.Architecture.TokenIOPercent
 		fmt.Fprintf(stdout, "TOKEN I/O:   %s (%.1f%% of parameters)\n", humanModelParameters(tokenParameters), share)
@@ -243,8 +250,18 @@ func writeModelForecast(stdout io.Writer, report model.ResourceForecast, hostFor
 				humanModelParameters(fitness.Architecture.QueryParametersPerLayer), humanModelParameters(fitness.Architecture.KeyParametersPerLayer),
 				humanModelParameters(fitness.Architecture.ValueParametersPerLayer), humanModelParameters(fitness.Architecture.AttentionOutputParametersPerLayer),
 				fitness.Architecture.GQAQueryHeads, fitness.Architecture.GQAKeyValueHeads)
-			fmt.Fprintf(stdout, "MLP:         %s per layer (SwiGLU gate + up + down)\n",
-				humanModelParameters(fitness.Architecture.MLPGateParametersPerLayer+fitness.Architecture.MLPUpParametersPerLayer+fitness.Architecture.MLPDownParametersPerLayer))
+			mlp := humanModelParameters(fitness.Architecture.MLPGateParametersPerLayer + fitness.Architecture.MLPUpParametersPerLayer + fitness.Architecture.MLPDownParametersPerLayer)
+			if fitness.Architecture.ExpertsPerLayer > 1 {
+				fmt.Fprintf(stdout, "MLP:         %s per layer resident (%d experts * gated MLP gate + up + down); router %s total\n",
+					mlp, fitness.Architecture.ExpertsPerLayer, humanModelParameters(fitness.Architecture.RouterParameters))
+				fmt.Fprintf(stdout, "ACTIVE:      %s %s per token (%d of %d experts); total above counts every resident expert\n",
+					humanModelParameters(*fitness.Architecture.ActiveParametersPerToken), fitness.Architecture.ActiveParameterStatus,
+					fitness.Architecture.ExpertsPerToken, fitness.Architecture.ExpertsPerLayer)
+			} else if fitness.Architecture.DecompositionStatus != model.FitnessEstimated {
+				fmt.Fprintf(stdout, "MLP:         %s per layer (SwiGLU gate + up + down)\n", mlp)
+			} else {
+				fmt.Fprintf(stdout, "MLP:         %s per layer (gated MLP gate + up + down)\n", mlp)
+			}
 			fmt.Fprintf(stdout, "NORMS/BIAS:  %s / %s; positional embeddings %s (RoPE)\n",
 				humanModelParameters(fitness.Architecture.NormalizationParameters), humanModelParameters(fitness.Architecture.BiasParameters),
 				humanModelParameters(fitness.Architecture.PositionalEmbeddingParameters))
@@ -275,12 +292,26 @@ func writeModelForecast(stdout io.Writer, report model.ResourceForecast, hostFor
 	}
 	fmt.Fprintf(stdout, "INITIAL LOSS: %.4f expected for uniform logits (ln vocabulary size)\n", contextFitness.ExpectedUntrainedTokenLoss)
 	for _, stage := range fitness.Stages {
-		fmt.Fprintf(stdout, "STAGE %s: %s tokens/step, %s steps, %.2f tokens/core parameter, warmup %.1f%%, warmdown %.1f%%\n",
-			stage.Name, humanCount(stage.GlobalTokensPerOptimizerStep), humanInteger(stage.OptimizerSteps), stage.TokensPerNonEmbeddingParameter, stage.WarmupPercent, stage.WarmdownPercent)
+		core := fmt.Sprintf("%.2f tokens/core parameter", stage.TokensPerNonEmbeddingParameter)
+		if fitness.Architecture.DecompositionStatus == model.FitnessUnavailable {
+			core = "tokens/core parameter unavailable"
+		}
+		fmt.Fprintf(stdout, "STAGE %s: %s tokens/step, %s steps, %s, warmup %.1f%%, warmdown %.1f%%\n",
+			stage.Name, humanCount(stage.GlobalTokensPerOptimizerStep), humanInteger(stage.OptimizerSteps), core, stage.WarmupPercent, stage.WarmdownPercent)
 	}
 	if fitness.Schema != 0 {
-		fmt.Fprintf(stdout, "COMPUTE:     %.3e FLOPs conventional 6ND; %.3e architecture-aware\n",
-			fitness.Compute.ConventionalTrainingFLOPs, fitness.Compute.ArchitectureAwareTrainingFLOPs)
+		compute := fitness.Compute
+		aware := fmt.Sprintf("%.3e architecture-aware", compute.ArchitectureAwareTrainingFLOPs)
+		if compute.ArchitectureAwareStatus == model.FitnessUnavailable {
+			aware = "architecture-aware unavailable"
+		} else if fitness.Architecture.DecompositionStatus == model.FitnessEstimated {
+			aware += " (provider estimate)"
+		}
+		if fitness.Architecture.ExpertsPerLayer > 1 && compute.ActiveTrainingFLOPs != nil {
+			fmt.Fprintf(stdout, "COMPUTE:     %.3e FLOPs conventional 6ND (resident parameters); %.3e active 6ND; %s\n", compute.ConventionalTrainingFLOPs, *compute.ActiveTrainingFLOPs, aware)
+		} else {
+			fmt.Fprintf(stdout, "COMPUTE:     %.3e FLOPs conventional 6ND; %s\n", compute.ConventionalTrainingFLOPs, aware)
+		}
 	}
 	for _, warning := range fitness.Warnings {
 		fmt.Fprintf(stdout, "WARNING:     [%s] %s\n", warning.Code, warning.Message)
@@ -347,6 +378,9 @@ func writeHostComparison(stdout io.Writer, report model.ResourceForecast) {
 	fmt.Fprintf(stdout, "%*s  %*s  %-*s  %-*s  %*s  %*s\n", GPUsWidth, "GPUS", nodesWidth, "NODES", manufacturerWidth, "MFR", acceleratorWidth, "ACCELERATOR", memoryWidth, "MEMORY/GPU", durationWidth, "APPROX. TIME")
 	for _, candidate := range rows {
 		fmt.Fprintf(stdout, "%*s  %*s  %-*s  %-*s  %*s  %*s\n", GPUsWidth, candidate.GPUs, nodesWidth, candidate.nodes, manufacturerWidth, candidate.manufacturer, acceleratorWidth, candidate.accelerator, memoryWidth, candidate.memory, durationWidth, candidate.duration)
+	}
+	if report.CatalogNote != "" {
+		fmt.Fprintf(stdout, "\nNOTE:        %s\n", singleLine(report.CatalogNote))
 	}
 }
 

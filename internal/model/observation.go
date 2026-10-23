@@ -19,7 +19,7 @@ import (
 )
 
 func backendRequiresArtifactVerification(name string) bool {
-	return name == training.BackendPyTorch || name == training.BackendTorchTitan || name == training.BackendMLX
+	return name == training.BackendPyTorch || name == training.BackendTorchTitan || name == training.BackendMLX || name == training.BackendTransformers
 }
 
 func validateBackendObservation(runDirectory string, planned PlannedStage, observation training.Observation) error {
@@ -103,6 +103,44 @@ func validateBackendObservation(runDirectory string, planned PlannedStage, obser
 		}
 		if selected.Value != best {
 			return fmt.Errorf("selected checkpoint heldout_loss %.6f is not the best eligible persisted value %.6f", selected.Value, best)
+		}
+	}
+	return nil
+}
+
+// validateIntrinsicHeldoutMetrics requires the ADR 0081 exact intrinsic
+// metrics in every evaluation and checks them against the run BOM's pinned
+// held-out evidence. Token loss is the summed NLL over exactly the pinned
+// targets; BPB divides that sum by the pinned UTF-8 bytes. BPB is reported for
+// intrinsic comparison only and never selects or promotes a model.
+func validateIntrinsicHeldoutMetrics(set training.EvaluationSet, evaluations []training.Evaluation) error {
+	agrees := func(value, want float64) bool {
+		return math.Abs(value-want) <= 1e-12*max(1, math.Abs(want))
+	}
+	for _, evaluation := range evaluations {
+		metrics := evaluation.Metrics
+		var missing []string
+		for _, name := range []string{"heldout_loss", "heldout_nll_sum", "heldout_target_tokens", "heldout_utf8_bytes"} {
+			if _, ok := metrics[name]; !ok {
+				missing = append(missing, name)
+			}
+		}
+		if _, ok := metrics["heldout_bits_per_byte"]; !ok && set.TextBytes > 0 {
+			missing = append(missing, "heldout_bits_per_byte")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("evaluation step %d does not report %s", evaluation.Step, strings.Join(missing, ", "))
+		}
+		if metrics["heldout_target_tokens"] != float64(set.TokenTargets) || metrics["heldout_utf8_bytes"] != float64(set.TextBytes) {
+			return fmt.Errorf("evaluation step %d scored %.0f targets and %.0f bytes; run BOM pins %d targets and %d bytes",
+				evaluation.Step, metrics["heldout_target_tokens"], metrics["heldout_utf8_bytes"], set.TokenTargets, set.TextBytes)
+		}
+		nll := metrics["heldout_nll_sum"]
+		if nll < 0 || set.TokenTargets <= 0 || !agrees(metrics["heldout_loss"], nll/float64(set.TokenTargets)) {
+			return fmt.Errorf("evaluation step %d heldout_loss is not its summed NLL over the pinned targets", evaluation.Step)
+		}
+		if set.TextBytes > 0 && !agrees(metrics["heldout_bits_per_byte"], nll/(math.Ln2*float64(set.TextBytes))) {
+			return fmt.Errorf("evaluation step %d heldout_bits_per_byte is not its summed NLL over the pinned UTF-8 bytes", evaluation.Step)
 		}
 	}
 	return nil

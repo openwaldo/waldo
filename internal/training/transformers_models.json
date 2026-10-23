@@ -1,0 +1,11 @@
+{
+  "LlamaForCausalLM": "LlamaConfig",
+  "Qwen2ForCausalLM": "Qwen2Config",
+  "Qwen3ForCausalLM": "Qwen3Config",
+  "MistralForCausalLM": "MistralConfig",
+  "Gemma2ForCausalLM": "Gemma2Config",
+  "Phi3ForCausalLM": "Phi3Config",
+  "Olmo2ForCausalLM": "Olmo2Config",
+  "MixtralForCausalLM": "MixtralConfig",
+  "Qwen3_5ForCausalLM": "Qwen3_5TextConfig"
+}
