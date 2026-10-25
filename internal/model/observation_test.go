@@ -100,7 +100,7 @@ func TestValidateBackendObservationVerifiesBoundsAndArtifacts(t *testing.T) {
 }
 
 func TestRealBackendsRequireArtifactVerification(t *testing.T) {
-	for _, name := range []string{training.BackendPyTorch, training.BackendTorchTitan, training.BackendMLX} {
+	for _, name := range []string{training.BackendPyTorch, training.BackendTorchTitan, training.BackendMLX, training.BackendTransformers} {
 		if !backendRequiresArtifactVerification(name) {
 			t.Fatalf("real backend %q does not require persisted artifact verification", name)
 		}

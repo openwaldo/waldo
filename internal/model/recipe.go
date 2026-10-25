@@ -123,28 +123,30 @@ type ComposeBase struct {
 }
 
 type Architecture struct {
-	Family           string    `json:"family" yaml:"family"`
-	ContextTokens    uint64    `json:"context_tokens" yaml:"context_tokens"`
-	VocabularySize   uint64    `json:"vocabulary_size" yaml:"vocabulary_size"`
-	HiddenSize       uint64    `json:"hidden_size" yaml:"hidden_size"`
-	IntermediateSize uint64    `json:"intermediate_size" yaml:"intermediate_size"`
-	Layers           uint64    `json:"layers" yaml:"layers"`
-	AttentionHeads   uint64    `json:"attention_heads" yaml:"attention_heads"`
-	KeyValueHeads    uint64    `json:"key_value_heads" yaml:"key_value_heads"`
-	Dropout          float64   `json:"dropout,omitempty" yaml:"dropout,omitempty"`
-	TieEmbeddings    bool      `json:"tie_embeddings" yaml:"tie_embeddings"`
-	QKNormalization  bool      `json:"qk_normalization,omitempty" yaml:"qk_normalization,omitempty"`
-	Initialization   string    `json:"initialization,omitempty" yaml:"initialization,omitempty"`
-	ParameterDType   string    `json:"parameter_dtype" yaml:"parameter_dtype"`
-	Tokenizer        Tokenizer `json:"tokenizer" yaml:"tokenizer"`
+	Transformers     *training.TransformersModel `json:"transformers,omitempty" yaml:"transformers,omitempty"`
+	Family           string                      `json:"family" yaml:"family"`
+	ContextTokens    uint64                      `json:"context_tokens" yaml:"context_tokens"`
+	VocabularySize   uint64                      `json:"vocabulary_size" yaml:"vocabulary_size"`
+	HiddenSize       uint64                      `json:"hidden_size" yaml:"hidden_size"`
+	IntermediateSize uint64                      `json:"intermediate_size" yaml:"intermediate_size"`
+	Layers           uint64                      `json:"layers" yaml:"layers"`
+	AttentionHeads   uint64                      `json:"attention_heads" yaml:"attention_heads"`
+	KeyValueHeads    uint64                      `json:"key_value_heads" yaml:"key_value_heads"`
+	Dropout          float64                     `json:"dropout,omitempty" yaml:"dropout,omitempty"`
+	TieEmbeddings    bool                        `json:"tie_embeddings" yaml:"tie_embeddings"`
+	QKNormalization  bool                        `json:"qk_normalization,omitempty" yaml:"qk_normalization,omitempty"`
+	Initialization   string                      `json:"initialization,omitempty" yaml:"initialization,omitempty"`
+	ParameterDType   string                      `json:"parameter_dtype" yaml:"parameter_dtype"`
+	Tokenizer        Tokenizer                   `json:"tokenizer" yaml:"tokenizer"`
 }
 
 type Tokenizer struct {
-	Name         string                   `json:"name" yaml:"name"`
-	Revision     string                   `json:"revision" yaml:"revision"`
-	ArtifactPath string                   `json:"-" yaml:"artifact_path,omitempty"`
-	Artifact     *waldotokenizer.Artifact `json:"artifact,omitempty" yaml:"artifact,omitempty"`
-	Training     *TokenizerTraining       `json:"training,omitempty" yaml:"training,omitempty"`
+	Name         string                         `json:"name" yaml:"name"`
+	Revision     string                         `json:"revision" yaml:"revision"`
+	HuggingFace  *training.HuggingFaceTokenizer `json:"huggingface,omitempty" yaml:"huggingface,omitempty"`
+	ArtifactPath string                         `json:"-" yaml:"artifact_path,omitempty"`
+	Artifact     *waldotokenizer.Artifact       `json:"artifact,omitempty" yaml:"artifact,omitempty"`
+	Training     *TokenizerTraining             `json:"training,omitempty" yaml:"training,omitempty"`
 }
 
 const TokenizerAlgorithmByteBPEV1 = "byte-bpe-v1"
@@ -441,6 +443,10 @@ func LoadCompose(path string) (Compose, string, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return Compose{}, "", fmt.Errorf("model compose %s is empty", absolute)
 	}
+	data, err = normalizeComposeDocument(data)
+	if err != nil {
+		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
+	}
 	var compose Compose
 	if bytes.HasPrefix(bytes.TrimSpace(data), []byte("{")) {
 		decoder := json.NewDecoder(bytes.NewReader(data))
@@ -470,6 +476,17 @@ func LoadCompose(path string) (Compose, string, error) {
 		}
 	}
 	compose.normalizeLegacyInteraction()
+	if compose.Architecture.Transformers != nil {
+		// JSON numbers have one representation across YAML input, history, and
+		// immutable JSON model/run records. Avoid int/float map equality drift.
+		encoded, err := json.Marshal(compose)
+		if err != nil {
+			return Compose{}, "", err
+		}
+		if err := json.Unmarshal(encoded, &compose); err != nil {
+			return Compose{}, "", err
+		}
+	}
 	if err := resolveComposeTokenizerArtifact(&compose, filepath.Dir(absolute)); err != nil {
 		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
 	}
@@ -597,6 +614,12 @@ func (compose Compose) Validate() error {
 	seen := map[string]bool{}
 	hasToolTraining := false
 	for i, stage := range compose.Stages {
+		if (compose.Architecture.Transformers != nil) != (stage.Parameters.Trainer != nil) {
+			return fmt.Errorf("stage %s trainer must match the architecture provider", stage.Name)
+		}
+		if err := validateTrainerStage(stage.Parameters.Trainer, compose.Architecture); err != nil {
+			return fmt.Errorf("stage %s: %w", stage.Name, err)
+		}
 		if !validName.MatchString(stage.Name) || seen[stage.Name] {
 			return fmt.Errorf("stage %d has invalid or duplicate name %q", i+1, stage.Name)
 		}
@@ -686,8 +709,28 @@ func stageWithInteraction(stage Stage, interaction Interaction) Stage {
 }
 
 func (architecture Architecture) Validate() error {
-	if architecture.Family != "decoder-transformer" {
+	if architecture.Transformers != nil {
+		if architecture.Family != training.BackendTransformers {
+			return fmt.Errorf("Transformers architecture requires its own family")
+		}
+		if err := architecture.Transformers.Validate(); err != nil {
+			return err
+		}
+		projection, err := transformersArchitecture(architecture.Transformers, architecture.Tokenizer)
+		if err != nil {
+			return err
+		}
+		if projection != architecture {
+			return fmt.Errorf("Transformers lifecycle projection differs from architecture.config")
+		}
+		if err := architecture.validateTokenizer(); err != nil {
+			return err
+		}
+	} else if architecture.Family != "decoder-transformer" {
 		return fmt.Errorf("unsupported architecture family %q", architecture.Family)
+	}
+	if architecture.Transformers == nil && architecture.Tokenizer.HuggingFace != nil {
+		return fmt.Errorf("Hugging Face tokenizers require the Transformers backend")
 	}
 	if architecture.ContextTokens == 0 || architecture.VocabularySize == 0 || architecture.HiddenSize == 0 || architecture.IntermediateSize == 0 || architecture.Layers == 0 || architecture.AttentionHeads == 0 || architecture.KeyValueHeads == 0 {
 		return fmt.Errorf("architecture dimensions must be positive")
@@ -826,6 +869,15 @@ func (architecture Architecture) ResolveTokenizer() (training.TokenizerSpec, tra
 }
 
 func (architecture Architecture) Forecast() (ArchitectureForecast, error) {
+	if architecture.Transformers != nil {
+		structure, ok, err := architecture.transformersStructure()
+		if err != nil {
+			return ArchitectureForecast{}, err
+		}
+		if ok {
+			return architecture.transformersForecast(structure)
+		}
+	}
 	embedding, err := multiply(architecture.VocabularySize, architecture.HiddenSize)
 	if err != nil {
 		return ArchitectureForecast{}, err
@@ -892,6 +944,26 @@ func (architecture Architecture) Forecast() (ArchitectureForecast, error) {
 			return ArchitectureForecast{}, err
 		}
 	}
+	formula := "embedding + decoder projections + gated MLP + norms; biases excluded"
+	if architecture.Transformers != nil {
+		formula = "dense-decoder proxy, not a hybrid parameter, state, or memory estimate; measured parameter count is recorded in runtime.json"
+	}
+	return architecture.parameterForecast(parameters, formula)
+}
+
+func (architecture Architecture) transformersForecast(structure transformersStructure) (ArchitectureForecast, error) {
+	parameters, err := structure.total(architecture.Layers)
+	if err != nil {
+		return ArchitectureForecast{}, err
+	}
+	formula := "estimated provider structure from architecture.config and pinned class defaults; measured count is recorded in runtime.json"
+	if structure.experts > 1 {
+		formula = "estimated resident parameters including all experts and routers, not active-per-token parameters; measured counts are recorded in runtime.json"
+	}
+	return architecture.parameterForecast(parameters, formula)
+}
+
+func (architecture Architecture) parameterForecast(parameters uint64, formula string) (ArchitectureForecast, error) {
 	bytesPerParameter := uint64(4)
 	if architecture.ParameterDType != "float32" {
 		bytesPerParameter = 2
@@ -900,7 +972,7 @@ func (architecture Architecture) Forecast() (ArchitectureForecast, error) {
 	if err != nil {
 		return ArchitectureForecast{}, err
 	}
-	return ArchitectureForecast{ApproximateParameters: parameters, ParameterBytes: parameterBytes, Formula: "embedding + decoder projections + gated MLP + norms; biases excluded"}, nil
+	return ArchitectureForecast{ApproximateParameters: parameters, ParameterBytes: parameterBytes, Formula: formula}, nil
 }
 
 func multiply(left, right uint64) (uint64, error) {

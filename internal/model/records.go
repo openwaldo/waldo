@@ -430,7 +430,7 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 			if err := preflight.Validate(); err != nil {
 				return Inspection{}, fmt.Errorf("run %s preflight: %w", pin.ID, err)
 			}
-			if runBOM.EvaluationSet == nil || preflight.Evaluation != *runBOM.EvaluationSet || !equivalentTrainingParameters(preflight.Parameters, runBOM.Parameters) {
+			if runBOM.EvaluationSet == nil || preflight.Evaluation != *runBOM.EvaluationSet || !equivalentTrainingParameters(preflight.Parameters, plannedParameters(runBOM.Parameters)) {
 				return Inspection{}, fmt.Errorf("run %s preflight artifact does not match its run BOM", pin.ID)
 			}
 		}

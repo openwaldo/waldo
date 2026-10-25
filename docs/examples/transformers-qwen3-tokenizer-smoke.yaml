@@ -1,0 +1,60 @@
+# Random-initialized custom Qwen3 with the standard Qwen3 fast tokenizer.
+# No pretrained weights. Set WALDO_HF_TOKENIZER_DIR to the two pinned files.
+# This tests training mechanics, not useful language output or chat templates.
+kind: waldo-model-compose
+schema: 2
+training:
+  engine: huggingface-transformers
+  package:
+    distribution: transformers
+    version: 5.16.1
+    artifact: transformers-5.16.1-py3-none-any.whl
+    sha256: 2f2d5b98a5ad3718713653734298fa620754ed683702a635ebb587df3ed29c7e
+architecture:
+  provider: huggingface-transformers
+  model_class: Qwen3ForCausalLM
+  config_class: Qwen3Config
+  config:
+    model_type: qwen3
+    vocab_size: 151936
+    hidden_size: 32
+    intermediate_size: 64
+    num_hidden_layers: 1
+    num_attention_heads: 4
+    num_key_value_heads: 2
+    head_dim: 8
+    max_position_embeddings: 128
+    tie_word_embeddings: true
+    dtype: float32
+    bos_token_id: null
+    eos_token_id: 151645
+    pad_token_id: 151643
+  tokenizer:
+    name: huggingface
+    revision: c1899de289a04d12100db370d81485cdf75e47ca
+    huggingface:
+      source: Qwen/Qwen3-0.6B
+      files:
+        tokenizer.json: aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4
+        tokenizer_config.json: d5d09f07b48c3086c508b30d1c9114bd1189145b74e982a265350c923acd8101
+      pad_id: 151643
+      eos_id: 151645
+stages:
+  - name: qwen3-tokenizer-smoke
+    type: pre-training
+    objective: causal-language-modeling
+    corpora: [core/books]
+    parameters:
+      steps: 2
+      sequence_length: 8
+      seed: 42
+      evaluation_fraction: 0.1
+      evaluation_max_records: 2
+      evaluation_max_bytes: 65536
+    trainer:
+      class: Trainer
+      arguments:
+        per_device_train_batch_size: 1
+        per_device_eval_batch_size: 1
+        learning_rate: 0.001
+        logging_steps: 1

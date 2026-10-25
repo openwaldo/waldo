@@ -7,6 +7,7 @@ package cli
 
 import (
 	stdcontext "context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -243,17 +244,24 @@ func measureComposeRecordSource(ctx stdcontext.Context, source training.RecordSo
 		if active > len(batch) {
 			active = len(batch)
 		}
+		errs := make([]error, active)
 		group.Add(active)
 		for worker := 0; worker < active; worker++ {
 			go func(worker int) {
 				defer group.Done()
 				for position := worker; position < len(batch); position += active {
-					measureComposeRecord(batch[position], codecs[worker], sequenceLength, &measurements[worker], corpora[worker])
+					if err := measureComposeRecord(batch[position], codecs[worker], sequenceLength, &measurements[worker], corpora[worker]); err != nil {
+						errs[worker] = err
+						return
+					}
 				}
 			}(worker)
 		}
 		group.Wait()
 		batch = batch[:0]
+		if err := errors.Join(errs...); err != nil {
+			return err
+		}
 		return ctx.Err()
 	}
 	err := source.Stream(ctx, func(record training.Record) error {
@@ -291,10 +299,13 @@ func newComposeCorpusMeasurement() composeCorpusMeasurement {
 	return composeCorpusMeasurement{tokenLengths: map[int]int64{}, byteLengths: map[int]int64{}}
 }
 
-func measureComposeRecord(record training.Record, codec training.TokenCodec, sequenceLength int64, measurement *composeCorpusMeasurement, byCorpus map[string]*composeCorpusFertility) {
+func measureComposeRecord(record training.Record, codec training.TokenCodec, sequenceLength int64, measurement *composeCorpusMeasurement, byCorpus map[string]*composeCorpusFertility) error {
 	bytes := len([]byte(record.Text))
 	characters := utf8.RuneCountInString(record.Text)
-	tokens := codec.Count(record.Text)
+	tokens, err := codec.CountChecked(record.Text)
+	if err != nil {
+		return err
+	}
 	measurement.Records++
 	measurement.UTF8Bytes += int64(bytes)
 	measurement.Characters += int64(characters)
@@ -317,6 +328,7 @@ func measureComposeRecord(record training.Record, codec training.TokenCodec, seq
 	value.UTF8Bytes += int64(bytes)
 	value.Characters += int64(characters)
 	value.Tokens += int64(tokens)
+	return nil
 }
 
 func measurementProgress(measurements []composeCorpusMeasurement) (int64, int64) {

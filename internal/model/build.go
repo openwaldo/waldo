@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -195,6 +196,13 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		}
 	}
 	_, codec, err := inspection.Model.Architecture.ResolveTokenizer()
+	if tokenizer := inspection.Model.Architecture.Tokenizer; tokenizer.HuggingFace != nil {
+		var close func()
+		codec, close, err = training.OpenHuggingFaceTokenizer(ctx, tokenizer.HuggingFace.Spec(tokenizer.Revision, inspection.Model.Architecture.VocabularySize), inspection.Model.Architecture.Transformers)
+		if err == nil {
+			defer close()
+		}
+	}
 	if err != nil {
 		// Legacy imported and test architectures may carry an opaque revision.
 		// Real backends still validate the exact contract before execution.
@@ -362,6 +370,17 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	}
 	if resolvedParameters.Compile && !capabilities.Compile {
 		return Inspection{}, fmt.Errorf("backend %s does not support compile", selection.Execution.Backend.Name)
+	}
+	if resolvedParameters.Trainer != nil {
+		resolver, ok := selection.Backend.(training.TrainerResolver)
+		if !ok {
+			return Inspection{}, fmt.Errorf("backend %s cannot resolve Transformers Trainer settings", selection.Execution.Backend.Name)
+		}
+		builder.report(Progress{Phase: "backend", Stage: stage.Name, Message: "resolving pinned Trainer settings"})
+		resolvedParameters, err = resolver.ResolveTrainer(ctx, architectureJSON, resolvedParameters)
+		if err != nil {
+			return Inspection{}, fmt.Errorf("stage %s resolve Trainer settings: %w", stage.Name, err)
+		}
 	}
 	if selection.Execution.WorldSize <= 1 {
 		selection.Execution.Parallelism.DataPlane = training.DataPlaneLocal
@@ -564,7 +583,7 @@ func reusableStagePreflight(inspection Inspection, identity string) (training.St
 		if err := snapshot.Validate(); err != nil {
 			return training.StagePreflight{}, 0, false, fmt.Errorf("run %04d: %w", bom.Ordinal, err)
 		}
-		if bom.EvaluationSet == nil || snapshot.Evaluation != *bom.EvaluationSet || !equivalentTrainingParameters(snapshot.Parameters, bom.Parameters) {
+		if bom.EvaluationSet == nil || snapshot.Evaluation != *bom.EvaluationSet || !equivalentTrainingParameters(snapshot.Parameters, plannedParameters(bom.Parameters)) {
 			return training.StagePreflight{}, 0, false, fmt.Errorf("run %04d preflight artifact does not match its run BOM", bom.Ordinal)
 		}
 		if snapshot.IdentitySHA256 == identity {
@@ -726,6 +745,12 @@ func (builder Builder) resumeTraining(ctx context.Context, name string, inspecti
 		checkpoint := run.Progress.Checkpoints[len(run.Progress.Checkpoints)-1]
 		resume = &training.ResumePoint{Step: checkpoint.Step, Tokens: checkpoint.Tokens, Checkpoint: checkpoint, Checkpoints: append([]training.Checkpoint(nil), run.Progress.Checkpoints...), Evaluations: append([]training.Evaluation(nil), run.Progress.Evaluations...)}
 	}
+	if resume == nil && run.Progress != nil && selection.Execution.Backend.Name == training.BackendTransformers {
+		// Transformers reports durable evaluations but no resume points, so an
+		// interrupted run restarts at step 0. Its abandoned evaluations remain
+		// in telemetry; they must not constrain or merge into the new attempt.
+		run.Progress = nil
+	}
 	if resume != nil {
 		runDirectory := filepath.Join(inspection.Path, "runs", runDirectoryName(pin))
 		for _, artifact := range resume.Checkpoint.Artifacts {
@@ -771,7 +796,17 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 		runBOM.Parameters = *effectiveParameters
 	}
 	tokenizerSpec := training.TokenizerSpec{Name: record.Architecture.Tokenizer.Name, Revision: record.Architecture.Tokenizer.Revision, VocabularySize: int(record.Architecture.VocabularySize), PadID: 0, BOSID: 1, EOSID: 2}
-	if selection.Execution.Backend.Name == training.BackendPyTorch || selection.Execution.Backend.Name == training.BackendTorchTitan || selection.Execution.Backend.Name == training.BackendMLX {
+	var tokenizerCodec training.TokenCodec
+	if tokenizer := record.Architecture.Tokenizer; tokenizer.HuggingFace != nil {
+		tokenizerSpec = tokenizer.HuggingFace.Spec(tokenizer.Revision, record.Architecture.VocabularySize)
+		var close func()
+		var err error
+		tokenizerCodec, close, err = training.OpenHuggingFaceTokenizer(ctx, tokenizerSpec, record.Architecture.Transformers)
+		if err != nil {
+			return Inspection{}, err
+		}
+		defer close()
+	} else if selection.Execution.Backend.Name == training.BackendPyTorch || selection.Execution.Backend.Name == training.BackendTorchTitan || selection.Execution.Backend.Name == training.BackendMLX || selection.Execution.Backend.Name == training.BackendTransformers {
 		var err error
 		tokenizerSpec, _, err = record.Architecture.ResolveTokenizer()
 		if err != nil {
@@ -835,7 +870,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 		RunID: pin.ID, Stage: stage.Name, Objective: stage.Objective,
 		Conversation:       runBOM.Conversation,
 		ArchitectureSHA256: record.ArchitectureSHA256,
-		Architecture:       architectureJSON, Tokenizer: tokenizerSpec, BOM: prepared.BOM, Inputs: prepared.Inputs,
+		Architecture:       architectureJSON, Tokenizer: tokenizerSpec, TokenizerCodec: tokenizerCodec, BOM: prepared.BOM, Inputs: prepared.Inputs,
 		Parameters: runBOM.Parameters, Records: records, EvaluationRecords: evaluationRecords, EvaluationSet: EvaluationSetValue(runBOM.EvaluationSet), Initialization: initializationForAttempt(runBOM.Initialization, resume), Resume: resume,
 		Parallelism:       runBOM.Execution.Parallelism,
 		ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix), ArtifactPrefix: artifactPrefix, Report: report,
@@ -873,12 +908,21 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 							if evaluation.Step != observation.SelectedCheckpoint.Step {
 								continue
 							}
-							_, verified = evaluation.Metrics["artifact_heldout_loss"]
+							var artifactLoss float64
+							if artifactLoss, verified = evaluation.Metrics["artifact_heldout_loss"]; verified {
+								// ADR 0044: the reloaded artifact must reproduce the selection.
+								verified = math.Abs(artifactLoss-observation.SelectedCheckpoint.Value) <= max(0.02, math.Abs(observation.SelectedCheckpoint.Value)*0.01)
+							}
 							break
 						}
 						if !verified {
 							backendErr = fmt.Errorf("invalid backend observation: selected %s checkpoint does not verify the persisted model artifact", selection.Execution.Backend.Name)
 						}
+					}
+				}
+				if backendErr == nil && selection.Execution.Backend.Name == training.BackendTransformers {
+					if err := validateIntrinsicHeldoutMetrics(*set, observation.Evaluations); err != nil {
+						backendErr = fmt.Errorf("invalid backend observation: %w", err)
 					}
 				}
 			}
@@ -1239,6 +1283,12 @@ func resolveRunInitialization(inspection Inspection, requestedRunID string) (*tr
 			}
 			if pin.ID == "" {
 				return nil, fmt.Errorf("initialize from run %s: model run pin is missing", run.ID)
+			}
+			if inspection.Model.Architecture.Transformers != nil {
+				directory := filepath.Join(inspection.Path, "runs", runDirectoryName(pin))
+				if err := verifyTransformersContinuationArtifacts(directory, inspection.Model.Architecture, run.Observation.Artifacts); err != nil {
+					return nil, fmt.Errorf("initialize from run %s: %w", run.ID, err)
+				}
 			}
 			path := filepath.Join(inspection.Path, "runs", runDirectoryName(pin), filepath.FromSlash(artifact.Path))
 			if err := VerifyArtifactFile(path, artifact); err != nil {
@@ -1974,9 +2024,9 @@ func validateStagedComposeRun(inspection Inspection, index int, prepared Prepare
 		conversation = *prepared.Stage.Conversation
 	}
 	corpusMatches := bom.CorpusBOMSHA256 == corpusHash || equivalentPlannedCorpusBOM(bom.CorpusBOM, prepared.BOM)
-	parametersMatch := equivalentTrainingParameters(bom.Parameters, parameters)
+	parametersMatch := equivalentTrainingParameters(plannedParameters(bom.Parameters), parameters)
 	if prepared.Stage.Parameters.Tokens > 0 {
-		parametersMatch = equivalentResumeParameters(bom.Parameters, parameters)
+		parametersMatch = equivalentResumeParameters(plannedParameters(bom.Parameters), parameters)
 	}
 	if bom.Stage != prepared.Stage.Name || bom.StageType != prepared.Stage.Type || bom.Objective != prepared.Stage.Objective || !reflect.DeepEqual(bom.Conversation, conversation) || !corpusMatches || !parametersMatch {
 		return fmt.Errorf("run %d immutable facts do not match stage %s (name=%t type=%t objective=%t conversation=%t corpus=%t parameters=%t; saved parameters=%+v; requested parameters=%+v)", index+1, prepared.Stage.Name,
@@ -1997,6 +2047,13 @@ func equivalentPlannedCorpusBOM(left, right corpus.BOM) bool {
 		right.Shards[index].Attestation = nil
 	}
 	return reflect.DeepEqual(left, right)
+}
+
+// plannedParameters removes the host-resolved Trainer evidence that a run BOM
+// adds after stage planning; the worker separately enforces that evidence.
+func plannedParameters(parameters training.ResolvedParameters) training.ResolvedParameters {
+	parameters.TrainerResolution = nil
+	return parameters
 }
 
 func equivalentTrainingParameters(left, right training.ResolvedParameters) bool {

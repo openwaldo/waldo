@@ -28,7 +28,14 @@ type FitnessAnalysis struct {
 	Prediction   LossPredictionReadiness `json:"loss_prediction"`
 }
 
+// ArchitectureFitness statuses distinguish WALDO's exact native construction
+// from provider estimates and omitted provider structure. Total parameters
+// are resident parameters; active parameters are those used for one token.
 type ArchitectureFitness struct {
+	ParameterCountStatus              string  `json:"parameter_count_status"`
+	DecompositionStatus               string  `json:"decomposition_status"`
+	ActiveParameterStatus             string  `json:"active_parameter_status"`
+	Basis                             string  `json:"basis"`
 	VocabularySize                    uint64  `json:"vocabulary_size"`
 	TiedEmbeddings                    bool    `json:"tied_embeddings"`
 	TokenEmbeddingParameters          uint64  `json:"token_embedding_parameters"`
@@ -49,6 +56,11 @@ type ArchitectureFitness struct {
 	OtherParameters                   uint64  `json:"other_parameters"`
 	TotalParameters                   uint64  `json:"total_parameters"`
 	NonEmbeddingParameters            uint64  `json:"non_embedding_parameters"`
+	ActiveParametersPerToken          *uint64 `json:"active_parameters_per_token"`
+	ExpertsPerLayer                   uint64  `json:"experts_per_layer,omitempty"`
+	ExpertsPerToken                   uint64  `json:"experts_per_token,omitempty"`
+	ExpertParameters                  uint64  `json:"expert_parameters,omitempty"`
+	RouterParameters                  uint64  `json:"router_parameters,omitempty"`
 	TokenIOPercent                    float64 `json:"token_io_percent"`
 	AttentionPercent                  float64 `json:"attention_percent"`
 	MLPPercent                        float64 `json:"mlp_percent"`
@@ -57,6 +69,7 @@ type ArchitectureFitness struct {
 	GQAQueryHeads                     uint64  `json:"gqa_query_heads"`
 	GQAKeyValueHeads                  uint64  `json:"gqa_key_value_heads"`
 	GQAKVWidth                        uint64  `json:"gqa_kv_width"`
+	HeadDimension                     uint64  `json:"head_dimension"`
 	Formula                           string  `json:"formula"`
 }
 
@@ -106,6 +119,7 @@ type StageFitness struct {
 	WarmupPercent                  float64         `json:"warmup_percent"`
 	WarmdownPercent                float64         `json:"warmdown_percent"`
 	Topologies                     []BatchTopology `json:"world_size_topologies"`
+	TopologyNote                   string          `json:"world_size_topology_note,omitempty"`
 	CorpusMeasurementStatus        string          `json:"corpus_measurement_status"`
 	CorpusMeasurementReason        string          `json:"corpus_measurement_reason"`
 }
@@ -120,12 +134,15 @@ type BatchTopology struct {
 }
 
 type ComputeFitness struct {
-	ConventionalTrainingFLOPs      float64 `json:"conventional_training_flops"`
-	ConventionalFormula            string  `json:"conventional_formula"`
-	ArchitectureAwareFLOPsPerToken float64 `json:"architecture_aware_flops_per_token"`
-	ArchitectureAwareTrainingFLOPs float64 `json:"architecture_aware_training_flops"`
-	ArchitectureAwareFormula       string  `json:"architecture_aware_formula"`
-	ApproximationNote              string  `json:"approximation_note"`
+	ConventionalTrainingFLOPs      float64  `json:"conventional_training_flops"`
+	ConventionalFormula            string   `json:"conventional_formula"`
+	ActiveTrainingFLOPs            *float64 `json:"active_conventional_training_flops"`
+	ActiveFormula                  string   `json:"active_conventional_formula"`
+	ArchitectureAwareStatus        string   `json:"architecture_aware_status"`
+	ArchitectureAwareFLOPsPerToken float64  `json:"architecture_aware_flops_per_token"`
+	ArchitectureAwareTrainingFLOPs float64  `json:"architecture_aware_training_flops"`
+	ArchitectureAwareFormula       string   `json:"architecture_aware_formula"`
+	ApproximationNote              string   `json:"approximation_note"`
 }
 
 type MemoryFitness struct {
@@ -156,10 +173,11 @@ type LossPredictionReadiness struct {
 }
 
 func analyzeFitness(plan Plan, plannedTokens int64, conventionalFLOPs float64) (FitnessAnalysis, error) {
-	a, err := architectureFitness(plan.Architecture, plan.Forecast.ApproximateParameters)
+	a, err := decomposeArchitecture(plan.Architecture, plan.Forecast.ApproximateParameters)
 	if err != nil {
 		return FitnessAnalysis{}, err
 	}
+	provider := plan.Architecture.Transformers != nil
 	context := ContextFitness{
 		TokenizerName: plan.Architecture.Tokenizer.Name, TokenizerRevision: plan.Architecture.Tokenizer.Revision,
 		VocabularySize: plan.Architecture.VocabularySize, ContextTokens: plan.Architecture.ContextTokens,
@@ -180,15 +198,24 @@ func analyzeFitness(plan Plan, plannedTokens int64, conventionalFLOPs float64) (
 	stages := make([]StageFitness, 0, len(plan.Stages))
 	warnings := architectureWarnings(a)
 	architectureAwareTotal := float64(0)
+	architectureAware := true
 	for _, stage := range plan.Stages {
 		resolved, err := training.ResolvePlanningParameters(stage.Parameters)
 		if err != nil {
 			return FitnessAnalysis{}, fmt.Errorf("stage %s fitness parameters: %w", stage.Name, err)
 		}
+		warmup := resolved.Schedule.WarmupSteps
+		if resolved.Trainer != nil {
+			execution, err := resolved.Trainer.Execution()
+			if err != nil {
+				return FitnessAnalysis{}, fmt.Errorf("stage %s fitness trainer: %w", stage.Name, err)
+			}
+			warmup = execution.WarmupSteps(resolved.Steps)
+		}
 		stageFitness := StageFitness{
 			Name: stage.Name, RequestedTokens: resolved.RequestedTokens, PlannedTokens: stage.PlannedTokens,
 			GlobalTokensPerOptimizerStep: resolved.BatchSize * resolved.SequenceLength, OptimizerSteps: resolved.Steps,
-			WarmupPercent:           percent(uint64(resolved.Schedule.WarmupSteps), uint64(resolved.Steps)),
+			WarmupPercent:           percent(uint64(warmup), uint64(resolved.Steps)),
 			WarmdownPercent:         percent(uint64(resolved.Schedule.WarmdownSteps), uint64(resolved.Steps)),
 			CorpusMeasurementStatus: "requires-corpus-preflight",
 			CorpusMeasurementReason: "unique tokenizer tokens, corpus passes, records, EOS boundaries, and record-length distributions are not present in a portable compose",
@@ -198,11 +225,23 @@ func analyzeFitness(plan Plan, plannedTokens int64, conventionalFLOPs float64) (
 		}
 		if stage.PlannedTokens > 0 {
 			stageFitness.TokensPerTotalParameter = float64(stage.PlannedTokens) / float64(a.TotalParameters)
-			stageFitness.TokensPerNonEmbeddingParameter = float64(stage.PlannedTokens) / float64(a.NonEmbeddingParameters)
-			architectureAwareTotal += architectureTrainingFLOPsPerToken(plan.Architecture, uint64(resolved.SequenceLength)) * float64(stage.PlannedTokens)
+			if a.NonEmbeddingParameters > 0 {
+				stageFitness.TokensPerNonEmbeddingParameter = float64(stage.PlannedTokens) / float64(a.NonEmbeddingParameters)
+			}
+			perToken, available, err := trainingFLOPsPerToken(plan.Architecture, uint64(resolved.SequenceLength))
+			if err != nil {
+				return FitnessAnalysis{}, err
+			}
+			architectureAware = architectureAware && available
+			architectureAwareTotal += perToken * float64(stage.PlannedTokens)
 		}
 		globalMicro := resolved.BatchSize / resolved.GradientAccumulation
-		for _, world := range []int64{1, 2, 4, 8} {
+		worlds := []int64{1, 2, 4, 8}
+		if provider {
+			worlds = worlds[:1]
+			stageFitness.TopologyNote = "the Transformers engine executes one process on CPU or one visible GPU; multi-rank topologies are not executable for this provider"
+		}
+		for _, world := range worlds {
 			if globalMicro%world != 0 {
 				continue
 			}
@@ -211,7 +250,7 @@ func analyzeFitness(plan Plan, plannedTokens int64, conventionalFLOPs float64) (
 				RankLocalMicroBatchSequences: globalMicro / world, PreservesGlobalBatch: true, PreservesSampleOrder: true,
 			})
 		}
-		if resolved.Schedule.WarmupSteps*5 > resolved.Steps {
+		if warmup*5 > resolved.Steps {
 			warnings = append(warnings, FitnessWarning{Code: "warmup-large-fraction", Severity: "warning", Message: fmt.Sprintf("stage %s warmup consumes %.1f%% of optimizer steps", stage.Name, stageFitness.WarmupPercent), Threshold: "warn above 20%"})
 		}
 		if resolved.BatchSize*resolved.SequenceLength*10 > resolved.PlannedTokenCapacity {
@@ -222,9 +261,34 @@ func analyzeFitness(plan Plan, plannedTokens int64, conventionalFLOPs float64) (
 	if context.EffectiveContextBytes != nil && *context.EffectiveContextBytes <= 256 {
 		warnings = append(warnings, FitnessWarning{Code: "short-byte-context", Severity: "warning", Message: fmt.Sprintf("the byte tokenizer provides only %.0f UTF-8 bytes of context; a prompt plus 150 generated bytes cannot retain more than %.0f prompt bytes", *context.EffectiveContextBytes, math.Max(0, *context.EffectiveContextBytes-150)), Evidence: "one byte token represents exactly one UTF-8 byte"})
 	}
-	awarePerToken := architectureTrainingFLOPsPerToken(plan.Architecture, plan.Architecture.ContextTokens)
+	awarePerToken, available, err := trainingFLOPsPerToken(plan.Architecture, plan.Architecture.ContextTokens)
+	if err != nil {
+		return FitnessAnalysis{}, err
+	}
+	architectureAware = architectureAware && available
 	if plannedTokens > 0 {
 		awarePerToken = architectureAwareTotal / float64(plannedTokens)
+	}
+	compute := ComputeFitness{
+		ConventionalTrainingFLOPs: conventionalFLOPs, ConventionalFormula: "approximately 6 * total_parameters * planned_tokens; total counts resident parameters",
+		ActiveFormula:                  "approximately 6 * active_parameters_per_token * planned_tokens",
+		ArchitectureAwareStatus:        FitnessEstimated,
+		ArchitectureAwareFLOPsPerToken: awarePerToken, ArchitectureAwareTrainingFLOPs: architectureAwareTotal,
+		ArchitectureAwareFormula: "3 * forward FLOPs: GQA Q/K/V/O projections + SwiGLU gate/up/down + causal attention score/value work + vocabulary projection; embedding lookup excluded",
+		ApproximationNote:        "FLOP counts assume multiply-add is two FLOPs, backward is approximately twice forward, full declared sequence length, and omit elementwise operations, normalization, RoPE, optimizer updates, recomputation, padding, and hardware effects",
+	}
+	if a.ActiveParametersPerToken != nil {
+		active := 6 * float64(*a.ActiveParametersPerToken) * float64(plannedTokens)
+		compute.ActiveTrainingFLOPs = &active
+	}
+	if provider {
+		compute.ArchitectureAwareFormula = "3 * forward FLOPs: provider Q/K/V/O projections at the configured head dimension + gated MLP of the experts each token executes + router + causal attention score/value work + vocabulary projection; embedding lookup excluded"
+		compute.ApproximationNote += "; provider estimates also omit sliding-window and softcapping effects, biases, and QK normalization"
+		if !architectureAware {
+			compute.ArchitectureAwareStatus = FitnessUnavailable
+			compute.ArchitectureAwareFLOPsPerToken, compute.ArchitectureAwareTrainingFLOPs = 0, 0
+			compute.ArchitectureAwareFormula = "unavailable: WALDO does not model this provider architecture's layer structure"
+		}
 	}
 	parameterBytes := plan.Forecast.ParameterBytes
 	gradientBytes := plan.Forecast.ApproximateParameters * 4
@@ -240,18 +304,13 @@ func analyzeFitness(plan Plan, plannedTokens int64, conventionalFLOPs float64) (
 	}
 	return FitnessAnalysis{
 		Schema: fitnessSchema, Architecture: a, Context: context, Stages: stages,
-		Compute: ComputeFitness{
-			ConventionalTrainingFLOPs: conventionalFLOPs, ConventionalFormula: "approximately 6 * total_parameters * planned_tokens",
-			ArchitectureAwareFLOPsPerToken: awarePerToken, ArchitectureAwareTrainingFLOPs: architectureAwareTotal,
-			ArchitectureAwareFormula: "3 * forward FLOPs: GQA Q/K/V/O projections + SwiGLU gate/up/down + causal attention score/value work + vocabulary projection; embedding lookup excluded",
-			ApproximationNote:        "FLOP counts assume multiply-add is two FLOPs, backward is approximately twice forward, full declared sequence length, and omit elementwise operations, normalization, RoPE, optimizer updates, recomputation, padding, and hardware effects",
-		},
+		Compute: compute,
 		Memory: MemoryFitness{
 			ParameterBytes: parameterBytes, GradientBytes: gradientBytes, OptimizerStateBytes: optimizerBytes, MasterWeightBytes: masterBytes,
 			CheckpointBytes:          parameterBytes + optimizerBytes + masterBytes,
 			ActivationAndLogitsBytes: activationBytes,
 			ActivationStatus:         "reported per hardware configuration as part of required_per_gpu_bytes",
-			ApproximationNote:        "Adam moments use FP32; gradients use parameter precision; lower-precision training retains FP32 master weights; checkpoint estimate excludes framework and RNG metadata",
+			ApproximationNote:        memoryNote(a),
 		},
 		Warnings: warnings,
 		Prediction: LossPredictionReadiness{
@@ -282,28 +341,57 @@ func architectureFitness(architecture Architecture, total uint64) (ArchitectureF
 		return ArchitectureFitness{}, fmt.Errorf("architecture decomposition %d does not match WALDO forecast %d", calculated, total)
 	}
 	return ArchitectureFitness{
+		ParameterCountStatus: FitnessExact, DecompositionStatus: FitnessExact, ActiveParameterStatus: FitnessExact,
+		Basis:          "WALDO constructs these modules; the decomposition must equal the architecture forecast exactly",
 		VocabularySize: architecture.VocabularySize, TiedEmbeddings: architecture.TieEmbeddings,
 		TokenEmbeddingParameters: embedding, OutputProjectionParameters: output, TokenIOParameters: tokenIO,
 		PositionalEmbeddingParameters: 0, QueryParametersPerLayer: q, KeyParametersPerLayer: k, ValueParametersPerLayer: v,
 		AttentionOutputParametersPerLayer: o, AttentionParameters: attention,
 		MLPGateParametersPerLayer: gate, MLPUpParametersPerLayer: up, MLPDownParametersPerLayer: down, MLPParameters: mlp,
 		NormalizationParameters: norms, BiasParameters: 0, OtherParameters: norms,
-		TotalParameters: total, NonEmbeddingParameters: total - tokenIO,
+		TotalParameters: total, NonEmbeddingParameters: total - tokenIO, ActiveParametersPerToken: &total,
 		TokenIOPercent: percent(tokenIO, total), AttentionPercent: percent(attention, total), MLPPercent: percent(mlp, total),
 		EmbeddingPercent: percent(tokenIO, total), OtherPercent: percent(norms, total),
-		GQAQueryHeads: architecture.AttentionHeads, GQAKeyValueHeads: architecture.KeyValueHeads, GQAKVWidth: kvWidth,
+		GQAQueryHeads: architecture.AttentionHeads, GQAKeyValueHeads: architecture.KeyValueHeads, GQAKVWidth: kvWidth, HeadDimension: headWidth,
 		Formula: "token embedding + optional untied output + layers * (Q + K + V + O + SwiGLU gate + up + down) + two RMSNorm vectors per layer + final RMSNorm; RoPE, QK normalization, and all projections are parameter-free/bias-free where applicable",
 	}, nil
 }
 
-// AnalyzeArchitecture exposes the exact structural decomposition used by the
+// AnalyzeArchitecture exposes the structural decomposition used by the
 // compose forecast to text renderers and other read-only clients.
 func AnalyzeArchitecture(architecture Architecture) (ArchitectureFitness, error) {
 	forecast, err := architecture.Forecast()
 	if err != nil {
 		return ArchitectureFitness{}, err
 	}
-	return architectureFitness(architecture, forecast.ApproximateParameters)
+	return decomposeArchitecture(architecture, forecast.ApproximateParameters)
+}
+
+// decomposeArchitecture keeps the native exact-decomposition invariant and
+// routes provider-constructed architectures to their labelled estimates.
+func decomposeArchitecture(architecture Architecture, total uint64) (ArchitectureFitness, error) {
+	if architecture.Transformers != nil {
+		return transformersArchitectureFitness(architecture, total)
+	}
+	return architectureFitness(architecture, total)
+}
+
+func trainingFLOPsPerToken(architecture Architecture, sequenceLength uint64) (float64, bool, error) {
+	if architecture.Transformers != nil {
+		return transformersTrainingFLOPsPerToken(architecture, sequenceLength)
+	}
+	return architectureTrainingFLOPsPerToken(architecture, sequenceLength), true, nil
+}
+
+func memoryNote(a ArchitectureFitness) string {
+	note := "Adam moments use FP32; gradients use parameter precision; lower-precision training retains FP32 master weights; checkpoint estimate excludes framework and RNG metadata"
+	if a.ExpertsPerLayer > 1 {
+		note += "; state is sized from resident parameters including every expert, not active parameters"
+	}
+	if a.ParameterCountStatus != FitnessExact {
+		note += fmt.Sprintf("; sized from the %s parameter count described by architecture.basis", a.ParameterCountStatus)
+	}
+	return note
 }
 
 func architectureTrainingFLOPsPerToken(a Architecture, sequenceLength uint64) float64 {
