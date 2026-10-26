@@ -457,16 +457,21 @@ failed qualification run.
 
 ## Next authorized work
 
-Rung 0005 is passed and frozen. Rung 0006 has passed its controlled 5- and
-10-core-TPP advancement phases but has not met its final three-sentence gate.
-The next authorized experiment is the controlled 20-core-TPP phase. It must
-retain the exact 10-TPP tokenizer, corpus views, mixture weights, architecture,
-context, optimizer, schedule type, seed, held-out selection, and native
-evaluation suite; only token exposure changes. Effective source passes must be
-reported, but they are evidence rather than an arbitrary failure ceiling. Stop
-if held-out BPB regresses, the selected checkpoint falls outside the final 20%,
-or native generation materially regresses. Only the final passing recipe enters
-the promoted rung directory.
+Rungs 0001 through 0007 are passed and frozen. The first rung-0008 capacity
+pilot increased the frozen general-base architecture from 314.6M to 969.0M
+core parameters while retaining the same 1.573B-token exposure and all other
+training controls. It was rejected: selected BPB was 0.8487 versus the
+predeclared rung-0006 baseline of 0.8442. The frozen behavioral suite passed,
+but behavioral non-regression cannot replace the failed distribution-fit gate.
+The complete decision is recorded in
+[`docs/RUNG-0008-CAPACITY-PILOT.md`](../docs/RUNG-0008-CAPACITY-PILOT.md).
+
+The next authorized experiment is a small matched learning-rate calibration
+for the same 1B architecture, comparing the inherited `6e-4` rate with the
+documented TinyLlama `4e-4` rate while freezing data order, seed, batch,
+schedule, tokenizer, and evaluator. Only a winning calibration may receive a
+new matched-token qualification run. The rejected pilot does not authorize a
+5-TPP extension or a numbered rung directory.
 
 ## Rung directory contract
 
