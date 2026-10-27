@@ -9,6 +9,16 @@ batch, optimizer, and evaluator are frozen from the successful `4e-4`
 matched-token qualification. Only the cosine training horizon increases from
 1.62 to 5 core TPP.
 
+`tokenizer.json` is the exact qualified tokenizer artifact, revision
+`sha256:a1ce9b055192b69c22b6be077ecd10aaf230ca94d5ce2bf244d10a871fecdab4`.
+The compose embeds that artifact instead of retraining a nominally equivalent
+tokenizer, so tokenizer identity is a genuinely frozen control.
+
+The global batch remains eight sequences. On the four training GPUs it uses
+two accumulation micro-steps, with one sequence per rank per micro-step. This
+preserves the qualified 16,384 tokens per optimizer update while satisfying
+four-way data-parallel partitioning.
+
 The 295,716-step plan evaluates every 24,643 steps and checkpoints every
 49,286 steps. Step 147,858 is therefore both an evaluation and a resumable
 checkpoint at exactly 2.5 core TPP. This sparse cadence bounds checkpoint
@@ -55,3 +65,6 @@ go run ./cmd/waldo/ model train general-base-1b-5tpp-01 \
 ```
 
 Use the frozen rung-0006 generation suite for midpoint and final evaluation.
+
+The experiment directory also contains `tokenizer.json`, the content-pinned
+trained tokenizer required by `compose.yaml`.

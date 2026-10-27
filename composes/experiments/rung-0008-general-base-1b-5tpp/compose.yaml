@@ -17,19 +17,9 @@ architecture:
   tie_embeddings: true
   parameter_dtype: float32
   tokenizer:
-    training:
-      algorithm: byte-bpe-v1
-      sample_bytes: 268435456
-      seed: 42
-      max_token_inflation: 0.35
-      distribution_policy: distributable
-      filter:
-        main_content: true
-        exclude:
-          repetitive_content: true
-          boilerplate_content: true
-      corpora:
-        - core/common-pile/pressbooks
+    # Exact tokenizer from the successful 4e-4 qualification. Repeating its
+    # training recipe is not sufficient to freeze this controlled variable.
+    artifact_path: tokenizer.json
 stages:
   - name: general-base-1b-5tpp
     type: pre-training
@@ -59,7 +49,9 @@ stages:
       parallelism: auto
       tokens: 4845000000
       batch_size: 8
-      gradient_accumulation_steps: 4
+      # Four-way data parallelism: two micro-steps x four ranks preserves the
+      # frozen global batch of eight sequences and 16,384 tokens/update.
+      gradient_accumulation_steps: 2
       compute_precision: bfloat16
       activation_checkpointing: false
       compile: false
