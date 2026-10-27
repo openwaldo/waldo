@@ -151,3 +151,21 @@ func HasPendingCompose(root, name string) (bool, error) {
 	transaction, err := pendingComposeTransaction(root, name)
 	return transaction != nil, err
 }
+
+// PendingCompose returns the exact resolved compose retained by an unfinished
+// durable transaction. It is the canonical resume input; the human-readable
+// YAML archive may intentionally omit internal resolution evidence such as a
+// trained tokenizer's corpus BOM.
+func PendingCompose(root, name string) (Compose, bool, error) {
+	if err := ValidateName(name); err != nil {
+		return Compose{}, false, err
+	}
+	transaction, err := pendingComposeTransaction(root, name)
+	if err != nil {
+		return Compose{}, false, err
+	}
+	if transaction == nil {
+		return Compose{}, false, nil
+	}
+	return transaction.Compose, true, nil
+}

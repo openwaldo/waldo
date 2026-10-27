@@ -1854,6 +1854,10 @@ func TestPendingComposeMatchesOriginalRequestBeforeCompletedCorporaAreSkipped(t 
 	if err := builder.CheckComposeTarget("conversation", requested); err != nil {
 		t.Fatalf("original compose request did not match its filtered pending transaction: %v", err)
 	}
+	retained, found, err := PendingCompose(root, "conversation")
+	if err != nil || !found || !reflect.DeepEqual(retained, filtered) {
+		t.Fatalf("retained pending compose = %+v, found = %v, err = %v", retained.Stages, found, err)
+	}
 	normalized, normalizedSkipped, err := NormalizePendingComposeRequest(root, "conversation", requested)
 	if err != nil {
 		t.Fatal(err)

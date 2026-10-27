@@ -1616,6 +1616,30 @@ func runModelContinue(context Context, args []string, stdout, stderr io.Writer) 
 	if err != nil {
 		return fmt.Errorf("locate last compose for model %q: %w", name, err)
 	}
+	if pending {
+		compose, found, err := model.PendingCompose(root, name)
+		if err != nil {
+			return fmt.Errorf("load retained compose for model %q: %w", name, err)
+		}
+		if !found {
+			return fmt.Errorf("model %q pending compose disappeared while preparing continuation", name)
+		}
+		file, err := os.CreateTemp("", "waldo-pending-compose-*.json")
+		if err != nil {
+			return fmt.Errorf("create retained compose input: %w", err)
+		}
+		composePath = file.Name()
+		defer os.Remove(composePath)
+		encoder := json.NewEncoder(file)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(compose); err != nil {
+			_ = file.Close()
+			return fmt.Errorf("write retained compose input: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("close retained compose input: %w", err)
+		}
+	}
 	fmt.Fprintf(stderr, "continue               resuming %s from %s\n", name, composePath)
 	return runModelComposeTraining(context, name, composePath, training.Cluster{}, stdout, stderr)
 }
