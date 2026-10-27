@@ -1,0 +1,83 @@
+# Unnumbered rung-0008 qualification experiment. Promotion requires every
+# gate documented in README.md; this is not yet a validated ladder rung.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 2048
+  vocabulary_size: 32000
+  hidden_size: 2048
+  intermediate_size: 5632
+  layers: 22
+  attention_heads: 32
+  key_value_heads: 4
+  dropout: 0.0
+  qk_normalization: false
+  initialization: depth-scaled
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    training:
+      algorithm: byte-bpe-v1
+      sample_bytes: 268435456
+      seed: 42
+      max_token_inflation: 0.35
+      distribution_policy: distributable
+      filter:
+        main_content: true
+        exclude:
+          repetitive_content: true
+          boilerplate_content: true
+      corpora:
+        - core/common-pile/pressbooks
+stages:
+  - name: general-base-1b-5tpp
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: core/common-pile/wikimedia
+        weight: 9
+      - path: core/synthetic/cosmopedia-v2
+        weight: 6
+        filter:
+          metadata:
+            audience:
+              include: [young_children]
+            format:
+              include: [textbook_narrative]
+      - path: core/common-pile/stackexchange
+        weight: 3
+      - path: core/synthetic/tinystories-gpt4-v2
+        weight: 2
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      tokens: 4845000000
+      batch_size: 8
+      gradient_accumulation_steps: 4
+      compute_precision: bfloat16
+      activation_checkpointing: false
+      compile: false
+      sequence_length: 2048
+      learning_rate: 0.0004
+      optimizer: adamw
+      schedule: cosine
+      seed: 42
+      weight_decay: 0.1
+      warmup_steps: 1000
+      # Six evenly spaced resumable checkpoints. Step 147,858 is exactly the
+      # 2.5-TPP stop/go checkpoint and step 295,716 is the 5-TPP horizon.
+      checkpoint_every: 49286
+      # Twelve evenly spaced evaluations, including the 2.5-TPP midpoint.
+      evaluate_every: 24643
+      shuffle_buffer_records: 65536
+      shuffle_buffer_bytes: 2147483648
+      evaluation_selection: stratified-lowest-sha256-v1
+      evaluation_fraction: 0.01
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432

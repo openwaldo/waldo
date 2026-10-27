@@ -466,12 +466,20 @@ but behavioral non-regression cannot replace the failed distribution-fit gate.
 The complete decision is recorded in
 [`docs/RUNG-0008-CAPACITY-PILOT.md`](../docs/RUNG-0008-CAPACITY-PILOT.md).
 
-The next authorized experiment is a small matched learning-rate calibration
-for the same 1B architecture, comparing the inherited `6e-4` rate with the
-documented TinyLlama `4e-4` rate while freezing data order, seed, batch,
-schedule, tokenizer, and evaluator. Only a winning calibration may receive a
-new matched-token qualification run. The rejected pilot does not authorize a
-5-TPP extension or a numbered rung directory.
+The matched learning-rate calibration selected `4e-4`, and its full
+1.573B-token qualification selected BPB `0.8125`, reloaded exactly, completed
+20/20 sampled responses, and stayed within the frozen repetition limits. Its
+longer educational continuations were not yet reliable enough for final rung
+promotion at only 1.62 core TPP.
+
+The authorized next experiment is therefore the unnumbered
+[`5-TPP qualification`](experiments/rung-0008-general-base-1b-5tpp/). It keeps
+the qualified architecture, `4e-4` learning rate, data, tokenizer, seed,
+batch, and evaluator fixed while increasing only the cosine exposure horizon.
+It has a stop/go behavioral gate at 2.5 core TPP and the final rung gate at 5
+core TPP. Passing 5 TPP authorizes 10 TPP; each later exposure phase must pass
+before the next one is run. No numbered rung-0008 directory is created until
+a candidate passes every promotion gate.
 
 ## Rung directory contract
 
