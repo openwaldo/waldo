@@ -231,7 +231,12 @@ func verifyCheckpointState(path string, inspection model.Inspection, runBOM mode
 	if err := json.Unmarshal(data, &state); err != nil {
 		return fmt.Errorf("decode checkpoint state: %w", err)
 	}
-	if state.Kind != "waldo-training-checkpoint" || state.Schema != 1 || state.Backend != backend.Name || state.BackendRevision != backend.Revision || state.ModelID != inspection.Model.ID || state.ModelID != runBOM.ModelID || state.RunID != runBOM.ID || state.ArchitectureSHA256 != inspection.Model.ArchitectureSHA256 || state.ArchitectureSHA256 != runBOM.ArchitectureSHA256 || state.Step != checkpoint.Step || state.ConsumedTokens != checkpoint.Tokens {
+	if state.Kind != "waldo-training-checkpoint" || state.Schema != 1 || state.Backend != backend.Name || state.BackendRevision != backend.Revision || state.RunID != runBOM.ID || state.ArchitectureSHA256 != inspection.Model.ArchitectureSHA256 || state.ArchitectureSHA256 != runBOM.ArchitectureSHA256 || state.Step != checkpoint.Step || state.ConsumedTokens != checkpoint.Tokens {
+		return fmt.Errorf("checkpoint state does not match the model, run, step, architecture, backend revision, and token position")
+	}
+	// Historical schema-1 checkpoints predate model_id. Their verified Run BOM
+	// provides the immutable model binding. Once present, model_id must match it.
+	if state.ModelID != "" && (state.ModelID != inspection.Model.ID || state.ModelID != runBOM.ModelID) {
 		return fmt.Errorf("checkpoint state does not match the model, run, step, architecture, backend revision, and token position")
 	}
 	return nil

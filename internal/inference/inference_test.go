@@ -132,6 +132,17 @@ func TestResolveCheckpointArtifactsRequiresExactVerifiedInterruptedCheckpoint(t 
 			t.Fatalf("checkpoint selection changed lifecycle: %+v", inspection)
 		}
 	})
+	t.Run("legacy state without model id", func(t *testing.T) {
+		inspection, _ := checkpointInspectionFixture(t, checkpointFixtureOptions{omitStateModelID: true})
+		resolved, err := resolveCheckpointArtifacts(inspection, "run1", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resolved.cleanup()
+		if resolved.Model != "example" || resolved.RunID != "run1" || resolved.CheckpointStep != 10 {
+			t.Fatalf("resolved legacy checkpoint = %+v", resolved)
+		}
+	})
 
 	for _, test := range []struct {
 		name    string
@@ -178,6 +189,7 @@ func TestResolveCheckpointArtifactsRejectsTamperedArtifact(t *testing.T) {
 
 type checkpointFixtureOptions struct {
 	simulated               bool
+	omitStateModelID        bool
 	stateRunID              string
 	stateModelID            string
 	stateArchitectureSHA256 string
@@ -237,12 +249,16 @@ func checkpointInspectionFixture(t *testing.T, options checkpointFixtureOptions)
 	if stateStep == 0 {
 		stateStep = 10
 	}
-	state, err := json.Marshal(map[string]any{
+	stateValues := map[string]any{
 		"kind": "waldo-training-checkpoint", "schema": 1,
 		"backend": backend.Name, "backend_revision": stateBackendRevision,
-		"model_id": stateModelID, "run_id": stateRunID, "architecture_sha256": stateArchitecture,
+		"run_id": stateRunID, "architecture_sha256": stateArchitecture,
 		"step": stateStep, "consumed_tokens": int64(160),
-	})
+	}
+	if !options.omitStateModelID {
+		stateValues["model_id"] = stateModelID
+	}
+	state, err := json.Marshal(stateValues)
 	if err != nil {
 		t.Fatal(err)
 	}

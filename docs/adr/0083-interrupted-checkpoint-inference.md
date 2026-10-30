@@ -15,9 +15,11 @@ used by local inference.
 
 Checkpoint inference requires both an exact run ID and checkpoint step. WALDO
 accepts only interrupted, non-simulated runs; verifies every recorded artifact
-size and SHA-256; binds checkpoint state to the model ID, run ID, step, token
-position, architecture, backend, and worker revision; and verifies the weight
-tensors against the immutable architecture. It never selects a latest
+size and SHA-256; binds checkpoint state to the run ID, step, token position,
+architecture, backend, and worker revision; and verifies the weight tensors
+against the immutable architecture. A schema-1 state that records `model_id`
+must match it exactly. Historical schema-1 states without that field use the
+already hash-verified Run BOM's model binding. WALDO never selects a latest
 checkpoint implicitly.
 
 Inference configuration and tokenizer sidecars are materialized temporarily
@@ -31,6 +33,6 @@ change.
 
 - Ordinary chat remains limited to complete real runs.
 - Interrupted checkpoints can be evaluated without changing lifecycle state.
-- Checkpoints created before the model-ID state binding are not eligible for
-  this inference path.
+- Historical schema-1 checkpoints without `model_id` remain eligible only
+  through their verified Run BOM/model binding; a present mismatch fails.
 - JSON inference output identifies the interrupted run and exact checkpoint.

@@ -295,11 +295,14 @@ real run instead of the model's current run. This supports stage-by-stage
 regression diagnosis without changing model state. Pairing `--run-id` with an
 exact `--checkpoint-step` instead selects a durable checkpoint from an
 interrupted real run. WALDO verifies every checkpoint artifact's recorded size
-and SHA-256, binds `state.json` to the model, run, architecture, backend
-revision, step, and token position, and validates the weights and tokenizer
-against the immutable architecture before inference. It never guesses the
-latest checkpoint, marks the run complete, or changes `current_run_id`. JSON
-output identifies the run, checkpoint step, and interrupted-checkpoint source.
+and SHA-256, binds `state.json` to the run, architecture, backend revision,
+step, and token position, and validates the weights and tokenizer against the
+immutable architecture before inference. New state records also bind the model
+ID directly; historical schema-1 states without `model_id` inherit that binding
+from their hash-verified Run BOM. A recorded model ID must match exactly. WALDO
+never guesses the latest checkpoint, marks the run complete, or changes
+`current_run_id`. JSON output identifies the run, checkpoint step, and
+interrupted-checkpoint source.
 `--raw` bypasses the model
 interaction template and performs causal continuation, which is useful when
 testing a pretraining artifact before conversation tuning.
