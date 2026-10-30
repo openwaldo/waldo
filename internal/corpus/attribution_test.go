@@ -28,3 +28,17 @@ func TestAttributionNoticeIsDeterministicAndRequiresDistributableEvidence(t *tes
 		t.Fatal("non-distributable attribution input accepted")
 	}
 }
+
+func TestAttributionNoticeToleratesUnselectedManifestsWithoutEvidence(t *testing.T) {
+	trained := ManifestPin{Path: "core/example", SHA256: strings.Repeat("a", 64), Title: "Example", License: "CC-BY-4.0",
+		Licenses: map[string]index.Measures{"CC-BY-4.0": {}},
+		Sources:  []index.Source{{Name: "Upstream", URL: "https://example.test/data", Version: "v1", LicenseEvidence: &index.LicenseEvidence{Declaration: "CC-BY-4.0"}}}}
+	// A public-domain manifest isn't on the distributable list, so none of its records train and it needs no evidence.
+	unselected := ManifestPin{Path: "core/peps", SHA256: strings.Repeat("b", 64), Title: "PEPs", License: "LicenseRef-Public-Domain",
+		Licenses: map[string]index.Measures{"LicenseRef-Public-Domain": {}},
+		Sources:  []index.Source{{Name: "peps", URL: "https://example.test/peps", Version: "v1"}}}
+	notice, err := AttributionNotice([]BOM{{Manifests: []ManifestPin{trained, unselected}}})
+	if err != nil || !strings.Contains(string(notice), "https://example.test/peps") {
+		t.Fatalf("notice = %s, %v", notice, err)
+	}
+}

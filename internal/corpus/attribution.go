@@ -72,11 +72,14 @@ func AttributionNotice(boms []BOM) ([]byte, error) {
 			if source.SHA256 != "" {
 				fmt.Fprintf(&output, "  - Source SHA-256: `%s`\n", source.SHA256)
 			}
-			if source.LicenseEvidence.Declaration != "" {
-				fmt.Fprintf(&output, "  - Upstream license declaration: %s\n", source.LicenseEvidence.Declaration)
-			}
-			if source.LicenseEvidence.URL != "" {
-				fmt.Fprintf(&output, "  - License evidence: %s\n", source.LicenseEvidence.URL)
+			// A manifest none of whose licenses is distributable can lack evidence; its records weren't trained on.
+			if evidence := source.LicenseEvidence; evidence != nil {
+				if evidence.Declaration != "" {
+					fmt.Fprintf(&output, "  - Upstream license declaration: %s\n", evidence.Declaration)
+				}
+				if evidence.URL != "" {
+					fmt.Fprintf(&output, "  - License evidence: %s\n", evidence.URL)
+				}
 			}
 		}
 	}
