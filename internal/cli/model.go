@@ -1135,7 +1135,7 @@ func secondaryStreamRequest(plan model.MultiNodePlan, scratch string) (training.
 		return training.Request{}, err
 	}
 	return training.Request{
-		ModelID: plan.ModelID, RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
+		ModelID: plan.ModelID, RunBOMSHA256: plan.RunBOMSHA256, RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
 		Conversation: plan.Conversation, ArchitectureSHA256: plan.ArchitectureSHA256,
 		Architecture: plan.Architecture, Parameters: plan.Parameters,
 		Parallelism:   plan.Parallelism,
@@ -1262,7 +1262,7 @@ func secondaryNodeLocalRequest(commandContext Context, plan model.MultiNodePlan,
 		return training.Request{}, err
 	}
 	return training.Request{
-		ModelID: plan.ModelID, RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
+		ModelID: plan.ModelID, RunBOMSHA256: plan.RunBOMSHA256, RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
 		Conversation:       plan.Conversation,
 		ArchitectureSHA256: plan.ArchitectureSHA256, Architecture: plan.Architecture,
 		Parameters: plan.Parameters, BOM: plan.CorpusBOM, Inputs: inputs, Records: records, EvaluationRecords: partition.EvaluationRecords(),

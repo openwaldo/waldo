@@ -41,7 +41,7 @@ func TestPublishMultiNodePlanRoundTrips(t *testing.T) {
 		},
 	}
 	prepared := PreparedStage{BOM: corpus.BOM{Kind: "openwaldo-bom"}}
-	pin := RunPin{ID: "run0001", Stage: "train-0001"}
+	pin := RunPin{ID: "run0001", Stage: "train-0001", BOMSHA256: strings.Repeat("e", 64)}
 	stage := Stage{Name: "train-0001", Type: "pre-training", Objective: "causal-language-modeling"}
 	architecture := json.RawMessage(`{"family":"decoder-transformer"}`)
 
@@ -56,7 +56,7 @@ func TestPublishMultiNodePlanRoundTrips(t *testing.T) {
 	if err := json.Unmarshal(data, &plan); err != nil {
 		t.Fatalf("decode plan: %v", err)
 	}
-	if plan.Kind != MultiNodePlanKind || plan.Schema != MultiNodePlanSchema || plan.RunID != "run0001" || plan.Stage != "train-0001" || plan.Objective != "causal-language-modeling" {
+	if plan.Kind != MultiNodePlanKind || plan.Schema != MultiNodePlanSchema || plan.RunBOMSHA256 != pin.BOMSHA256 || plan.RunID != "run0001" || plan.Stage != "train-0001" || plan.Objective != "causal-language-modeling" {
 		t.Fatalf("plan identity = %+v", plan)
 	}
 	var got, want bytes.Buffer

@@ -174,7 +174,7 @@ func (inspection Inspection) EffectiveInteraction() Interaction {
 	return interaction
 }
 
-const MultiNodePlanSchema = 2
+const MultiNodePlanSchema = 3
 
 const MultiNodePlanKind = "openwaldo-multinode-plan"
 
@@ -182,6 +182,7 @@ type MultiNodePlan struct {
 	Kind               string                         `json:"kind"`
 	Schema             int                            `json:"schema"`
 	ModelID            string                         `json:"model_id"`
+	RunBOMSHA256       string                         `json:"run_bom_sha256"`
 	RunID              string                         `json:"run_id"`
 	Stage              string                         `json:"stage"`
 	StageOrdinal       int                            `json:"stage_ordinal"`

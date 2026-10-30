@@ -21,6 +21,45 @@ import (
 	"time"
 )
 
+func TestPreparedCacheBuildsInParallelWithFreshTraining(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 2, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := make(chan Event, 4)
+	request := Request{
+		RunBOMSHA256: strings.Repeat("a", 64), Parameters: parameters,
+		Parallelism:            Parallelism{WorldSize: 2, GPUsPerNode: 1, DataPlane: DataPlaneNodeLocal},
+		Records:                sliceRecordSource{{ID: "one", Tokens: []int{10, 11, 12, 13}, LossMask: []bool{true, true, true, true, true}, Corpus: "corpus"}},
+		PreparedCacheDirectory: t.TempDir(), PreparedCacheMaxBytes: 1 << 20,
+		Report: func(event Event) { events <- event },
+	}
+	begin := workerBeginFromRequest(request)
+	foreground, stop, err := startPreparedCacheBuilder(context.Background(), request, begin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	if foreground.PreparedCacheDirectory != "" || begin.PreparedCacheDirectory == "" {
+		t.Fatalf("foreground cache=%q, background cache=%q", foreground.PreparedCacheDirectory, begin.PreparedCacheDirectory)
+	}
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event := <-events:
+			if strings.Contains(event.Message, "persisted and indexed") {
+				ready, err := preparedCacheReady(begin)
+				if err != nil || !ready {
+					t.Fatalf("prepared cache ready=%t err=%v", ready, err)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("parallel prepared cache did not complete")
+		}
+	}
+}
+
 func TestWorkerCancellationRemainsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()

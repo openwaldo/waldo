@@ -311,9 +311,15 @@ newest verified checkpoint. Before launching GPUs, rank 0 verifies the
 checkpoint and stages its model, optimizer, RNG, and consumption state at the
 same path on every host. The resumed workers validate the saved world size and
 parallelism before restoring it. Each node's deterministic prepared-data stream
-starts at the checkpoint boundary, so committed optimizer steps are not read or
-trained again. WALDO removes this temporary staging copy when the launcher
-session ends; the durable checkpoint remains under `model.root`.
+is cached in a compact binary format while GPU training proceeds. The indexed
+manifest is bound to the verified Run BOM and records chunk hashes and global
+sequence ordinal ranges. Resume seeks to `checkpoint step × global batch size`,
+skips prefix chunks, and verifies the required suffix before worker handoff, so
+committed optimizer steps are neither regenerated nor trained again. WALDO
+removes the temporary checkpoint staging copy when the launcher session ends;
+the durable checkpoint remains under `model.root`. If interruption occurs
+before the parallel cache finishes, WALDO retains deterministic prefix replay
+as the safe fallback.
 
 A backend or bookkeeping failure after a complete checkpoint is treated as an
 interrupted attempt for recovery purposes. The attempt and its error remain in

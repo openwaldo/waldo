@@ -178,6 +178,15 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 		_ = command.Wait()
 		return Observation{}, tokenizerErr
 	}
+	begin := workerBeginFromRequest(request)
+	begin, stopPreparedCache, cacheErr := startPreparedCacheBuilder(ctx, request, begin)
+	if cacheErr != nil {
+		_ = stdin.Close()
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return Observation{}, cacheErr
+	}
+	defer stopPreparedCache()
 	if request.Parallelism.DataPlane == DataPlaneNodeLocal {
 		records = prefetchRecords(records)
 	}
@@ -188,7 +197,7 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 		exited <- exitErr
 	}()
 	defer func() { go func() { _ = command.Wait() }() }()
-	writeErr := writeWorkerInputUntil(ctx, stdin, workerBeginFromRequest(request), records, evaluationRecords, stopRecords)
+	writeErr := writeWorkerInputUntil(ctx, stdin, begin, records, evaluationRecords, stopRecords)
 	closeErr := stdin.Close()
 	if errors.Is(closeErr, os.ErrClosed) {
 		closeErr = nil
@@ -258,8 +267,10 @@ func workerBeginFromRequest(request Request) WorkerBegin {
 		Parameters: request.Parameters, Parallelism: request.Parallelism,
 		EvaluationSet: request.EvaluationSet, Tokenizer: tokenizer, DataNodeRank: request.DataNodeRank,
 		PreparedCacheDirectory: request.PreparedCacheDirectory, PreparedCacheMaxBytes: request.PreparedCacheMaxBytes,
+		PreparedBOMSHA256: request.RunBOMSHA256,
 	}
 	identity, _ := json.Marshal(struct {
+		RunBOM       string                `json:"run_bom_sha256"`
 		Architecture string                `json:"architecture_sha256"`
 		Objective    string                `json:"objective"`
 		Conversation ConversationTransform `json:"conversation"`
@@ -268,7 +279,7 @@ func workerBeginFromRequest(request Request) WorkerBegin {
 		Parameters   ResolvedParameters    `json:"parameters"`
 		Parallelism  Parallelism           `json:"parallelism"`
 		Evaluation   EvaluationSet         `json:"evaluation_set"`
-	}{request.ArchitectureSHA256, request.Objective, request.Conversation, tokenizer, request.BOM, request.Parameters, request.Parallelism, request.EvaluationSet})
+	}{request.RunBOMSHA256, request.ArchitectureSHA256, request.Objective, request.Conversation, tokenizer, request.BOM, request.Parameters, request.Parallelism, request.EvaluationSet})
 	sum := sha256.Sum256(identity)
 	begin.PreparedIdentity = hex.EncodeToString(sum[:])
 	if request.Initialization != nil {
@@ -308,6 +319,69 @@ func tokenizedWorkerSources(request Request) (RecordSource, RecordSource, error)
 	return records, evaluationRecords, nil
 }
 
+func startPreparedCacheBuilder(ctx context.Context, request Request, begin WorkerBegin) (WorkerBegin, func(), error) {
+	noop := func() {}
+	if begin.Parallelism.DataPlane != DataPlaneNodeLocal || begin.PreparedCacheDirectory == "" || begin.PreparedIdentity == "" {
+		return begin, noop, nil
+	}
+	ready, err := preparedCacheReady(begin)
+	if err != nil {
+		return begin, noop, err
+	}
+	if begin.Resume != nil {
+		if request.Report != nil {
+			if ready {
+				request.Report(Event{Kind: "log", Message: fmt.Sprintf("verified compact prepared stream for checkpoint step %d; seeking directly to its indexed sequence boundary", begin.Resume.Step)})
+			} else {
+				request.Report(Event{Kind: "log", Message: fmt.Sprintf("no complete prepared stream is available for checkpoint step %d; deterministically replaying the input prefix", begin.Resume.Step)})
+			}
+		}
+		return begin, noop, nil
+	}
+	if ready {
+		return begin, noop, nil
+	}
+	records, _, err := tokenizedWorkerSources(request)
+	if err != nil {
+		return begin, noop, err
+	}
+	records = prefetchRecords(records)
+	cacheContext, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	if request.Report != nil {
+		request.Report(Event{Kind: "log", Message: "building a compact Run-BOM-bound prepared stream in parallel with GPU training for direct checkpoint resume"})
+	}
+	go func() {
+		defer close(done)
+		cacheErr := writePreparedSequences(cacheContext, nil, begin, records, nil)
+		if cacheErr == nil {
+			var cacheReady bool
+			cacheReady, cacheErr = preparedCacheReady(begin)
+			if cacheErr == nil && !cacheReady {
+				cacheErr = fmt.Errorf("prepared stream exceeds the configured %d-byte cache limit", begin.PreparedCacheMaxBytes)
+			}
+		}
+		if request.Report == nil || errors.Is(cacheErr, context.Canceled) {
+			return
+		}
+		if cacheErr != nil {
+			request.Report(Event{Kind: "log", Message: fmt.Sprintf("prepared resume cache unavailable: %v", cacheErr)})
+			return
+		}
+		request.Report(Event{Kind: "log", Message: "compact prepared stream persisted and indexed; future checkpoint resume can seek directly to its sequence boundary"})
+	}()
+	foreground := begin
+	foreground.PreparedCacheDirectory = ""
+	foreground.PreparedCacheMaxBytes = 0
+	foreground.PreparedIdentity = ""
+	foreground.PreparedBOMSHA256 = ""
+	stop := func() {
+		cancel()
+		<-done
+	}
+	return foreground, stop, nil
+}
+
 func runWorkerStreamJoin(ctx context.Context, label string, command *exec.Cmd, request Request) (Observation, error) {
 	if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
 		return Observation{}, fmt.Errorf("create %s artifact directory: %w", label, err)
@@ -340,7 +414,17 @@ func runWorkerStreamJoin(ctx context.Context, label string, command *exec.Cmd, r
 				writeResult <- tokenizeErr
 				return
 			}
-			writeErr := WriteWorkerInput(ctx, stdin, workerBeginFromRequest(request), records, evaluations)
+			begin, stopPreparedCache, cacheErr := startPreparedCacheBuilder(ctx, request, workerBeginFromRequest(request))
+			if cacheErr != nil {
+				_ = stdin.Close()
+				writeResult <- cacheErr
+				return
+			}
+			defer stopPreparedCache()
+			if request.Parallelism.DataPlane == DataPlaneNodeLocal {
+				records = prefetchRecords(records)
+			}
+			writeErr := WriteWorkerInput(ctx, stdin, begin, records, evaluations)
 			closeErr := stdin.Close()
 			if writeErr == nil && !errors.Is(closeErr, os.ErrClosed) {
 				writeErr = closeErr

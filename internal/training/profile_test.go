@@ -1536,7 +1536,7 @@ func TestPreparedSequenceCacheReplaysVerifiedChunks(t *testing.T) {
 	begin := WorkerBegin{
 		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
 		Parallelism:            Parallelism{WorldSize: 2, GPUsPerNode: 1, DataPlane: DataPlaneNodeLocal},
-		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("a", 64),
+		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("a", 64), PreparedBOMSHA256: strings.Repeat("f", 64),
 	}
 	stale := filepath.Join(begin.PreparedCacheDirectory, begin.PreparedIdentity, ".node-0-interrupted")
 	if err := os.MkdirAll(stale, 0o700); err != nil {
@@ -1559,7 +1559,7 @@ func TestPreparedSequenceCacheReplaysVerifiedChunks(t *testing.T) {
 	if first.String() != second.String() {
 		t.Fatalf("cached worker stream differs\nfirst: %s\nsecond: %s", first.String(), second.String())
 	}
-	chunks, err := filepath.Glob(filepath.Join(begin.PreparedCacheDirectory, begin.PreparedIdentity, "node-0", "chunk-*.ndjson"))
+	chunks, err := filepath.Glob(filepath.Join(begin.PreparedCacheDirectory, begin.PreparedIdentity, "node-0", "chunk-*.bin"))
 	if err != nil || len(chunks) != 1 {
 		t.Fatalf("chunks = %v, err=%v", chunks, err)
 	}
@@ -1571,7 +1571,41 @@ func TestPreparedSequenceCacheReplaysVerifiedChunks(t *testing.T) {
 	}
 }
 
+func TestPreparedSequenceCompactEncodingRoundTrips(t *testing.T) {
+	sequence := PreparedSequence{
+		Ordinal: 42, Tokens: []int{1, 200, 3, 4000, 5},
+		LossMask:    []bool{true, false, true, true},
+		Consumption: map[string]int64{"code/example": 2, "science/example": 1},
+	}
+	encoded, err := encodePreparedSequence(sequence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := json.Marshal(sequence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) >= len(legacy) {
+		t.Fatalf("compact sequence is %d bytes, legacy JSON is %d", len(encoded), len(legacy))
+	}
+	var decoded PreparedSequence
+	chunk := append([]byte(preparedChunkMagic), encoded...)
+	rows, first, last, err := decodePreparedChunk(bytes.NewReader(chunk), func(value PreparedSequence) error {
+		decoded = value
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 || first != sequence.Ordinal || last != sequence.Ordinal || !reflect.DeepEqual(decoded, sequence) {
+		t.Fatalf("compact round trip rows=%d first=%d last=%d sequence=%+v", rows, first, last, decoded)
+	}
+}
+
 func TestPreparedSequenceResumeStartsAfterCheckpointBoundary(t *testing.T) {
+	originalChunkLimit := preparedChunkLimit
+	preparedChunkLimit = 80
+	t.Cleanup(func() { preparedChunkLimit = originalChunkLimit })
 	parameters, err := ResolveParameters(Parameters{Steps: 3, BatchSize: 4, SequenceLength: 2, LearningRate: 0.001})
 	if err != nil {
 		t.Fatal(err)
@@ -1587,9 +1621,21 @@ func TestPreparedSequenceResumeStartsAfterCheckpointBoundary(t *testing.T) {
 	begin := WorkerBegin{
 		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
 		Parallelism:            Parallelism{WorldSize: 4, GPUsPerNode: 2, DataPlane: DataPlaneNodeLocal},
-		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("d", 64),
+		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("d", 64), PreparedBOMSHA256: strings.Repeat("f", 64),
 	}
 	if err := WriteWorkerInput(context.Background(), io.Discard, begin, staticRecordSource{record}, nil); err != nil {
+		t.Fatal(err)
+	}
+	chunks, err := filepath.Glob(filepath.Join(begin.PreparedCacheDirectory, begin.PreparedIdentity, "node-0", "chunk-*.bin"))
+	if err != nil || len(chunks) < 2 {
+		t.Fatalf("indexed chunks = %v, err=%v", chunks, err)
+	}
+	prefix, err := os.ReadFile(chunks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix[len(prefix)-1] ^= 0xff
+	if err := os.WriteFile(chunks[0], prefix, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	begin.Resume = &WorkerResume{Step: 2}
@@ -1620,6 +1666,26 @@ func TestPreparedSequenceResumeStartsAfterCheckpointBoundary(t *testing.T) {
 	}
 }
 
+func TestPreparedSequenceCacheBindsRunBOM(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 2, SequenceLength: 2, LearningRate: 0.001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := WorkerBegin{
+		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
+		Parallelism:            Parallelism{WorldSize: 2, GPUsPerNode: 1, DataPlane: DataPlaneNodeLocal},
+		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("e", 64), PreparedBOMSHA256: strings.Repeat("a", 64),
+	}
+	record := Record{ID: "one", Tokens: []int{10, 11, 12, 13}, LossMask: []bool{true, true, true, true, true}, Corpus: "corpus"}
+	if err := WriteWorkerInput(context.Background(), io.Discard, begin, staticRecordSource{record}, nil); err != nil {
+		t.Fatal(err)
+	}
+	begin.PreparedBOMSHA256 = strings.Repeat("b", 64)
+	if err := WriteWorkerInput(context.Background(), io.Discard, begin, refusingRecordSource{}, nil); err == nil || !strings.Contains(err.Error(), "Run BOM binding differs") {
+		t.Fatalf("mismatched Run BOM error = %v", err)
+	}
+}
+
 func TestPreparedSequenceCachePreservesPartialGlobalBatchBoundary(t *testing.T) {
 	parameters, err := ResolveParameters(Parameters{Steps: 2, BatchSize: 8, SequenceLength: 2, LearningRate: 0.001})
 	if err != nil {
@@ -1636,7 +1702,7 @@ func TestPreparedSequenceCachePreservesPartialGlobalBatchBoundary(t *testing.T) 
 	begin := WorkerBegin{
 		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
 		Parallelism:            Parallelism{WorldSize: 4, GPUsPerNode: 2, DataPlane: DataPlaneNodeLocal},
-		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("c", 64),
+		PreparedCacheDirectory: t.TempDir(), PreparedIdentity: strings.Repeat("c", 64), PreparedBOMSHA256: strings.Repeat("f", 64),
 	}
 	var first bytes.Buffer
 	if err := WriteWorkerInput(context.Background(), &first, begin, staticRecordSource{record}, nil); err != nil {
@@ -1662,7 +1728,7 @@ func TestPreparedSequenceCacheStopsAtByteLimit(t *testing.T) {
 	begin := WorkerBegin{
 		Parameters: parameters, Tokenizer: TokenizerSpec{EOSID: 2}, DataNodeRank: 0,
 		Parallelism:            Parallelism{WorldSize: 2, GPUsPerNode: 1, DataPlane: DataPlaneNodeLocal},
-		PreparedCacheDirectory: t.TempDir(), PreparedCacheMaxBytes: 1, PreparedIdentity: strings.Repeat("b", 64),
+		PreparedCacheDirectory: t.TempDir(), PreparedCacheMaxBytes: 1, PreparedIdentity: strings.Repeat("b", 64), PreparedBOMSHA256: strings.Repeat("f", 64),
 	}
 	record := Record{ID: "one", Tokens: []int{10, 11, 12, 13}, LossMask: []bool{true, true, true, true, true}, Corpus: "corpus"}
 	if err := WriteWorkerInput(context.Background(), io.Discard, begin, staticRecordSource{record}, nil); err != nil {

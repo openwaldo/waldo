@@ -159,9 +159,12 @@ optimizer state, runtime random state, and state metadata before reporting the
 checkpoint to WALDO. Repeating the exact `model train` command after Ctrl-C
 resumes the same run ID and immutable run BOM. WALDO verifies every checkpoint
 member, restores the pinned backend revision, positions the deterministic input
-stream at the saved step, and continues. Backends that cannot seek replay the
-prefix without optimization; the multi-node node-local stream skips that
-already-trained prefix before worker handoff. `RUN.json`
+stream at the saved step, and continues. For the multi-node node-local data
+plane, WALDO builds a compact, Run-BOM-bound prepared stream concurrently with
+the first GPU attempt. Its manifest indexes global ordinal ranges, allowing
+resume to skip chunks before `checkpoint step × global batch size` and verify
+only the suffix that will be consumed. Legacy or unavailable caches retain the
+deterministic prefix-replay fallback. `RUN.json`
 records each attempt. A changed corpus, epoch count, profile, backend, or
 execution environment is a new run rather than an unsafe resume.
 
