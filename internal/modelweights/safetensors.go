@@ -27,6 +27,71 @@ type sourceTensor struct {
 	dataStart  int64
 }
 
+// Inspect validates a Safetensors file and returns its tensor descriptors and
+// string metadata without materializing tensor payloads.
+func Inspect(path string) (map[string]Descriptor, map[string]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer file.Close()
+	header, dataStart, err := readHeader(file)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", path, err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+	if info.Size() < dataStart {
+		return nil, nil, fmt.Errorf("%s ends before its Safetensors payload", path)
+	}
+	dataBytes := uint64(info.Size() - dataStart)
+	tensors := make(map[string]Descriptor, len(header))
+	metadata := map[string]string{}
+	var ranges [][2]uint64
+	for name, raw := range header {
+		if name == "__metadata__" {
+			if err := json.Unmarshal(raw, &metadata); err != nil {
+				return nil, nil, fmt.Errorf("%s metadata: %w", path, err)
+			}
+			continue
+		}
+		var descriptor Descriptor
+		if err := json.Unmarshal(raw, &descriptor); err != nil {
+			return nil, nil, fmt.Errorf("%s tensor %s: %w", path, name, err)
+		}
+		if len(descriptor.DataOffsets) != 2 || descriptor.DataOffsets[1] < descriptor.DataOffsets[0] || descriptor.DataOffsets[1] > dataBytes {
+			return nil, nil, fmt.Errorf("%s tensor %s has invalid data offsets", path, name)
+		}
+		expected, err := tensorBytes(descriptor)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s tensor %s: %w", path, name, err)
+		}
+		if descriptor.DataOffsets[1]-descriptor.DataOffsets[0] != expected {
+			return nil, nil, fmt.Errorf("%s tensor %s payload is %d bytes; shape and dtype require %d", path, name, descriptor.DataOffsets[1]-descriptor.DataOffsets[0], expected)
+		}
+		ranges = append(ranges, [2]uint64{descriptor.DataOffsets[0], descriptor.DataOffsets[1]})
+		tensors[name] = descriptor
+	}
+	sort.Slice(ranges, func(i, j int) bool { return ranges[i][0] < ranges[j][0] })
+	if len(ranges) > 0 && ranges[0][0] != 0 {
+		return nil, nil, fmt.Errorf("%s Safetensors payload starts at byte %d, want 0", path, ranges[0][0])
+	}
+	for index := 1; index < len(ranges); index++ {
+		if ranges[index][0] < ranges[index-1][1] {
+			return nil, nil, fmt.Errorf("%s contains overlapping tensor payloads", path)
+		}
+		if ranges[index][0] != ranges[index-1][1] {
+			return nil, nil, fmt.Errorf("%s contains a gap between tensor payloads", path)
+		}
+	}
+	if len(ranges) > 0 && ranges[len(ranges)-1][1] != dataBytes {
+		return nil, nil, fmt.Errorf("%s contains %d unclaimed payload bytes", path, dataBytes-ranges[len(ranges)-1][1])
+	}
+	return tensors, metadata, nil
+}
+
 func NormalizeHuggingFace(sources []string, destination string) (map[string]Descriptor, error) {
 	if len(sources) == 0 {
 		return nil, fmt.Errorf("at least one Safetensors source is required")

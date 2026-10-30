@@ -14,27 +14,32 @@ import (
 
 	"github.com/openwaldo/waldo/internal/inference"
 	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 func TestParseModelChatSupportsOneShotGenerationOptions(t *testing.T) {
-	context, args, err := parseCobraCommand(t, []string{"model", "chat"}, []string{"foo", "hello world", "--max-tokens", "12", "--temperature", "0", "--top-p", "1", "--seed", "9", "--run-id", "run1", "--raw"})
+	context, args, err := parseCobraCommand(t, []string{"model", "chat"}, []string{"foo", "hello world", "--max-tokens", "12", "--temperature", "0", "--top-p", "1", "--seed", "9", "--run-id", "run1", "--checkpoint-step", "10", "--raw"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	name, prompt, options, runID, raw, err := cobraModelChatOptions(context, args)
+	name, prompt, options, runID, checkpointStep, raw, err := cobraModelChatOptions(context, args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "foo" || prompt == nil || *prompt != "hello world" || options.MaxTokens != 12 || options.Temperature != 0 || options.TopP != 1 || options.Seed == nil || *options.Seed != 9 || runID != "run1" || !raw {
-		t.Fatalf("name = %q, prompt = %v, options = %+v, run = %q, raw = %t", name, prompt, options, runID, raw)
+	if name != "foo" || prompt == nil || *prompt != "hello world" || options.MaxTokens != 12 || options.Temperature != 0 || options.TopP != 1 || options.Seed == nil || *options.Seed != 9 || runID != "run1" || checkpointStep != 10 || !raw {
+		t.Fatalf("name = %q, prompt = %v, options = %+v, run = %q, checkpoint = %d, raw = %t", name, prompt, options, runID, checkpointStep, raw)
 	}
 	context, args, err = parseCobraCommand(t, []string{"model", "chat"}, []string{"foo", "--temperature", "-1"})
-	if _, _, _, _, _, err := cobraModelChatOptions(context, args); err == nil {
+	if _, _, _, _, _, _, err := cobraModelChatOptions(context, args); err == nil {
 		t.Fatal("negative temperature accepted")
 	}
 	context, args, err = parseCobraCommand(t, []string{"model", "chat"}, []string{"foo", "--top-p", "NaN"})
-	if _, _, _, _, _, err := cobraModelChatOptions(context, args); err == nil {
+	if _, _, _, _, _, _, err := cobraModelChatOptions(context, args); err == nil {
 		t.Fatal("NaN top-p accepted")
+	}
+	context, args, err = parseCobraCommand(t, []string{"model", "chat"}, []string{"foo", "--checkpoint-step", "10"})
+	if _, _, _, _, _, _, err := cobraModelChatOptions(context, args); err == nil || !strings.Contains(err.Error(), "requires --run-id") {
+		t.Fatalf("checkpoint without run error = %v", err)
 	}
 }
 
@@ -45,24 +50,31 @@ func TestSelectModelChatRunRequiresCompletedRealRun(t *testing.T) {
 			{ID: "complete", State: model.RunComplete},
 			{ID: "running", State: model.RunRunning},
 			{ID: "simulated", State: model.RunComplete, Simulated: true},
+			{ID: "interrupted", State: model.RunInterrupted},
 		},
-	}}
-	selected, err := selectModelChatRun(inspection, "complete")
+	}, Runs: []model.RunRecord{{ID: "complete"}, {ID: "running"}, {ID: "simulated"}, {ID: "interrupted", State: model.RunInterrupted, Progress: &training.Progress{Checkpoints: []training.Checkpoint{{Step: 10}}}}}}
+	selected, err := selectModelChatRun(inspection, "complete", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if selected.BOM.CurrentRunID != "complete" || inspection.BOM.CurrentRunID != "current" {
 		t.Fatalf("selected current run = %q, original = %q", selected.BOM.CurrentRunID, inspection.BOM.CurrentRunID)
 	}
-	for _, runID := range []string{"running", "simulated", "missing"} {
-		if _, err := selectModelChatRun(inspection, runID); err == nil {
+	for _, runID := range []string{"running", "simulated", "interrupted", "missing"} {
+		if _, err := selectModelChatRun(inspection, runID, 0); err == nil {
 			t.Fatalf("run %q accepted", runID)
 		}
+	}
+	if _, err := selectModelChatRun(inspection, "interrupted", 10); err != nil {
+		t.Fatalf("explicit checkpoint rejected: %v", err)
+	}
+	if _, err := selectModelChatRun(inspection, "interrupted", 11); err == nil {
+		t.Fatal("missing checkpoint accepted")
 	}
 }
 
 func TestOneShotChatRendersSafeMarkdownAndReturnsJSON(t *testing.T) {
-	opened := inference.Opened{Description: inference.Description{Model: "foo", RunID: "run"}, Session: &chatSession{data: []byte{'A', 0x1b, 0xff}}}
+	opened := inference.Opened{Description: inference.Description{Model: "foo", RunID: "run", CheckpointStep: 10, InterruptedCheckpoint: true}, Session: &chatSession{data: []byte{'A', 0x1b, 0xff}}}
 	options := inference.Options{MaxTokens: 3, Temperature: 0, TopP: 1}
 	var output bytes.Buffer
 	if err := runOneShotChat(Context{Execution: context.Background()}, opened, model.Interaction{}, "hello", options, &output); err != nil {
@@ -75,7 +87,7 @@ func TestOneShotChatRendersSafeMarkdownAndReturnsJSON(t *testing.T) {
 	if err := runOneShotChat(Context{Execution: context.Background(), JSON: true}, opened, model.Interaction{}, "hello", options, &output); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"model": "foo"`, `"prompt": "hello"`, `"finish_reason": "max_tokens"`} {
+	for _, want := range []string{`"model": "foo"`, `"checkpoint_step": 10`, `"interrupted_checkpoint": true`, `"prompt": "hello"`, `"finish_reason": "max_tokens"`} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("JSON = %s", output.String())
 		}

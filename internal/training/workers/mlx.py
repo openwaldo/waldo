@@ -20,7 +20,7 @@ from mlx.utils import tree_flatten, tree_map, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r16"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r17"
 
 
 class ArtifactIntegrityError(ValueError):
@@ -600,6 +600,7 @@ class Trainer:
                 "schema": 1,
                 "backend": "mlx",
                 "backend_revision": WORKER_REVISION,
+                "model_id": self.begin["model_id"],
                 "run_id": self.begin["run_id"],
                 "architecture_sha256": self.begin["architecture_sha256"],
                 "step": self.step_number,
@@ -647,6 +648,7 @@ class Trainer:
             or state.get("schema") != 1
             or state.get("backend") != "mlx"
             or state.get("backend_revision") != WORKER_REVISION
+            or state.get("model_id") != self.begin["model_id"]
             or state.get("run_id") != self.begin["run_id"]
             or state.get("architecture_sha256") != self.begin["architecture_sha256"]
             or state.get("step") != resume["step"]

@@ -181,6 +181,7 @@ const MultiNodePlanKind = "openwaldo-multinode-plan"
 type MultiNodePlan struct {
 	Kind               string                         `json:"kind"`
 	Schema             int                            `json:"schema"`
+	ModelID            string                         `json:"model_id"`
 	RunID              string                         `json:"run_id"`
 	Stage              string                         `json:"stage"`
 	StageOrdinal       int                            `json:"stage_ordinal"`

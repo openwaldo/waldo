@@ -103,6 +103,8 @@ func TestPyTorchWorkerPublishesBestEvaluatedCheckpoint(t *testing.T) {
 func TestPyTorchWorkerSeparatesResumeAndPortableWeightPrecision(t *testing.T) {
 	source := string(pyTorchWorker)
 	for _, expected := range []string{
+		`"model_id": self.begin["model_id"]`,
+		`state.get("model_id") != self.begin["model_id"]`,
 		`portable=False`,
 		`self.parameter_dtype if portable else None`,
 		`"storage_dtype": "float32" if storage_dtype is None else self.architecture["parameter_dtype"]`,

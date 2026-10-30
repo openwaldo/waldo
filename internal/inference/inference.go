@@ -61,12 +61,14 @@ type Session interface {
 }
 
 type Description struct {
-	Model         string `json:"model"`
-	SourceType    string `json:"source_type"`
-	SourceID      string `json:"source_id"`
-	RunID         string `json:"run_id,omitempty"`
-	Backend       string `json:"backend"`
-	ContextTokens int    `json:"context_tokens"`
+	Model                 string `json:"model"`
+	SourceType            string `json:"source_type"`
+	SourceID              string `json:"source_id"`
+	RunID                 string `json:"run_id,omitempty"`
+	CheckpointStep        int64  `json:"checkpoint_step,omitempty"`
+	InterruptedCheckpoint bool   `json:"interrupted_checkpoint,omitempty"`
+	Backend               string `json:"backend"`
+	ContextTokens         int    `json:"context_tokens"`
 }
 
 type Opened struct {

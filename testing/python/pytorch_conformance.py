@@ -17,7 +17,9 @@ import io
 import json
 import math
 import pathlib
+import struct
 import sys
+import tempfile
 
 import torch
 from torch.nn import functional
@@ -126,6 +128,38 @@ def deterministic_parameters(model):
 
 def maximum_error(left, right):
     return float((left.detach().double().cpu() - right.detach().double().cpu()).abs().max().item())
+
+
+def save_checkpoint_safetensors(path, state):
+    header = {"__metadata__": {"format": "openwaldo", "kind": "waldo-pytorch-checkpoint", "schema": "1"}}
+    payload = bytearray()
+    for name, value in state.items():
+        tensor = value.detach().to(device="cpu", dtype=torch.float32).contiguous()
+        start = len(payload)
+        data = tensor.view(torch.uint8).numpy().tobytes()
+        payload.extend(data)
+        header[name] = {"dtype": "F32", "shape": list(tensor.shape), "data_offsets": [start, len(payload)]}
+    encoded = json.dumps(header, separators=(",", ":")).encode("utf-8")
+    encoded += b" " * ((8 - len(encoded) % 8) % 8)
+    with open(path, "wb") as stream:
+        stream.write(struct.pack("<Q", len(encoded)))
+        stream.write(encoded)
+        stream.write(payload)
+
+
+def load_checkpoint_safetensors(path):
+    with open(path, "rb") as stream:
+        header_length = struct.unpack("<Q", stream.read(8))[0]
+        header = json.loads(stream.read(header_length))
+        payload = bytearray(stream.read())
+    state = {}
+    for name, descriptor in header.items():
+        if name == "__metadata__":
+            continue
+        start, end = descriptor["data_offsets"]
+        value = torch.frombuffer(payload[start:end], dtype=torch.float32).clone()
+        state[name] = value.reshape(descriptor["shape"])
+    return state
 
 
 def assert_close(name, left, right, absolute_tolerance, relative_tolerance, measurements):
@@ -251,6 +285,26 @@ def run(model_source, device_name):
         reloaded_logits = reloaded(inputs)
     assert_close("save_reload_logits", post_update_logits, reloaded_logits, 0.0, 0.0, measurements)
 
+    # Training checkpoints persist FP32 master weights in Safetensors while
+    # runtime.pt carries optimizer state. Prove that the actual checkpoint
+    # weight representation reloads to identical inference logits.
+    checkpoint_source = module.DecoderLM(architecture).to(device=device, dtype=torch.float32)
+    checkpoint_source.load_state_dict({name: value.detach().float() for name, value in model.state_dict().items()}, strict=True)
+    checkpoint_source.eval()
+    with torch.no_grad():
+        checkpoint_logits = checkpoint_source(inputs)
+    with tempfile.TemporaryDirectory(prefix="waldo-checkpoint-conformance-") as directory:
+        checkpoint_path = pathlib.Path(directory) / "model.safetensors"
+        save_checkpoint_safetensors(checkpoint_path, checkpoint_source.state_dict())
+        checkpoint_reloaded = module.DecoderLM(architecture).to(device=device, dtype=torch.float32)
+        missing, unexpected = checkpoint_reloaded.load_state_dict(load_checkpoint_safetensors(checkpoint_path), strict=True)
+        if missing or unexpected:
+            raise AssertionError(f"checkpoint reload mismatch: missing={missing}, unexpected={unexpected}")
+        checkpoint_reloaded.eval()
+        with torch.no_grad():
+            checkpoint_reloaded_logits = checkpoint_reloaded(inputs)
+    assert_close("checkpoint_save_reload_logits", checkpoint_logits, checkpoint_reloaded_logits, 0.0, 0.0, measurements)
+
     updated_reference = {name: parameter.detach().clone().requires_grad_(False) for name, parameter in model.named_parameters()}
     oracle_post_update = reference_logits(inputs, updated_reference, architecture)
     assert_close("post_update_logits", post_update_logits, oracle_post_update, absolute_tolerance, relative_tolerance, measurements)
@@ -271,6 +325,7 @@ def run(model_source, device_name):
             "adamw_parameters": max(value for name, value in measurements.items() if name.startswith("adamw_parameter/")),
             "adamw_state": max(value for name, value in measurements.items() if name.startswith("adamw_") and not name.startswith("adamw_parameter/")),
             "save_reload_logits": measurements["save_reload_logits"],
+            "checkpoint_save_reload_logits": measurements["checkpoint_save_reload_logits"],
             "post_update_logits": measurements["post_update_logits"],
         },
     }

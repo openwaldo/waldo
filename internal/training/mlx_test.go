@@ -42,6 +42,8 @@ func TestMLXWorkerPublishesBestEvaluatedCheckpoint(t *testing.T) {
 		t.Fatalf("embedded MLX worker revision does not match Go adapter %q", MLXRevision)
 	}
 	for _, expected := range []string{
+		`"model_id": self.begin["model_id"]`,
+		`state.get("model_id") != self.begin["model_id"]`,
 		`selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"])`,
 		`self.model.load_weights(selected_path)`,
 		`"selected_checkpoint": selection`,

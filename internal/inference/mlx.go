@@ -69,6 +69,23 @@ func Open(ctx context.Context, inspection model.Inspection) (Opened, error) {
 	if err != nil {
 		return Opened{}, err
 	}
+	return openArtifacts(ctx, inspection, artifacts)
+}
+
+// OpenCheckpoint opens one exact verified checkpoint from an interrupted real
+// run without changing model or run lifecycle state.
+func OpenCheckpoint(ctx context.Context, inspection model.Inspection, runID string, step int64) (Opened, error) {
+	artifacts, err := resolveCheckpointArtifacts(inspection, runID, step)
+	if err != nil {
+		return Opened{}, err
+	}
+	if artifacts.cleanup != nil {
+		defer artifacts.cleanup()
+	}
+	return openArtifacts(ctx, inspection, artifacts)
+}
+
+func openArtifacts(ctx context.Context, inspection model.Inspection, artifacts Artifacts) (Opened, error) {
 	switch artifacts.Backend.Name {
 	case training.BackendMLX, "portable-safetensors":
 		return openMLX(ctx, inspection, artifacts)
@@ -101,7 +118,8 @@ func openMLX(ctx context.Context, inspection model.Inspection, artifacts Artifac
 		return Opened{}, err
 	}
 	return Opened{Description: Description{
-		Model: artifacts.Model, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, Backend: training.BackendMLX,
+		Model: artifacts.Model, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID,
+		CheckpointStep: artifacts.CheckpointStep, InterruptedCheckpoint: artifacts.InterruptedCheckpoint, Backend: training.BackendMLX,
 		ContextTokens: contextTokens,
 	}, Session: session}, nil
 }

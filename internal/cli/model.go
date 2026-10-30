@@ -1135,7 +1135,7 @@ func secondaryStreamRequest(plan model.MultiNodePlan, scratch string) (training.
 		return training.Request{}, err
 	}
 	return training.Request{
-		RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
+		ModelID: plan.ModelID, RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
 		Conversation: plan.Conversation, ArchitectureSHA256: plan.ArchitectureSHA256,
 		Architecture: plan.Architecture, Parameters: plan.Parameters,
 		Parallelism:   plan.Parallelism,
@@ -1262,7 +1262,7 @@ func secondaryNodeLocalRequest(commandContext Context, plan model.MultiNodePlan,
 		return training.Request{}, err
 	}
 	return training.Request{
-		RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
+		ModelID: plan.ModelID, RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
 		Conversation:       plan.Conversation,
 		ArchitectureSHA256: plan.ArchitectureSHA256, Architecture: plan.Architecture,
 		Parameters: plan.Parameters, BOM: plan.CorpusBOM, Inputs: inputs, Records: records, EvaluationRecords: partition.EvaluationRecords(),
@@ -1851,11 +1851,12 @@ func runModelRemove(context Context, args []string, stdout, _ io.Writer) error {
 }
 
 var openModelChat = inference.Open
+var openModelCheckpoint = inference.OpenCheckpoint
 var modelChatInput io.Reader = os.Stdin
 var modelChatTerminal = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 
 func runModelChat(context Context, args []string, stdout, stderr io.Writer) error {
-	name, prompt, options, runID, raw, err := cobraModelChatOptions(context, args)
+	name, prompt, options, runID, checkpointStep, raw, err := cobraModelChatOptions(context, args)
 	if err != nil {
 		return err
 	}
@@ -1870,7 +1871,7 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	if len(inspection.Model.Runs) == 0 && inspection.Origin == nil {
 		return fmt.Errorf("model %q is untrained", name)
 	}
-	inspection, err = selectModelChatRun(inspection, runID)
+	inspection, err = selectModelChatRun(inspection, runID, checkpointStep)
 	if err != nil {
 		return err
 	}
@@ -1893,7 +1894,12 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	if interactive {
 		fmt.Fprintf(stderr, "loading model %s...\n", name)
 	}
-	opened, err := openModelChat(context.Execution, inspection)
+	var opened inference.Opened
+	if checkpointStep > 0 {
+		opened, err = openModelCheckpoint(context.Execution, inspection, runID, checkpointStep)
+	} else {
+		opened, err = openModelChat(context.Execution, inspection)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "warning: model chat unavailable: %v\n", err)
 		return err
@@ -1907,30 +1913,53 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	return errors.Join(chatErr, opened.Session.Close())
 }
 
-func cobraModelChatOptions(context Context, args []string) (string, *string, inference.Options, string, bool, error) {
+func cobraModelChatOptions(context Context, args []string) (string, *string, inference.Options, string, int64, bool, error) {
 	options := inference.Options{MaxTokens: intOption(context, "max-tokens"), Temperature: float64Option(context, "temperature"), TopP: float64Option(context, "top-p")}
 	if optionChanged(context, "seed") {
 		seed := uint64Option(context, "seed")
 		options.Seed = &seed
 	}
 	if err := options.Validate(); err != nil {
-		return "", nil, options, "", false, err
+		return "", nil, options, "", 0, false, err
 	}
 	runID := strings.TrimSpace(stringOption(context, "run-id"))
+	checkpointStep := int64Option(context, "checkpoint-step")
+	if optionChanged(context, "checkpoint-step") && checkpointStep <= 0 {
+		return "", nil, options, "", 0, false, fmt.Errorf("--checkpoint-step must be positive")
+	}
+	if checkpointStep > 0 && runID == "" {
+		return "", nil, options, "", 0, false, fmt.Errorf("--checkpoint-step requires --run-id")
+	}
 	raw := boolOption(context, "raw")
 	if len(args) == 2 {
-		return args[0], &args[1], options, runID, raw, nil
+		return args[0], &args[1], options, runID, checkpointStep, raw, nil
 	}
-	return args[0], nil, options, runID, raw, nil
+	return args[0], nil, options, runID, checkpointStep, raw, nil
 }
 
-func selectModelChatRun(inspection model.Inspection, runID string) (model.Inspection, error) {
+func selectModelChatRun(inspection model.Inspection, runID string, checkpointStep int64) (model.Inspection, error) {
 	if runID == "" {
 		return inspection, nil
 	}
 	for _, run := range inspection.BOM.Runs {
 		if run.ID != runID {
 			continue
+		}
+		if checkpointStep > 0 {
+			if run.State != model.RunInterrupted || run.Simulated {
+				return model.Inspection{}, fmt.Errorf("model %q run %q is not an interrupted real run", inspection.Model.Name, runID)
+			}
+			for position := range inspection.Runs {
+				if inspection.Runs[position].ID != runID || inspection.Runs[position].Progress == nil {
+					continue
+				}
+				for _, checkpoint := range inspection.Runs[position].Progress.Checkpoints {
+					if checkpoint.Step == checkpointStep {
+						return inspection, nil
+					}
+				}
+			}
+			return model.Inspection{}, fmt.Errorf("model %q run %q has no checkpoint at step %d", inspection.Model.Name, runID, checkpointStep)
 		}
 		if run.State != model.RunComplete || run.Simulated {
 			return model.Inspection{}, fmt.Errorf("model %q run %q is not a complete real run", inspection.Model.Name, runID)
@@ -1963,14 +1992,20 @@ func runOneShotChat(context Context, opened inference.Opened, interaction model.
 			rendered = renderedPrompt
 		}
 		return writeJSON(stdout, struct {
-			Model          string           `json:"model"`
-			SourceType     string           `json:"source_type"`
-			SourceID       string           `json:"source_id"`
-			RunID          string           `json:"run_id,omitempty"`
-			Prompt         string           `json:"prompt"`
-			RenderedPrompt string           `json:"rendered_prompt,omitempty"`
-			Result         inference.Result `json:"result"`
-		}{opened.Description.Model, opened.Description.SourceType, opened.Description.SourceID, opened.Description.RunID, prompt, rendered, result})
+			Model                 string           `json:"model"`
+			SourceType            string           `json:"source_type"`
+			SourceID              string           `json:"source_id"`
+			RunID                 string           `json:"run_id,omitempty"`
+			CheckpointStep        int64            `json:"checkpoint_step,omitempty"`
+			InterruptedCheckpoint bool             `json:"interrupted_checkpoint,omitempty"`
+			Prompt                string           `json:"prompt"`
+			RenderedPrompt        string           `json:"rendered_prompt,omitempty"`
+			Result                inference.Result `json:"result"`
+		}{
+			Model: opened.Description.Model, SourceType: opened.Description.SourceType, SourceID: opened.Description.SourceID,
+			RunID: opened.Description.RunID, CheckpointStep: opened.Description.CheckpointStep, InterruptedCheckpoint: opened.Description.InterruptedCheckpoint,
+			Prompt: prompt, RenderedPrompt: rendered, Result: result,
+		})
 	}
 	if err := stopper.Flush(); err != nil {
 		return err
@@ -1985,6 +2020,9 @@ func runInteractiveChat(ctx stdcontext.Context, opened inference.Opened, interac
 	fmt.Fprintf(stdout, "OpenWALDO model %s\n", opened.Description.Model)
 	fmt.Fprintf(stdout, "Backend: %s\n", strings.ToUpper(opened.Description.Backend))
 	fmt.Fprintf(stdout, "Context: %d tokens\n", opened.Description.ContextTokens)
+	if opened.Description.InterruptedCheckpoint {
+		fmt.Fprintf(stdout, "Checkpoint: interrupted run %s at exact step %d (model lifecycle unchanged)\n", opened.Description.RunID, opened.Description.CheckpointStep)
+	}
 	if interaction.Conversational() {
 		fmt.Fprintf(stdout, "Mode: user/assistant conversation (%s)\n", interaction.Template)
 		options.Stop = interaction.Stops()

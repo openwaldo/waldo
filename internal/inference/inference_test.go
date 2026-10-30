@@ -8,6 +8,7 @@ package inference
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -107,6 +108,193 @@ func TestResolveArtifactsVerifiesCurrentRealRun(t *testing.T) {
 	inspection.BOM.CurrentRunID = ""
 	if _, err := ResolveArtifacts(inspection); err == nil || !strings.Contains(err.Error(), "no complete non-simulated") {
 		t.Fatalf("simulation error = %v", err)
+	}
+}
+
+func TestResolveCheckpointArtifactsRequiresExactVerifiedInterruptedCheckpoint(t *testing.T) {
+	t.Run("valid", func(t *testing.T) {
+		inspection, _ := checkpointInspectionFixture(t, checkpointFixtureOptions{})
+		resolved, err := resolveCheckpointArtifacts(inspection, "run1", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resolved.cleanup()
+		if resolved.Model != "example" || resolved.RunID != "run1" || resolved.CheckpointStep != 10 || !resolved.InterruptedCheckpoint || resolved.SourceType != "checkpoint" {
+			t.Fatalf("resolved checkpoint = %+v", resolved)
+		}
+		if _, _, err := loadTokenizer(resolved.Tokenizer); err != nil {
+			t.Fatalf("generated tokenizer sidecar: %v", err)
+		}
+		if err := verifyRunConfiguration(resolved.Configuration, inspection.Model.ArchitectureSHA256, inspection.Model.Architecture); err != nil {
+			t.Fatalf("generated configuration sidecar: %v", err)
+		}
+		if inspection.BOM.CurrentRunID != "" || inspection.Runs[0].State != model.RunInterrupted {
+			t.Fatalf("checkpoint selection changed lifecycle: %+v", inspection)
+		}
+	})
+
+	for _, test := range []struct {
+		name    string
+		options checkpointFixtureOptions
+		step    int64
+		want    string
+	}{
+		{name: "missing step", step: 11, want: "no checkpoint at step 11"},
+		{name: "simulated", options: checkpointFixtureOptions{simulated: true}, step: 10, want: "simulated"},
+		{name: "state run mismatch", options: checkpointFixtureOptions{stateRunID: "other"}, step: 10, want: "checkpoint state does not match"},
+		{name: "state model mismatch", options: checkpointFixtureOptions{stateModelID: "other-model"}, step: 10, want: "checkpoint state does not match"},
+		{name: "state architecture mismatch", options: checkpointFixtureOptions{stateArchitectureSHA256: strings.Repeat("b", 64)}, step: 10, want: "checkpoint state does not match"},
+		{name: "state backend mismatch", options: checkpointFixtureOptions{stateBackendRevision: "other-backend"}, step: 10, want: "checkpoint state does not match"},
+		{name: "state step mismatch", options: checkpointFixtureOptions{stateStep: 9}, step: 10, want: "checkpoint state does not match"},
+		{name: "weight architecture mismatch", options: checkpointFixtureOptions{wrongWeightShape: true}, step: 10, want: "model architecture requires"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inspection, _ := checkpointInspectionFixture(t, test.options)
+			if _, err := resolveCheckpointArtifacts(inspection, "run1", test.step); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("checkpoint error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestResolveCheckpointArtifactsRejectsTamperedArtifact(t *testing.T) {
+	for _, name := range []string{"model.safetensors", "state.json"} {
+		t.Run(name, func(t *testing.T) {
+			inspection, paths := checkpointInspectionFixture(t, checkpointFixtureOptions{})
+			data, err := os.ReadFile(paths[name])
+			if err != nil {
+				t.Fatal(err)
+			}
+			data[len(data)-1] ^= 0xff
+			if err := os.WriteFile(paths[name], data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := resolveCheckpointArtifacts(inspection, "run1", 10); err == nil || !strings.Contains(err.Error(), "SHA-256") {
+				t.Fatalf("tampered checkpoint error = %v", err)
+			}
+		})
+	}
+}
+
+type checkpointFixtureOptions struct {
+	simulated               bool
+	stateRunID              string
+	stateModelID            string
+	stateArchitectureSHA256 string
+	stateBackendRevision    string
+	stateStep               int64
+	wrongWeightShape        bool
+}
+
+func checkpointInspectionFixture(t *testing.T, options checkpointFixtureOptions) (model.Inspection, map[string]string) {
+	t.Helper()
+	root := t.TempDir()
+	modelID := "model-id"
+	runID := "run1"
+	architectureSHA256 := strings.Repeat("a", 64)
+	backend := training.Identity{Name: training.BackendPyTorch, Revision: "checkpoint-test-r1"}
+	architecture := model.Architecture{
+		Family: "decoder-transformer", ContextTokens: 16, VocabularySize: 259,
+		HiddenSize: 4, IntermediateSize: 8, Layers: 0, AttentionHeads: 1, KeyValueHeads: 1,
+		TieEmbeddings: true, ParameterDType: "float32",
+		Tokenizer: model.Tokenizer{Name: "byte", Revision: training.ByteTokenizerRevision},
+	}
+	runDirectory := filepath.Join(root, "runs", "0001-pretrain-run1")
+	checkpointDirectory := filepath.Join(runDirectory, "artifacts", "checkpoints", "step-00000010")
+	if err := os.MkdirAll(checkpointDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	paths := map[string]string{
+		"model.safetensors": filepath.Join(checkpointDirectory, "model.safetensors"),
+		"runtime.pt":        filepath.Join(checkpointDirectory, "runtime.pt"),
+		"state.json":        filepath.Join(checkpointDirectory, "state.json"),
+	}
+	embeddingRows := uint64(259)
+	if options.wrongWeightShape {
+		embeddingRows++
+	}
+	writeCheckpointSafetensors(t, paths["model.safetensors"], embeddingRows, architecture.HiddenSize)
+	if err := os.WriteFile(paths["runtime.pt"], []byte("runtime"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stateRunID := options.stateRunID
+	if stateRunID == "" {
+		stateRunID = runID
+	}
+	stateModelID := options.stateModelID
+	if stateModelID == "" {
+		stateModelID = modelID
+	}
+	stateArchitecture := options.stateArchitectureSHA256
+	if stateArchitecture == "" {
+		stateArchitecture = architectureSHA256
+	}
+	stateBackendRevision := options.stateBackendRevision
+	if stateBackendRevision == "" {
+		stateBackendRevision = backend.Revision
+	}
+	stateStep := options.stateStep
+	if stateStep == 0 {
+		stateStep = 10
+	}
+	state, err := json.Marshal(map[string]any{
+		"kind": "waldo-training-checkpoint", "schema": 1,
+		"backend": backend.Name, "backend_revision": stateBackendRevision,
+		"model_id": stateModelID, "run_id": stateRunID, "architecture_sha256": stateArchitecture,
+		"step": stateStep, "consumed_tokens": int64(160),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths["state.json"], state, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var artifacts []training.Artifact
+	for _, name := range []string{"model.safetensors", "runtime.pt", "state.json"} {
+		data, err := os.ReadFile(paths[name])
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(data)
+		artifacts = append(artifacts, training.Artifact{
+			Path:   filepath.ToSlash(filepath.Join("artifacts", "checkpoints", "step-00000010", name)),
+			SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data)),
+		})
+	}
+	checkpoint := training.Checkpoint{Step: 10, Tokens: 160, Artifacts: artifacts}
+	return model.Inspection{
+		Path:  root,
+		Model: model.ModelRecord{ID: modelID, Name: "example", ArchitectureSHA256: architectureSHA256, Architecture: architecture},
+		BOM: model.ModelBOM{Runs: []model.ModelBOMRun{{
+			ID: runID, State: model.RunInterrupted, Backend: backend, Simulated: options.simulated,
+			RunBOM: filepath.ToSlash(filepath.Join("runs", "0001-pretrain-run1", "RUN-BOM.json")),
+		}}},
+		Runs:    []model.RunRecord{{ID: runID, State: model.RunInterrupted, Progress: &training.Progress{Checkpoints: []training.Checkpoint{checkpoint}}}},
+		RunBOMs: []model.RunBOM{{ID: runID, ModelID: modelID, ArchitectureSHA256: architectureSHA256, Execution: training.Execution{Backend: backend}}},
+	}, paths
+}
+
+func writeCheckpointSafetensors(t *testing.T, path string, embeddingRows, hidden uint64) {
+	t.Helper()
+	embeddingBytes := embeddingRows * hidden * 4
+	normBytes := hidden * 4
+	header := map[string]any{
+		"__metadata__":     map[string]string{"format": "openwaldo"},
+		"embedding.weight": map[string]any{"dtype": "F32", "shape": []uint64{embeddingRows, hidden}, "data_offsets": []uint64{0, embeddingBytes}},
+		"norm.weight":      map[string]any{"dtype": "F32", "shape": []uint64{hidden}, "data_offsets": []uint64{embeddingBytes, embeddingBytes + normBytes}},
+	}
+	encoded, err := json.Marshal(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for len(encoded)%8 != 0 {
+		encoded = append(encoded, ' ')
+	}
+	data := make([]byte, 8+len(encoded)+int(embeddingBytes+normBytes))
+	binary.LittleEndian.PutUint64(data[:8], uint64(len(encoded)))
+	copy(data[8:], encoded)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

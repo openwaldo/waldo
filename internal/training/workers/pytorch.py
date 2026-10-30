@@ -24,8 +24,8 @@ from torch.utils.checkpoint import checkpoint
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r16"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r27"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r17"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r28"
 IS_PRIMARY = True
 
 
@@ -1102,6 +1102,7 @@ class Trainer:
                     "schema": 1,
                     "backend": backend_name,
                     "backend_revision": TORCHTITAN_REVISION if self.distributed else WORKER_REVISION,
+                    "model_id": self.begin["model_id"],
                     "run_id": self.begin["run_id"],
                     "architecture_sha256": self.begin["architecture_sha256"],
                     "step": self.step_number,
@@ -1143,6 +1144,7 @@ class Trainer:
             or state.get("schema") != 1
             or state.get("backend") != backend_name
             or state.get("backend_revision") != revision
+            or state.get("model_id") != self.begin["model_id"]
             or state.get("run_id") != self.begin["run_id"]
             or state.get("architecture_sha256") != self.begin["architecture_sha256"]
             or state.get("step") != self.resume["step"]

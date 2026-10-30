@@ -19,7 +19,7 @@ import (
 	"github.com/openwaldo/waldo/internal/pytorchruntime"
 )
 
-const PyTorchRevision = "builtin-pytorch-worker-schema-1-r16"
+const PyTorchRevision = "builtin-pytorch-worker-schema-1-r17"
 
 //go:embed workers/pytorch.py
 var pyTorchWorker []byte

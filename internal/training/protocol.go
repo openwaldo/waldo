@@ -19,6 +19,7 @@ import (
 const WorkerProtocolSchema = 1
 
 type WorkerBegin struct {
+	ModelID                string                `json:"model_id"`
 	RunID                  string                `json:"run_id"`
 	Stage                  string                `json:"stage"`
 	Objective              string                `json:"objective"`

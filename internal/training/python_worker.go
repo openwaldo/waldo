@@ -252,7 +252,8 @@ func defaultedTokenizer(spec TokenizerSpec) TokenizerSpec {
 func workerBeginFromRequest(request Request) WorkerBegin {
 	tokenizer := defaultedTokenizer(request.Tokenizer)
 	begin := WorkerBegin{
-		RunID: request.RunID, Stage: request.Stage, Objective: request.Objective,
+		ModelID: request.ModelID,
+		RunID:   request.RunID, Stage: request.Stage, Objective: request.Objective,
 		ArchitectureSHA256: request.ArchitectureSHA256, Architecture: request.Architecture,
 		Parameters: request.Parameters, Parallelism: request.Parallelism,
 		EvaluationSet: request.EvaluationSet, Tokenizer: tokenizer, DataNodeRank: request.DataNodeRank,

@@ -63,6 +63,7 @@ func openPyTorch(ctx context.Context, inspection model.Inspection, artifacts Art
 	}
 	return Opened{Description: Description{
 		Model: artifacts.Model, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID,
+		CheckpointStep: artifacts.CheckpointStep, InterruptedCheckpoint: artifacts.InterruptedCheckpoint,
 		Backend: training.BackendPyTorch, ContextTokens: contextTokens,
 	}, Session: session}, nil
 }

@@ -229,6 +229,29 @@ interrupted_code=$?
 set -e
 [ "$interrupted_code" -ne 0 ] || { echo "interrupted MLX training unexpectedly completed" >&2; exit 1; }
 
+checkpoint_summary=$("$binary" --json model summary mlx-resume)
+checkpoint_run=$(printf '%s\n' "$checkpoint_summary" | "$mlx_python" -c 'import json,sys; value=json.load(sys.stdin); assert value["runs"][-1]["state"] == "interrupted"; assert not value["bom"].get("current_run_id"); print(value["runs"][-1]["id"])')
+if "$binary" model chat mlx-resume "OpenWALDO" --raw >"$work/checkpoint-default-chat.log" 2>&1; then
+  echo "interrupted run unexpectedly supported chat without an explicit checkpoint" >&2
+  exit 1
+fi
+checkpoint_chat_one=$("$binary" --json model chat mlx-resume "OpenWALDO" --run-id "$checkpoint_run" --checkpoint-step 1 --raw --temperature 0 --top-p 1 --seed 13 --max-tokens 4)
+checkpoint_chat_two=$("$binary" --json model chat mlx-resume "OpenWALDO" --run-id "$checkpoint_run" --checkpoint-step 1 --raw --temperature 0 --top-p 1 --seed 13 --max-tokens 4)
+CHECKPOINT_RUN="$checkpoint_run" CHECKPOINT_ONE="$checkpoint_chat_one" CHECKPOINT_TWO="$checkpoint_chat_two" "$mlx_python" - <<'PY'
+import json
+import os
+
+first = json.loads(os.environ["CHECKPOINT_ONE"])
+second = json.loads(os.environ["CHECKPOINT_TWO"])
+assert first["model"] == "mlx-resume"
+assert first["run_id"] == os.environ["CHECKPOINT_RUN"]
+assert first["checkpoint_step"] == 1
+assert first["interrupted_checkpoint"] is True
+assert first["source_type"] == "checkpoint"
+assert first["result"]["text"] == second["result"]["text"]
+PY
+"$binary" --json model summary mlx-resume | "$mlx_python" -c 'import json,sys; value=json.load(sys.stdin); assert value["runs"][-1]["state"] == "interrupted"; assert not value["bom"].get("current_run_id")'
+
 resume_output=$("$binary" model train mlx-resume "$compose")
 printf '%s\n' "$resume_output"
 grep -ERq '"resume_step"[[:space:]]*:[[:space:]]*1' "$models/mlx-resume/runs" || {
@@ -372,4 +395,4 @@ else
   echo "testing: calibrated GGUF export skipped (llama-quantize and llama-imatrix not both installed)"
 fi
 
-echo "E2E MLX model passed: trained, deterministically checkpoint-resumed, generated, chatted with a pulled copy, and exported Hugging Face, MLX, GGUF, and Ollama packages"
+echo "E2E MLX model passed: trained, inferred from and resumed a verified interrupted checkpoint, generated, chatted with a pulled copy, and exported Hugging Face, MLX, GGUF, and Ollama packages"

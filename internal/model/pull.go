@@ -430,6 +430,33 @@ func validateDownloadedTensors(architecture Architecture, actual map[string]mode
 	return nil
 }
 
+// ValidateCheckpointWeights verifies that checkpoint tensors can be loaded by
+// the immutable model architecture. Checkpoints preserve FP32 master weights,
+// while MLX checkpoints may retain another supported floating-point dtype.
+func ValidateCheckpointWeights(path string, architecture Architecture) error {
+	actual, _, err := modelweights.Inspect(path)
+	if err != nil {
+		return err
+	}
+	expected := expectedTensorShapes(architecture)
+	if len(actual) != len(expected) {
+		return fmt.Errorf("checkpoint has %d tensors; model architecture requires %d", len(actual), len(expected))
+	}
+	for name, shape := range expected {
+		descriptor, ok := actual[name]
+		if !ok {
+			return fmt.Errorf("checkpoint is missing tensor %s", name)
+		}
+		if descriptor.DType != "F32" && descriptor.DType != "F16" && descriptor.DType != "BF16" {
+			return fmt.Errorf("checkpoint tensor %s has unsupported dtype %s", name, descriptor.DType)
+		}
+		if !equalShape(descriptor.Shape, shape) {
+			return fmt.Errorf("checkpoint tensor %s has shape %v; model architecture requires %v", name, descriptor.Shape, shape)
+		}
+	}
+	return nil
+}
+
 func expectedTensorShapes(a Architecture) map[string][]uint64 {
 	kv := a.HiddenSize / a.AttentionHeads * a.KeyValueHeads
 	result := map[string][]uint64{"embedding.weight": {a.VocabularySize, a.HiddenSize}, "norm.weight": {a.HiddenSize}}

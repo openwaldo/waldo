@@ -2,8 +2,8 @@
 # Evaluate ladder rung 0002 with prompts published alongside TinyStories.
 set -euo pipefail
 
-if (($# < 2 || $# > 5)); then
-  echo "usage: $0 MODEL OUTPUT.jsonl [TEMPERATURE] [SEED] [MAX_TOKENS]" >&2
+if (($# < 2 || $# > 7)); then
+  echo "usage: $0 MODEL OUTPUT.jsonl [TEMPERATURE] [SEED] [MAX_TOKENS] [RUN_ID] [CHECKPOINT_STEP]" >&2
   exit 2
 fi
 
@@ -12,7 +12,14 @@ output="$2"
 temperature="${3:-0.8}"
 seed="${4:-42}"
 max_tokens="${5:-256}"
-run_id="$(go run ./cmd/waldo/ --json model summary "$model" | jq -r '.bom.current_run_id')"
+run_id="${6:-}"
+checkpoint_step="${7:-}"
+if [[ -z "$run_id" ]]; then
+  [[ -z "$checkpoint_step" ]] || { echo "CHECKPOINT_STEP requires RUN_ID" >&2; exit 2; }
+  run_id="$(go run ./cmd/waldo/ --json model summary "$model" | jq -r '.bom.current_run_id')"
+fi
+selector=(--run-id "$run_id")
+[[ -z "$checkpoint_step" ]] || selector+=(--checkpoint-step "$checkpoint_step")
 
 prompts=(
   $'Alice was bored and wanted to find some adventures. She walked up to her friend Ben, who looked very busy playing with his toys. Alice said, "Why don\x27t we'
@@ -28,7 +35,7 @@ prompts=(
 : >"$output"
 for prompt in "${prompts[@]}"; do
   go run ./cmd/waldo/ --json model chat "$model" \
-    --run-id "$run_id" --raw --temperature "$temperature" --seed "$seed" \
+    "${selector[@]}" --raw --temperature "$temperature" --seed "$seed" \
     --max-tokens "$max_tokens" "$prompt" >>"$output"
 done
 

@@ -832,7 +832,8 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 	}
 	artifactPrefix := "artifacts"
 	observation, backendErr := selection.Backend.Run(ctx, training.Request{
-		RunID: pin.ID, Stage: stage.Name, Objective: stage.Objective,
+		ModelID: record.ID,
+		RunID:   pin.ID, Stage: stage.Name, Objective: stage.Objective,
 		Conversation:       runBOM.Conversation,
 		ArchitectureSHA256: record.ArchitectureSHA256,
 		Architecture:       architectureJSON, Tokenizer: tokenizerSpec, BOM: prepared.BOM, Inputs: prepared.Inputs,
@@ -989,7 +990,8 @@ func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared 
 	}
 	plan := MultiNodePlan{
 		Kind: MultiNodePlanKind, Schema: MultiNodePlanSchema,
-		RunID: pin.ID, Stage: stage.Name, StageOrdinal: builder.MultiNode.StageOrdinal, StageCount: builder.MultiNode.StageCount,
+		ModelID: runBOM.ModelID,
+		RunID:   pin.ID, Stage: stage.Name, StageOrdinal: builder.MultiNode.StageOrdinal, StageCount: builder.MultiNode.StageCount,
 		Nodes: builder.MultiNode.Nodes, Objective: stage.Objective,
 		ArchitectureSHA256: runBOM.ArchitectureSHA256, Architecture: architectureJSON,
 		Parameters: runBOM.Parameters, CorpusBOM: prepared.BOM,
