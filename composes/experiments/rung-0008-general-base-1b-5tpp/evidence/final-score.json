@@ -1,0 +1,13 @@
+{
+  "responses": 20,
+  "two_complete_sentences": 20,
+  "sampled_eos_diagnostic": 18,
+  "sampled_loops": 0,
+  "greedy_loops": 1,
+  "gates": {
+    "two_complete_sentences": true,
+    "sampled_loops": true,
+    "greedy_loops": true
+  },
+  "passed": true
+}

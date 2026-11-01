@@ -53,6 +53,26 @@ EOS remains diagnostic for this raw base model. Passing authorizes a controlled
 TPP is considered only if the 20-TPP phase still shows meaningful held-out and
 behavioral gains without evidence of overtraining.
 
+## Completed result
+
+The completed run `general-base-1b-5tpp-02` is a near miss and is not promoted.
+Its selected checkpoint is step 271,073 of 295,716, with held-out loss
+`2.193199`, held-out BPB `0.798612`, and zero serialization loss delta. The
+frozen objective scorer passed: 20/20 sampled outputs contain two complete
+sentences, sampled loops are 0/20, and greedy loops are 1/20.
+
+Conservative manual review found only 13/20 sampled outputs grammatical and on
+topic through three sentences, below the frozen 18/20 gate. The misses are
+mostly entity drift in story continuations and factual prompts that become
+incorrect or tangential explanations. This result does not authorize the
+10-TPP phase.
+
+The raw sampled and greedy JSONL and the unchanged scorer output are preserved
+under `evidence/`. The next experiment is a short quality anneal from this
+immutable selected artifact, using only Wikimedia and StackExchange. It tests
+whether removing the synthetic-story bias late in training can repair the
+manual gate without paying for another full 5-TPP run or changing architecture.
+
 ## Commands
 
 ```console

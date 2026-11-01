@@ -1,0 +1,49 @@
+# Controlled correction for the completed rung-0008 5-TPP near miss.
+kind: waldo-model-compose
+schema: 1
+base:
+  model: general-base-1b-5tpp-02
+  model_id: 2879a9d88d2727e65695cca49276e880d2a95acf0a0c0934c5962debc695497d
+  run_id: a4f2743ed87cac6f
+  run_bom_sha256: d454b4990df4e4d24bfc1ffdb74168cc28251baa65be345917ed94e531049f6d
+  artifact_sha256: b2d77fdc8cc58a922cf9e31f57c9ae63f0650f8087f40ba84d5e280691266d10
+  artifact_bytes: 4138071392
+stages:
+  - name: general-base-1b-quality-anneal
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: core/common-pile/wikimedia
+        weight: 3
+      - path: core/common-pile/stackexchange
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      # 0.25 tokens per 968.976M non-embedding/core parameters.
+      tokens: 242250000
+      batch_size: 8
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: false
+      compile: false
+      sequence_length: 2048
+      learning_rate: 0.00004
+      optimizer: adamw
+      schedule: cosine
+      seed: 59
+      weight_decay: 0.1
+      warmup_steps: 250
+      checkpoint_every: 2464
+      evaluate_every: 1232
+      shuffle_buffer_records: 65536
+      shuffle_buffer_bytes: 2147483648
+      evaluation_selection: stratified-lowest-sha256-v1
+      evaluation_fraction: 0.01
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432

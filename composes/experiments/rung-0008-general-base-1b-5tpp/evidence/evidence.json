@@ -1,0 +1,26 @@
+{
+  "model": "general-base-1b-5tpp-02",
+  "model_id": "2879a9d88d2727e65695cca49276e880d2a95acf0a0c0934c5962debc695497d",
+  "run_id": "a4f2743ed87cac6f",
+  "planned_steps": 295716,
+  "selected_step": 271073,
+  "selected_heldout_loss": 2.1931989943919197,
+  "selected_heldout_bits_per_byte": 0.798612366297237,
+  "serialization_loss_delta": 0,
+  "objective_score": {
+    "responses": 20,
+    "two_complete_sentences": 20,
+    "sampled_eos_diagnostic": 18,
+    "sampled_loops": 0,
+    "greedy_loops": 1,
+    "passed": true
+  },
+  "manual_review": {
+    "criterion": "grammatical and on topic through three sentences",
+    "passed": 13,
+    "required": 18,
+    "failed_prompt_numbers": [1, 2, 4, 8, 16, 19, 20],
+    "result": "fail"
+  },
+  "promotion": "rejected"
+}

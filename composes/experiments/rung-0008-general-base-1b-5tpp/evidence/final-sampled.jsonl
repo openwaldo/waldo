@@ -1,0 +1,260 @@
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Mara carried the blue lantern into the cave because the path was dark. Inside the cave,",
+  "result": {
+    "text": " Sara saw a big, old pot. She thought it was a magic pot. She picked it up and held it in her hands.\nSuddenly, the old pot started to change. It became bright and colorful. Sara was so surprised! She didn't know that the pot was magic. Sara put the pot back in the cave and went home with a big smile on her face.",
+    "tokens": 80,
+    "finish_reason": "eos",
+    "duration_ms": 2103
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Jon found a small red boat beside the lake. He wanted to cross the water, so",
+  "result": {
+    "text": " he jumped in. As he sailed, he saw a big fish. The fish said, \"Hi, I'm Fin. What are you doing here?\" The frog said, \"I'm looking for a place to lay my eggs.\" Fin told the frog, \"You can go with me, but be careful. I don't want to hurt you.\"\nThe frog and the fish swam together. But then, something unexpected happened. The wind blew very hard. The waves took the frog far away from the lake. The frog was sad and scared. He didn't know how to get back.\nFin the fish saw that he was lost. He swam to the frog and said, \"Don't be sad. I will help you find your way back.\" They swam together and found the frog's home. The frog was happy and thanked Fin for his help. The moral of the story is to be careful when you explore.",
+    "tokens": 200,
+    "finish_reason": "eos",
+    "duration_ms": 5245
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Lina planted three sunflower seeds behind the white fence. Every morning,",
+  "result": {
+    "text": " she watered them with warm water and watched as they grew taller and taller. One morning, the sunflowers finally bloomed! Everyone cheered and clapped for her hard work.\n\nOne day, a group of kids came to visit the garden. They were amazed by the beautiful flowers and wanted to learn how to take care of them. A kind lady who was nearby taught them about gardening, sharing tips on how to water the seeds, and even taught them how to collect and store food.\n\nAs the days went on, the sunflowers started to look more and more beautiful. People came from far and wide to see them and take pictures of them in their garden. The garden became a special place where everyone could watch and feel the magic of nature.\n\nBut one day, something unexpected happened. A storm came and blew the garden down. The sunflowers were in danger!\n\nThat's when the kind lady realized she had to do something to help her friends and neighbors. She gathered all of the children and asked them what they needed to do to save the sunflowers. Then, she taught them how to plant new seeds, water them, and care for them until they were big and strong again.\n\nThat's when the garden started to grow again! It grew larger and larger, and before everyone knew it, it was back to its original size and beauty. The sunflowers had returned to their beloved garden, and all the people came back to admire and admire them.\n\nFrom that day on, the garden became a haven where people could come to enjoy nature, no matter what challenges they faced. And that's the story of the garden – not just a beautiful looking one, but also a lifesaver for people around the world.\n\nSo remember, every time you visit a garden, whether it's in your backyard or somewhere else, take a moment to appreciate the hard work and dedication of the gardeners who helped bring it back to life. You might just discover a whole new way to connect with nature and feel inspired to do the same!",
+    "tokens": 430,
+    "finish_reason": "eos",
+    "duration_ms": 13620
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Owen left his green scarf on the wooden chair before he went outside. When he returned,",
+  "result": {
+    "text": " the scarf was gone. Tommy was so sad. He had lost his scarf.\nThe next day, Tommy went to the park to find his scarf. But it was gone. Tommy looked everywhere, but he could not find it. He was very sad and cried. He never found his scarf again.",
+    "tokens": 65,
+    "finish_reason": "eos",
+    "duration_ms": 1725
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Ava heard thunder over the hill and saw rain moving toward the village. She decided",
+  "result": {
+    "text": " to go back to the village before it got too dark.\nWhen she arrived, she saw her friends looking for her. But, they were nowhere to be seen. Finally, she realized that her friends were gone. She was so sad and alone. She wished she could see them again, but it was too dark. \nThe End.",
+    "tokens": 68,
+    "finish_reason": "eos",
+    "duration_ms": 1798
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "The library was a quiet brick building with tall windows. Near the front door,",
+  "result": {
+    "text": " there was a big sign that said, \"Do not enter.\"\nOne day, a little boy named Tim went to the library with his mom. Tim was a bit embarrassed because he did not want to enter the library. He saw a big book on the floor and asked his mom, \"Can I eat this book?\" His mom said, \"No, Tim. It is not for you.\"\nTim was sad, but then he saw a big ball near the bookshelf. He played with the ball and forgot about the book. His mom said, \"I will not let you enter the library without a grown-up.\" Tim smiled and went back to the library.\nWhen Tim got to the library, he found a big surprise. He found a room full of toys and games! Tim was so happy and played all day. He learned that sometimes, good things can happen when you are brave.",
+    "tokens": 184,
+    "finish_reason": "eos",
+    "duration_ms": 4782
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "A tiny brown rabbit lived under the old apple tree. Its home was",
+  "result": {
+    "text": " in a big tree with many leaves. The rabbit loved to eat the green leaves and play with its friends.\nOne day, the rabbit saw a big tree with many fruits. The rabbit wanted to get the fruits, but they were too high up. The rabbit asked a bird, \"Can you help me get the fruits from the tree?\" The bird said, \"Yes, I can help you.\"\nThe bird flew up to the tree and picked the fruits for the rabbit. The rabbit was very happy. But then, something unexpected happened! The bird started to sneeze. The sneeze was so big that it scared the rabbit. The rabbit laughed and said, \"That was a sneeze!\"\nThe rabbit and the bird became good friends. They played together under the old apple tree every day. And the rabbit never wanted to sneeze again.",
+    "tokens": 178,
+    "finish_reason": "eos",
+    "duration_ms": 4649
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "The classroom had a round clock, twelve desks, and a large map. On the teacher’s table,",
+  "result": {
+    "text": " there was a big plate with lots of yummy food. The teacher said, \"We will eat food on the big, round clock.\"\nMom smiled and said, \"That's a great idea!\" They all sat down and enjoyed their food. The day was full of fun and laughter, and they all enjoyed their time together.",
+    "tokens": 70,
+    "finish_reason": "eos",
+    "duration_ms": 1852
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "The silver bicycle belonged to Elena. It had a basket on the front and",
+  "result": {
+    "text": " a bell on the back. Mia and Ben wanted to ride the bike, but they knew they had to ask first.\n\"Can we ride the bike, mom?\" they asked.\n\"Sure, but only if you hold the bell and be careful,\" mom said. \"The bike is not for you.\"\nMia and Ben nodded. They waited for the right time to get on the bike. They rode the bike around the park. They felt the wind in their hair and the sun on their faces. They felt the grass under their feet and the sun on their faces. They felt happy and free. They smiled at each other.\nMom smiled back. She was glad they had waited. She had a surprise for them. She had bought them a new bike. A red bike, like the one in the picture. A blue bike, like the one in the picture. Mia and Ben hugged mom and thanked her. They said they were the best. They rode their new bikes and looked at the park. They liked their new bikes and their new things. They liked the park. They liked the bike. They liked the bike. They liked the surprise. They liked the park. They were happy.",
+    "tokens": 255,
+    "finish_reason": "eos",
+    "duration_ms": 6954
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "The beach was empty after the storm. Wet shells covered the sand, while",
+  "result": {
+    "text": " the sea was still water.\nOne day, a little girl named Lily came to the beach. She saw the broken sand castle and wanted to repair it. Lily had some glue in her bag. She used the glue to stick the broken parts together. The castle was happy again.\nLily played in the sand all day. The sun was shining, and the birds were singing. She was very happy that she could help the sand castle. The sun went down, and the sky became dark and sad. Lily knew she had to go home and go to bed. She walked back to her house, excited to see her sand castle again.",
+    "tokens": 129,
+    "finish_reason": "eos",
+    "duration_ms": 3333
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "\"Please close the gate,\" said Nora. \"I will,\" Ben replied, \"because",
+  "result": {
+    "text": " it is a big one. But I want to see what is inside.\"\nNora opened the gate, and they both ran inside. Inside, they saw lots of daisies. \"Oh, this is so pretty!\" said Nora. \"Let's stay here and look at the daisies,\" said Ben. They both enjoyed looking at the daisies and making funny faces. They had a great time in their new home.",
+    "tokens": 91,
+    "finish_reason": "eos",
+    "duration_ms": 2334
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "\"Why is the puppy hiding?\" asked Eli. Mia looked under the table and said,",
+  "result": {
+    "text": " \"I don't know. Maybe he is scared.\" Eli felt bad for the puppy and wanted to help him.\nMia gave the puppy a warm hug and said, \"I will take care of you, puppy. We will be good friends.\" The puppy wagged his tail and seemed to feel better. Eli was happy to see the puppy happy. They played together all day long and had lots of fun.",
+    "tokens": 94,
+    "finish_reason": "eos",
+    "duration_ms": 2412
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "\"May I borrow your yellow pencil?\" Tom asked. Sara handed it to him and said,",
+  "result": {
+    "text": " \"Here, you can borrow my yellow pencil. It is very pretty.\"\nTom took the yellow pencil and started to draw. He drew a big sun, a tree, and a house. He was very happy with his drawing. But then, something unexpected happened. The yellow pencil started to glow. It became very bright and colorful.\nTom was very surprised and happy. He showed his drawing to his mom and dad. They were very proud of him. They said, \"Good job, Tom! You found a magic pencil!\" They put the glowing pencil back in the box and locked it with a key. From that day on, Tom had the most magical drawings with his special glowing pencil.",
+    "tokens": 145,
+    "finish_reason": "eos",
+    "duration_ms": 3708
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "\"The soup is too hot,\" said Ana. Her father answered,",
+  "result": {
+    "text": " \"It's OK, my sweet. We can try something else.\"\nAna thought about it for a moment and said, \"I don't know what's inside the soup, but it looks yummy!\" Her father smiled and said, \"Well, let's try it now. You're so brave for trying something new, even if you're scared.\"\nAna smiled and went to the counter. She took a spoon and tasted the soup. She made a funny face, but it was so yummy. She enjoyed it very much and thanked her father for being so kind.",
+    "tokens": 127,
+    "finish_reason": "eos",
+    "duration_ms": 3280
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Plants need light to grow. Their leaves use energy from sunlight to",
+  "result": {
+    "text": " produce food through photosynthesis. Some of the plants also have roots that help them access water and nutrients.\n* Birds: Birds rely on plants for their food, including insects. Birds eat other birds to get their meals. Birds have feathers, which provide warmth and protection. In fact, many birds have feathers themselves!\n\nAs you can see, plants play a big role in the food system. They provide us with food and help keep the earth healthy. So next time you're eating something that has been cooked, take a moment to appreciate the amazing ways that plants are doing their job!",
+    "tokens": 118,
+    "finish_reason": "eos",
+    "duration_ms": 3021
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Rain forms when water vapor in the air cools and",
+  "result": {
+    "text": " condenses into droplets of liquid and gas. These droplets can then be created by mixing water and air together.\n\nAnother cool example of a meteorite formation is the Supernova effect in the Solar System. When a star passes through space, it creates a cloud of gas and dust known as a solar nebula. This nebula eventually forms the protoplanetary outer atmosphere, which protects the space-dwelling orbiting stars from the intense radiation that can cause them to burn off and eventually collapse.\n\nSo, as you can see, meteorites are incredibly interesting objects that can tell us a lot about the formation and evolution of the universe. From stars to planets to stars, meteorites show us how the universe has been changing and transformation over billions of years. Who knows what secrets they might hold, or what exciting discoveries they might hold?\n\nActivity: Let's make our own miniature meteorites! All you need is a clear plastic cup, some water, a piece of string or yarn, and a few thin sheets of paper. Let your creativity run wild! All you need is a clear plastic cup, some water, and a piece of string or yarn. Start by setting the cup on the surface of the water, then roll a thin sheet of yarn across the top of the cup until it reaches the bottom of the cup. Then, carefully attach the string or yarn to the bottom of the cup using a knot. Now, let's imagine that our miniature meteorite has just come from the Big Bang and we've been one",
+    "tokens": 320,
+    "finish_reason": "eos",
+    "duration_ms": 9173
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "A thermometer is a tool used to measure temperature. When the liquid inside becomes warmer,",
+  "result": {
+    "text": " the temperature rises. On the other hand, when the liquid becomes colder, the temperature falls. By comparing the temperatures of both liquids, we can determine the temperature. Easy peasy!\n\nSo why do we need a thermometer? Well, imagine you're outside on a sunny day, and you come back with a number on your hand. You could probably tell how hot or cold it is without looking at the number. But wouldn't it be better if you could just measure the temperature without using a thermometer? That way, you could still be sure that you were in the right spot. Plus, who doesn't love being able to check the temperature from afar?\n\nWell, that's where the thermometer comes in. A thermometer is a device that measures temperature. It has a thin, pointed edge that connects to a metal mesh screen that gives off a temperature reading. The design of a thermometer is carefully designed to match the temperature reading on the screen.\n\nBut remember, when you're working with a thermometer, don't forget to pay attention to the size of the gap between the two sides of the screen. If the gap is too small, the thermometer might not be accurate enough to tell the difference between the two temperatures. And even small gaps can cause errors if the thermometer is too close to the skin. So always double-check your thermometer before you use it!\n\nNow that we've learned about the importance of a thermometer, let's talk about how to use one. First, we need to make sure the thermometer is properly fitted. To do this, we'll need a flat piece of plastic or metal, along with a pair of insulated tape. Then, we'll connect the thermometer to the respective end of the plastic or metal. Finally, we'll tap the battery to create the power to start the thermometer.\n\nWhen we're ready to use the thermometer, we'll carefully read the numbers on the screen. Each number tells us the temperature reading. For example, the number on the screen for when the thermometer is 0°C (a constant) would tell us the temperature was 0°C. On the other hand, the number for when the thermometer is 100°C (a constant) would tell us the temperature was 100°C.\n\nAnd that's it! We've now successfully used a thermometer to measure temperature. Of course, there are many more ways to use a thermometer, but this should give you a good idea of how versatile and",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 17162
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "A map helps people understand where places are. Symbols on a map can show",
+  "result": {
+    "text": " location, such as \"+1,\" \"-1,\" or \"-2.\" A bar chart uses symbols to represent each category, making it easy to see which location is most popular. By using a clear and concise map, you can quickly find your way around your town or city.\n\nAnother fun way to create maps is by drawing them yourself! Here are some steps to help you get started:\n\n1. Choose a point on your map that interests you. It could be a central location, like your house, or a random spot.\n2. Draw a straight line between the chosen point and the center of your map. This creates a sense of stability and direction.\n3. Now, draw a circle in the middle of your map. Be sure to label the center of the circle with the name of your place.\n4. Add lines or markers to indicate how you want to get from the point to the center of the circle. You can use lines for straight paths, or other options like angles or circles.\n5. Finally, make sure to label all of the points on your map, including their locations.\n\nBy creating a map of your town or city, you can quickly identify where things are located and how they relate to each other. Plus, making a map is a great way to practice your mapping skills! So grab a piece of paper, gather some friends or family members, and start exploring the world around you. Who knows what amazing discoveries you might make along the way?",
+    "tokens": 301,
+    "finish_reason": "eos",
+    "duration_ms": 8489
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Bees visit flowers to collect nectar. As they move from one flower to another,",
+  "result": {
+    "text": " they make funny noises and talk. Lily and Ben laugh and clap.\n\"Look, Ben, the bees are funny!\" Lily says. \"They like our flowers. They make honey.\"\n\"Yes, they do. They help the flowers grow and smell good. They are happy.\" Ben says.\nLily and Ben are happy too. They make more honey and have more fun. They thank the bees for their good work. They say goodbye to the bees and go to see other animals in the forest. They hope to come back and visit them again.",
+    "tokens": 117,
+    "finish_reason": "eos",
+    "duration_ms": 2976
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "A shadow appears when an object blocks light. If the light source moves,",
+  "result": {
+    "text": " it creates a shadow.\n* If the object is moving, the light can pass through the object and change direction. This can cause the object to move, but it cannot change its path. The light cannot change its direction.\n* If the object is moving, the light can also change direction. This can cause the object to change its path. The light cannot change its direction, but it can change its path. This is called Level Saving.\n\nSo how do we calculate Light Scaling? Well, let's break it down into smaller pieces.\n\nFirst, we need to define what we mean by \"light.\" Light is made up of tiny particles called photons, which can travel in all directions. We call the distance between the light and the source of the light \"Light Scaling.\"\n\nNext, we need to define what we mean by \"projection.\" Projection is a way of representing the position of the light source relative to the surrounding area. To project, we find a line that passes through the center of the light source, and we scale that line by the area of the light source.\n\nFinally, we need to define what we mean by \"inverse image.\" An image is just a picture that shows us the shape of a landscape. When we set the coordinates of the light source to get its image, we are actually changing the shape of the image!\n\nNow that we have the basic idea of Light Scaling, let's see how it applies to real life. One application of Light Scaling is in holography, where doctors use a tool to create 3D images of patients. They use light scoping to create incredibly detailed 3D images of the organs inside their bodies. These images can then be used for medical treatments, such as operating on the heart or even helping to diagnose conditions like cancer.\n\nAnother application of Light Scaling is in robotics, where engineers use light scoping to build robots that can move and interact with their environment. By carefully controlling the light scoping, these robots can navigate around obstacles, follow paths, and even pick up objects.\n\nIn summary, Light Scaling is a powerful tool for analyzing light that lets us change its appearance. By defining the size and scale of the light source, we can calculate its distance from the source, and then scale that distance to get a new set of coordinates. This allows us to project light onto a three-dimensional surface, allowing us to create incredibly detailed 3D images of the world around us. So next",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 17241
+  }
+}

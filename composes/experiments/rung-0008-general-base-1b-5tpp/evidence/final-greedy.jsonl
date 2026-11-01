@@ -1,0 +1,260 @@
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Mara carried the blue lantern into the cave because the path was dark. Inside the cave,",
+  "result": {
+    "text": " they found a big, shiny rock. They were very happy and took the rock home. They showed it to their friends and everyone loved it. The cave was a special place for them.",
+    "tokens": 39,
+    "finish_reason": "eos",
+    "duration_ms": 779
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Jon found a small red boat beside the lake. He wanted to cross the water, so",
+  "result": {
+    "text": " he jumped in. The boat started to move, and it went very fast. The boat went so fast that it made a big wave. The wave was so big that it pushed the boat back to the shore.\nWhen the boat got back to the shore, it saw a little girl. She was crying. The boat asked her, \"Why are you sad?\" The little girl said, \"I lost my toy boat. It went too fast and it made a big wave.\" The boat wanted to help the little girl. It went fast and found the toy boat. The boat gave the toy boat back to the little girl. She was very happy and said, \"Thank you, boat!\" The boat was happy too, because it helped a friend.",
+    "tokens": 155,
+    "finish_reason": "eos",
+    "duration_ms": 2690
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Lina planted three sunflower seeds behind the white fence. Every morning,",
+  "result": {
+    "text": " she watered them and watched as they grew taller and taller.\n\nOne day, a little girl named Lily came to visit the garden. She saw the sunflowers and said, \"Wow, you are so big and pretty!\" The sunflowers smiled and said, \"Thank you, Lily! We love growing so much!\"\nLina and Lily became good friends. They played in the garden every day. They laughed and had fun together. And the sunflowers always remembered their special day with the big, pretty sunflower.",
+    "tokens": 115,
+    "finish_reason": "eos",
+    "duration_ms": 2016
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Owen left his green scarf on the wooden chair before he went outside. When he returned,",
+  "result": {
+    "text": " he saw that the scarf was gone. He looked around and saw a little girl holding the scarf. She was smiling and holding it up.\n\"Thank you for finding my scarf,\" said the little girl. \"I was so cold and I was so cold. I'm so glad you found it.\"\nThe little girl smiled and said, \"You're welcome! Now I'm warm and I'm not cold anymore.\"\nThe little girl and the little boy became friends. They played together in the park and had lots of fun. The little girl was happy to have a new friend and the little boy was happy to have a warm scarf.",
+    "tokens": 138,
+    "finish_reason": "eos",
+    "duration_ms": 2425
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Ava heard thunder over the hill and saw rain moving toward the village. She decided",
+  "result": {
+    "text": " to go back to her house and tell her mom what had happened. \nWhen she got back, her mom was so surprised to see her. She asked her what had happened and Ava told her about the thunder. Her mom smiled and said, \"It's ok, sweetheart. We can go back to the village and tell everyone about the thunder.\" \nAva was so happy and excited. She couldn't wait to tell everyone about the thunder and the village.",
+    "tokens": 98,
+    "finish_reason": "eos",
+    "duration_ms": 1704
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "The library was a quiet brick building with tall windows. Near the front door,",
+  "result": {
+    "text": " there was a big, red ball.\nOne day, a little girl named Lily went to the library with her mom. Lily loved to play with the big, red ball. She would throw it, kick it, and roll it around. Her mom would smile and clap her hands when she saw Lily play.\nLily's mom told her to be careful with the ball. She said, \"Lily, don't throw the ball too far. It might get lost.\" Lily listened to her mom and played with the ball gently. She had lots of fun at the library, and she was happy to be a good girl.",
+    "tokens": 130,
+    "finish_reason": "eos",
+    "duration_ms": 2275
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "A tiny brown rabbit lived under the old apple tree. Its home was",
+  "result": {
+    "text": " a small hole in the tree. The rabbit was very happy in its new home.\nOne day, a big storm came. The wind blew hard and the rain fell fast. The rabbit was scared. It wanted to go back to its old home. But the rabbit was lost in the storm. It was very sad.\nThen, a kind bird saw the rabbit. The bird wanted to help. It flew to the rabbit and said, \"Don't be sad. I will help you find your home.\" The rabbit and the bird walked together. They found the rabbit's home. The rabbit was happy again. It thanked the bird and they became good friends.",
+    "tokens": 138,
+    "finish_reason": "eos",
+    "duration_ms": 2418
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "The classroom had a round clock, twelve desks, and a large map. On the teacher’s table,",
+  "result": {
+    "text": " there was a big book with many colorful pictures. The teacher said, \"Today, we will learn about the sunrise.\"\nThe teacher showed the kids how to draw the sunrise. They used a big paper and a small crayon. The sun came up, and the sky was full of pretty colors. The kids were happy and excited. They loved learning about the sunrise.",
+    "tokens": 80,
+    "finish_reason": "eos",
+    "duration_ms": 1424
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "The silver bicycle belonged to Elena. It had a basket on the front and",
+  "result": {
+    "text": " a bell on the back. It was a gift from her grandma.\n\"Wow, thank you, grandma!\" Lily said. \"Can I ride it now?\"\n\"Of course, my dear,\" grandma said. \"But be careful. It is very old and fragile. You have to hold it tight and not let it fall.\"\nLily took the bike and put it on the ground. She got on it and started to pedal. She felt the wind in her hair and the sun on her face. She was very happy.\nBut then, she saw a big rock on the road. She did not see it before. She did not see it either. She did not see it either. She only saw the bike.\n\"Oh no, what is that?\" Lily said. \"It is not a bike. It is a rock. It is not a bike. It is a rock.\"\nShe stopped pedaling and looked at the rock. She felt a sharp pain in her foot. She started to cry.\n\"Ow, ow, ow!\" Lily said. \"It hurts! It hurts!\"\nGrandma heard her cry and ran to her. She saw the rock and the bike. She saw Lily's foot. She saw the blood. She was very angry.\n\"Lily, what have you done?\" grandma said. \"This is a very old and fragile thing. It is not a bike. It is a rock. It is a rock. It is not a bike. It is a rock. It is a rock. It is not a bike. It is a rock. It is a rock. It is not a bike. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock. It is a rock.",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12770
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "The beach was empty after the storm. Wet shells covered the sand, while",
+  "result": {
+    "text": " the sea was still. The sun was shining, and the sky was blue. Tim and Sam were happy they could play in the sand and swim in the sea.",
+    "tokens": 34,
+    "finish_reason": "eos",
+    "duration_ms": 747
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "\"Please close the gate,\" said Nora. \"I will,\" Ben replied, \"because",
+  "result": {
+    "text": " I want to go inside.\"\nNora was very persistent. She kept asking for the gate, but Ben just kept saying no. Finally, she said, \"Please close the gate, Ben. I want to go inside.\"\nBen was very surprised. He had never seen a gate open before. He quickly closed the gate and said, \"Please, can I go inside?\"\nNora smiled and said, \"Yes, you can go inside, but only if you promise to be very careful.\"\nBen was so happy. He thanked the gatekeeper and ran inside. He had a wonderful time exploring the world outside.",
+    "tokens": 126,
+    "finish_reason": "eos",
+    "duration_ms": 2128
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "\"Why is the puppy hiding?\" asked Eli. Mia looked under the table and said,",
+  "result": {
+    "text": " \"I don't know, but I think he is scared.\" Eli smiled and said, \"Don't worry, I will help him.\"\nMia and Eli went to the puppy and gave him a big hug. The puppy was not scared anymore. He wagged his tail and licked Eli's face. Mia and Eli were happy that they could help the puppy. They went back to playing with their toys, knowing that they had done a good thing.",
+    "tokens": 106,
+    "finish_reason": "eos",
+    "duration_ms": 1776
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "\"May I borrow your yellow pencil?\" Tom asked. Sara handed it to him and said,",
+  "result": {
+    "text": " \"Here, you can use it to draw a big sun.\"\nTom took the yellow pencil and started to draw. He drew a big sun, a blue sky, and a green tree. He was very happy with his drawing. But then, something unexpected happened. The yellow pencil started to talk!\n\"Hi, I am a magic pencil!\" said the yellow pencil. \"I can make your drawings come to life!\" Tom was very surprised. He never thought a yellow pencil could talk. They became good friends and had lots of fun together.",
+    "tokens": 115,
+    "finish_reason": "eos",
+    "duration_ms": 2032
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "\"The soup is too hot,\" said Ana. Her father answered,",
+  "result": {
+    "text": " \"It's ok, sweetheart. We can make it cool down with some water.\" \nAna smiled and said, \"Okay, let's do it!\" \nSo, they went to the kitchen and started to make the soup. They added some water and put it in a pot. Then, they added some vegetables and stirred it all together. \nWhen the soup was ready, Ana and her father sat down and ate it. It was so yummy! They both agreed that it was the best soup they ever had.",
+    "tokens": 113,
+    "finish_reason": "eos",
+    "duration_ms": 1980
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Plants need light to grow. Their leaves use energy from sunlight to",
+  "result": {
+    "text": " make food through photosynthesis. Plants also have roots that dig deep into the ground to access water and nutrients.\n\nBut how do plants know when it's time to grow? That's where genetics comes in!\n\nGenetics is the study of how traits are passed down from parents to offspring. It helps us understand why some plants grow tall and others short, why certain animals have different body parts, and why some people have curly hair and others have straight hair.\n\nIn this course, we will learn all about the amazing world of plant genetics. We will explore the different genes that make plants unique, and how they work together to help plants grow and thrive. We will also learn about the genetic factors that can cause diseases in plants, and how scientists are working to find cures for these diseases.\n\nThroughout the course, we will use fun and interactive activities to help us understand the concepts. We will plant seeds in our own garden, observe how plants grow over time, and even conduct our own experiments to see how different genes affect plant growth.\n\nBy the end of this course, you will have a deep understanding of the incredible world of plant genetics. You will appreciate the complexity and beauty of nature, and maybe even discover a passion for science along the way! So let's get started on this exciting journey of discovery!",
+    "tokens": 270,
+    "finish_reason": "eos",
+    "duration_ms": 5231
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Rain forms when water vapor in the air cools and",
+  "result": {
+    "text": " turns into liquid droplets. These droplets can then be collected and analyzed to determine the temperature and pressure conditions at the site.\n\nAnother important tool for measuring water vapor is the gas chromatograph, which separates the gases based on their boiling points. By analyzing the gases in the mixture, scientists can determine the concentration of each gas and calculate the amount of water vapor present.\n\nBut water vapor isn't just useful for studying the atmosphere; it also plays a crucial role in many natural processes. For example, water vapor is often used as a source of oxygen in the human body, helping to regulate the body's internal temperature. It is also used to produce hydrogen gas, which is used to power cars and power plants.\n\nIn addition to these scientific tools, water vapor is also a powerful tool for environmental protection. When water vapor is present in the atmosphere, it can cause the Earth's climate to change, leading to problems like droughts, floods, and wildfires. Scientists are working hard to monitor water vapor levels and develop strategies to prevent them from getting too high.\n\nSo next time you see a cloud in the sky, remember that water vapor is playing a big role in the atmosphere too! With the help of scientific tools like the atmosphere, we can better understand and protect our planet's precious water resources.",
+    "tokens": 268,
+    "finish_reason": "eos",
+    "duration_ms": 5098
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "A thermometer is a tool used to measure temperature. When the liquid inside becomes warmer,",
+  "result": {
+    "text": " it rises, causing the thermometer to change. By measuring these changes, we can determine how hot or cold the liquid is.\n\nNow, let's talk about why temperature is important in chemistry. Have you ever left a cup of hot cocoa outside on a hot day? It gets warm, right? That's because the heat from the cocoa causes the molecules in the cocoa to move around and change shape. This movement creates a change in the temperature of the cocoa, which affects the amount of heat it gets.\n\nIn chemistry, temperature plays a big role too. Some chemicals, like certain gases, can cause chemical reactions to occur. These reactions can change the properties of the chemicals, making them more or less stable. By understanding how temperature affects chemical reactions, we can design new materials with desired properties.\n\nLet's look at a real-world example of temperature in action. Imagine you're baking a cake. You mix together all the ingredients, but before you put the cake in the oven, you need to make sure it's cooked properly. If you put the cake in the oven too long, it might burn and become unbakeable. But if you wait too long, the cake might not bake properly.\n\nThe same thing happens in chemistry. If you don't heat the cake properly, it might not turn out as planned. By measuring the temperature of the cake, you can make sure it's cooked just right.\n\nSo, next time you're baking a cake or watching a chemical reaction, remember to think about temperature. It might seem like a small thing, but it can have a big impact on the world around us!",
+    "tokens": 344,
+    "finish_reason": "eos",
+    "duration_ms": 7206
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "A map helps people understand where places are. Symbols on a map can show",
+  "result": {
+    "text": " things like borders, rivers, and buildings. By using symbols, we can communicate more effectively and quickly.\n\nBut sometimes, symbols can also be used to make mistakes. Have you ever played the game \"Telephone\"? In this game, one person whispers a message to the next person, and so on down the line. The last person says the message out loud, and then that person passes it along to the next person, and so on. By the time the message gets back to the first person, it has usually changed quite a bit! This is because each person added their own interpretation or understanding to the message as they passed it along.\n\nIn the world of maps, symbols can also be used to make mistakes. For example, imagine you were trying to find the best way to get from your house to your friend's house. You might use a map to help you figure out the shortest route. But what if the map was made up of lots of different symbols, like roads and rivers? It would be hard to know which one to use!\n\nThat's why cartographers (people who make maps) often use symbols to represent the best way to get from one place to another. They might use a symbol to indicate the best path, or a symbol to indicate the best route. By using symbols, they can make sure that their maps are accurate and helpful for everyone involved.\n\nSo the next time you see a map, try looking at it with a critical eye. Ask yourself: What symbols am I seeing? How do those symbols make the map? And most importantly, how can I use them to help me get from where I am to where I want to go? With a little bit of critical thinking, you'll be a map-maker in no time!",
+    "tokens": 365,
+    "finish_reason": "eos",
+    "duration_ms": 7793
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "Bees visit flowers to collect nectar. As they move from one flower to another,",
+  "result": {
+    "text": " they make a circle. The birds fly in and out of the circle, singing and playing together. The birds are happy and the sun is shining.",
+    "tokens": 31,
+    "finish_reason": "eos",
+    "duration_ms": 644
+  }
+}
+{
+  "model": "general-base-1b-5tpp-02",
+  "source_type": "run",
+  "source_id": "a4f2743ed87cac6f",
+  "run_id": "a4f2743ed87cac6f",
+  "prompt": "A shadow appears when an object blocks light. If the light source moves,",
+  "result": {
+    "text": " the shadow changes shape.\n\nNow, let's think about how we can apply this knowledge to our own lives. Imagine you're outside on a sunny day, and you notice a beautiful rainbow stretching across the sky. You might wonder, \"What causes the rainbow to appear?\" To answer this question, you could look up at the sky and see a rainbow stretching from the ground to the sky. But why does the rainbow appear?\n\nWell, it has to do with the way light interacts with the Earth's surface. When sunlight hits the ground, it bounces off the surface and gets absorbed by the soil, water, and air. This absorbed light then gets absorbed by the surface, causing the surface to change color. The color of the light depends on the amount of energy absorbed by the surface.\n\nFor example, when sunlight hits the ground, it gets absorbed by the soil and water. The absorbed light then gets absorbed by the surface, causing the surface to change color. This process happens incredibly fast – sometimes in just a fraction of a second! And because the surface is always changing, the color of the light always changes too.\n\nBut what if we want to know more about the properties of the rainbow? Is it just a shadow, or is there something deeper going on? To answer this question, we need to use the principles of optics and optics.\n\nOptics is the study of light and its interaction with matter. It involves studying how light travels and interacts with different materials. By understanding these principles, we can learn all sorts of things about the world around us.\n\nFor instance, did you know that light can be used to make all kinds of cool things, like holograms and even medical imaging devices? That's right! By shining a beam of light onto a special kind of material, we can create a pattern of light that can be used to make all kinds of amazing things.\n\nOr how about how light can be used to create stunning visual effects? From the way we see the stars in the sky to the way we see the human face, light plays a huge role in our lives. By using special tools and techniques, we can harness its power to create stunning images and videos.\n\nAnd finally, let's not forget about optics. While optics deals with light, optics deals with the properties of light itself. Both fields are closely related, and they both help us understand the world around us.\n\nFor example, when light hits a surface, it can cause",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12733
+  }
+}
