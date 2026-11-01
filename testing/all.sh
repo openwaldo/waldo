@@ -6,6 +6,10 @@
 
 set -eu
 
+if [ "${WALDO_TEST_CPU_ONLY:-0}" = "1" ]; then
+    export CUDA_VISIBLE_DEVICES=""
+fi
+
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 
 "$script_dir/unit.sh"
@@ -16,6 +20,10 @@ WALDO_CONFORMANCE_REQUIRED=0 "$script_dir/training-conformance.sh"
 "$script_dir/e2e/ingest-direct.sh"
 "$script_dir/e2e/structured-conversation.sh"
 "$script_dir/e2e/model-fake.sh"
+if [ "${WALDO_TEST_CPU_ONLY:-0}" = "1" ]; then
+    echo "testing: accelerator lifecycle tests intentionally skipped (WALDO_TEST_CPU_ONLY=1)"
+    exit 0
+fi
 "$script_dir/e2e/model-mlx.sh"
 "$script_dir/e2e/model-pytorch.sh"
 "$script_dir/e2e/model-pytorch-memorization.sh"
