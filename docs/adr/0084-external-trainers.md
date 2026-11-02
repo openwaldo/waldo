@@ -109,9 +109,8 @@ WALDO can tokenize during preflight, before any training process starts.
 The trainer manifest is `waldo-trainer.yaml` at the trainer path. It declares
 `kind`, `schema`, `name`, `protocol`, `entrypoint` (`module` or `script`;
 `executable` is reserved for later), `commands` (`probe`, `resolve`,
-`train`), `launch_profiles`, `objectives`, `artifact_profile`, optional
-`schemas` (paths to committed `architecture` and `parameters` schema files),
-and named `environments`. Environments of `kind: python-lock` are supported.
+`train`), `launch_profiles`, `objectives`, `artifact_profile`, and named
+`environments`. It names no schema files. Environments of `kind: python-lock` are supported.
 
 Rationale: WALDO must know how to launch the trainer, which profiles and
 objectives it supports, and how to interpret its output before running any
@@ -122,24 +121,20 @@ of the hashed source.
 
 The trainer reports its architecture and parameter schemas, as JSON Schema
 2020-12 documents, in its `probe` response. The tokenizer reports its
-configuration schema the same way. This response is the authoritative source.
-A trainer may generate the documents from code, for example from Python
-classes.
+configuration schema the same way. This response is the only source of
+schemas. A trainer may generate the documents from code, for example from
+Python classes.
 
 WALDO records every received trainer and tokenizer schema document byte for
 byte, unfiltered, in `TRAINER-SCHEMAS.json` next to `PLAN.json`, and puts each
-document's SHA-256 in the plan hash. When the manifest names a committed
-schema file, the file must be byte-identical to the reported document, or the
-run fails. WALDO validates the compose, and later every `resolve` result,
-against the full documents.
+document's SHA-256 in the plan hash. WALDO validates the compose, and later
+every `resolve` result, against the full documents.
 
 Rationale: the schema is a deterministic function of the trainer source and
 its locked environment, which identity already covers, so a schema generated
 at run time gives the same guarantee as a committed file. Recording the
 received documents keeps the plan auditable without re-running the trainer
-and makes changes caused by a generator dependency visible. A committed file
-remains useful for offline validation and review, and the byte-equality check
-keeps it from drifting.
+and makes changes caused by a generator dependency visible.
 
 ### Parameter roles
 
@@ -362,8 +357,7 @@ The reference trainer lives in the WALDO repository at
 `examples/trainers/qwen3-hf`. It trains Qwen3 from scratch with Hugging Face
 Transformers and supports both launch profiles. Trainer and tokenizer share
 one directory, and the tokenizer files are committed. Its schemas are defined
-in Python and reported through `probe`, and the generated schema files are
-also committed so they can be reviewed and checked for drift.
+in Python and reported through `probe`.
 
 Rationale: one maintained trainer exercises the whole contract, serves as the
 conformance target, and shows third parties a complete working layout.
