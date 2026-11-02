@@ -1,0 +1,260 @@
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "Mara carried the blue lantern into the cave because the path was dark. Inside the cave,",
+  "result": {
+    "text": " the lantern was lit by a lamp. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the cave was dark. The light was very bright and the",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12929
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "Jon found a small red boat beside the lake. He wanted to cross the water, so",
+  "result": {
+    "text": " he took a rope and tied it to the boat. He started to pull the rope, but it was too tight. He pulled harder, but the rope broke. The boat sank, and Jon was left on the shore.\n\nJon was very upset. He had been trying to cross the lake, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the lake, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river, but he had not succeeded. He had been trying to cross the river,",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12901
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "Lina planted three sunflower seeds behind the white fence. Every morning,",
+  "result": {
+    "text": " she would go to the garden and plant the seeds. She would water them and watch them grow. She would also give them water and talk to them. She would tell them stories and sing songs. She would also tell them stories and sing songs. She would also tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would tell them stories and sing songs. She would",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12759
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "Owen left his green scarf on the wooden chair before he went outside. When he returned,",
+  "result": {
+    "text": " he found that the chair was gone. He looked around, but he could not find it. He went back inside and asked his mother if she had seen it. She said no. He went outside and searched the house. He found the chair, but it was not there. He went back inside and asked his mother if she had seen it. She said no. He went outside again and searched the house. He found the chair, but it was not there. He went back inside and asked his mother if she had seen it. She said no. He went outside again and searched the house. He found the chair, but it was not there. He went back inside and searched the house. He found the chair, but it was not there. He went back outside and searched the house. He found the chair, but it was not there. He went back inside and searched the house. He found the chair, but it was not there. He went back outside and searched the house. He found the chair, but it was not there. He went back inside and searched the house. He found the chair, but it was not there. He went back outside and searched the house. He found the chair, but it was not there. He went back inside and searched the house. He found the chair, but it was not there. He went back outside and searched the house. He found the chair, but it was not there. He went back inside and searched the house. He found the chair, but it was not there. He went back outside and searched the house. He found the chair, but it was not there. He went back inside and searched the house. He found the chair, but it was not there. He went back outside and searched the house. He found the chair, but it was not there. He went back inside and searched the house. He found the chair, but it was not there. He went back outside and searched the house. He found the chair, but it was not there. He went back inside and searched the house. He found the chair, but it was not there. He went back outside and searched the house. He found the chair, but it was not there. He went back inside and searched the house. He found the chair, but it was not there. He went back outside and searched the house. He found the chair, but it was not there. He went back inside and searched the house. He found the chair, but it was not there.",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12855
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "Ava heard thunder over the hill and saw rain moving toward the village. She decided",
+  "result": {
+    "text": " to go and see what was happening. She walked up the hill and saw a big, dark cloud in the sky. She knew that rain was coming. She ran back down the hill and saw a big, dark cloud in the sky. She knew that rain was coming. She ran back to the village and told the people what she had seen. The people were very happy and thanked her for her help. They all went inside their homes and waited for the rain to stop.",
+    "tokens": 98,
+    "finish_reason": "eos",
+    "duration_ms": 1697
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "The library was a quiet brick building with tall windows. Near the front door,",
+  "result": {
+    "text": " a small, round-headed window was set in a round-headed arch. The windows were topped by a fanlight. The front of the building was covered with a large, red-brick wall. The roof was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered with a red-brick roof. The front of the building was covered",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12743
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "A tiny brown rabbit lived under the old apple tree. Its home was",
+  "result": {
+    "text": " a small hole in the tree. The rabbit was very happy in its new home.\nOne day, the rabbit saw a big, red ball. The rabbit wanted to play with the ball. It ran to the ball and gave it a little push. The ball rolled and rolled. The rabbit chased after the ball, but it was too fast.\nThe rabbit was tired, but it did not stop. It wanted to play with the ball again. It pushed the ball with its nose and the ball rolled. The rabbit was happy to play with the ball again. It played all day long and had lots of fun.",
+    "tokens": 125,
+    "finish_reason": "eos",
+    "duration_ms": 2180
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "The classroom had a round clock, twelve desks, and a large map. On the teacher’s table,",
+  "result": {
+    "text": " a large book, a small book, and a small book were on the table. The teacher’s chair was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk was on the floor. The teacher’s desk",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12901
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "The silver bicycle belonged to Elena. It had a basket on the front and",
+  "result": {
+    "text": " a handle on the back.\n\n“I'm going to take it to the police,” said the girl.\n\n“I'm going to take it to the police,” said the boy.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the girl.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the boy.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the girl.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the boy.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the girl.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the boy.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the girl.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the boy.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the girl.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the boy.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the girl.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the boy.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the girl.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the boy.\n\n“You're going to take it to the police?”\n\n“I'm going to take it to the police,” said the girl.\n\n“You're going to take it to the police?”\n\n“I'm going to take it",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12908
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "The beach was empty after the storm. Wet shells covered the sand, while",
+  "result": {
+    "text": " the sea was still. The sun was still shining, and the sky was still blue.\n\n\"I'm going to get a boat,\" said the man. \"I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat. I'm going to get a boat.",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12726
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "\"Please close the gate,\" said Nora. \"I will,\" Ben replied, \"because",
+  "result": {
+    "text": " I am afraid of the men who are going to come to me.\"\n\n\"I will close the gate,\" said Nora. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Ben. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Nora. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Ben. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Nora. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Ben. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Nora. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Ben. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Nora. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Ben. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Nora. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Ben. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Nora. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Ben. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Nora. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Ben. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Nora. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Ben. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Nora. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Ben. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Nora. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Ben. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Nora. \"I will not let them come in.\"\n\n\"I will close the gate,\" said Ben. \"I will",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12837
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "\"Why is the puppy hiding?\" asked Eli. Mia looked under the table and said,",
+  "result": {
+    "text": " \"I don't know. I just wanted to see if he was there.\"\n\"He is!\" said Eli. \"He is so cute!\"\n\n\"He is!\" said Mia. \"He is so cute!\"\n\n\"He is so cute!\" said Eli. \"He is so cute!\"\n\n\"He is so cute!\" said Mia. \"He is so cute!\"\n\n\"He is so cute!\" said Eli. \"He is so cute!\"\n\n\"He is so cute!\" said Mia. \"He is so cute!\"\n\n\"He is so cute!\" said Eli. \"He is so cute!\"\n\n\"He is so cute!\" said Mia. \"He is so cute!\"\n\n\"He is so cute!\" said Eli. \"He is so cute!\"\n\n\"He is so cute!\" said Mia. \"He is so cute!\"\n\n\"He is so cute!\" said Eli. \"He is so cute!\"\n\n\"He is so cute!\" said Mia. \"He is so cute!\"\n\n\"He is so cute!\" said Eli. \"He is so cute!\"\n\n\"He is so cute!\" said Mia. \"He is so cute!\"\n\n\"He is so cute!\" said Eli. \"He is so cute!\"\n\n\"He is so cute!\" said Mia. \"He is so cute!\"\n\n\"He is so cute!\" said Eli. \"He is so cute!\"\n\n\"He is so cute!\" said Mia. \"He is so cute!\"\n\n\"He is so cute!\" said Eli. \"He is so cute!\"\n\n\"He is so cute!\" said Mia. \"He is so cute!\"\n\n\"He is so cute!\" said Eli. \"He is so cute!\"\n\n\"He is so cute!\" said Mia. \"He is so cute!\"\n\n\"He is so cute!\" said Eli. \"He is so",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12950
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "\"May I borrow your yellow pencil?\" Tom asked. Sara handed it to him and said,",
+  "result": {
+    "text": " \"Here, you can draw a picture of the sun.\"\nTom took the pencil and drew a big, yellow sun on the paper. He showed it to Sara and said, \"This is a nice sun. It is bright and happy.\"\nSara looked at the picture and said, \"Wow, that is a nice sun. But I like the yellow one better. It is bright and happy.\" She gave the yellow one to Tom and said, \"Here, you can draw a yellow sun on the paper.\"\nTom took the yellow one and drew a big, yellow sun on the paper. He showed it to Sara and said, \"This is a nice sun. It is bright and happy.\"\nSara looked at the picture and said, \"Wow, that is a nice sun. But I like the green one better. It is bright and happy.\" She gave the green one to Tom and said, \"Here, you can draw a green sun on the paper.\"\nTom took the green one and drew a big, green sun on the paper. He showed it to Sara and said, \"This is a nice green sun. It is bright and happy.\"\nSara looked at the picture and said, \"Wow, that is a nice green sun. But I like the blue one better. It is bright and happy.\"\nTom took the blue one and drew a blue sun on the paper. He showed it to Sara and said, \"Here, you can draw a blue sun on the paper.\"\nSara looked at the picture and said, \"Wow, that is a nice blue sun. But I like the red one better. It is bright and happy.\"\nTom took the red one and drew a red sun on the paper. He showed it to Sara and said, \"Here, you can draw a red sun on the paper.\"\nSara looked at the picture and said, \"Wow, that is a nice red sun. But I like the yellow one better. It is bright and happy.\"\nTom took the yellow one and drew a yellow sun on the paper. He showed it to Sara and said, \"Here, you can draw a yellow sun on the paper.\"\nSara looked at the picture and said, \"Wow, that is a nice yellow sun. But I like the green one better. It is bright and happy.\"\nTom took the green one and drew a green sun on the paper. He showed it to Sara and said, \"Here, you can draw a",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12840
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "\"The soup is too hot,\" said Ana. Her father answered,",
+  "result": {
+    "text": " \"It is too hot for the soup to be eaten. It is too cold for the soup to be eaten.\"\n\n\"I don't understand,\" said Ana. \"I don't understand why the soup is too hot.\"\n\n\"It is too hot for the soup to be eaten,\" said her father. \"It is too cold for the soup to be eaten.\"\n\n\"I don't understand,\" said Ana. \"I don't understand why the soup is too hot for the soup to be eaten.\"\n\n\"It is too hot for the soup to be eaten,\" said her father. \"It is too cold for the soup to be eaten.\"\n\n\"I don't understand,\" said Ana. \"I don't understand why the soup is too hot for the soup to be eaten.\"\n\n\"It is too hot for the soup to be eaten,\" said her father. \"It is too cold for the soup to be eaten.\"\n\n\"I don't understand,\" said Ana. \"I don't understand why the soup is too hot for the soup to be eaten.\"\n\n\"It is too hot for the soup to be eaten,\" said her father. \"It is too cold for the soup to be eaten.\"\n\n\"I don't understand,\" said Ana. \"I don't understand why the soup is too hot for the soup to be eaten.\"\n\n\"It is too hot for the soup to be eaten,\" said her father. \"It is too cold for the soup to be eaten.\"\n\n\"I don't understand,\" said Ana. \"I don't understand why the soup is too hot for the soup to be eaten.\"\n\n\"It is too hot for the soup to be eaten,\" said her father. \"It is too cold for the soup to be eaten.\"\n\n\"I don't understand,\" said Ana. \"I don't understand why the soup is too hot for the soup to be eaten.\"\n\n\"It is too hot for the soup to be eaten,\" said her father. \"It is too cold for the soup to be eaten.\"\n\n\"I don't understand,\" said Ana. \"I don't understand why the soup is too hot for the soup to be eaten.\"\n\n\"It is too hot for the soup to be eaten,\" said her father. \"It is too cold for the soup to be eaten.\"\n\n\"I don't",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12800
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "Plants need light to grow. Their leaves use energy from sunlight to",
+  "result": {
+    "text": " produce food. The leaves are also used to make a fire.\n\nThe leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a fire. The leaves are also used to make a",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12746
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "Rain forms when water vapor in the air cools and",
+  "result": {
+    "text": " condenses.\n * 2) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 3) The term \"rain\" is used in the United Kingdom to refer to the rain that falls on the ground.\n * 4) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 5) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 6) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 7) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 8) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 9) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 10) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 11) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 12) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 13) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 14) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 15) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 16) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 17) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 18) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 19) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 20) The term \"rain\" is used in the United States to refer to the rain that falls on the ground.\n * 21) The term \"rain\" is used in the United States",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12561
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "A thermometer is a tool used to measure temperature. When the liquid inside becomes warmer,",
+  "result": {
+    "text": " the temperature rises. The temperature of the liquid is the temperature of the liquid. The temperature of the liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature of the liquid. The temperature of a liquid is the temperature of the liquid.\n\nThe temperature of a liquid is the temperature",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12756
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "A map helps people understand where places are. Symbols on a map can show",
+  "result": {
+    "text": " the location of a place, and the location of a place can be used to represent a place.\n\nA map is a representation of a place. It is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is a way of representing a place on a map.\n\nA map is a way of representing a place on a map. It is",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12725
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "Bees visit flowers to collect nectar. As they move from one flower to another,",
+  "result": {
+    "text": " they are able to detect the presence of other flowers.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The flowers are also used as a food source for the birds.\n\nThe flowers are also used as a food source for the birds. The",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12807
+  }
+}
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "source_type": "run",
+  "source_id": "84ca6c3010dd6fc6",
+  "run_id": "84ca6c3010dd6fc6",
+  "prompt": "A shadow appears when an object blocks light. If the light source moves,",
+  "result": {
+    "text": " the shadow will appear.\n * 1) The shadow is the object that blocks the light.\n * 2) The object that blocks the light is the object that is the object that is the shadow.\n * 3) The object that blocks the light is the object that is the object that is the shadow.\n * 4) The object that blocks the light is the object that is the object that is the shadow.\n * 5) The object that blocks the light is the object that is the object that is the shadow.\n * 6) The object that blocks the light is the object that is the object that is the shadow.\n * 7) The object that blocks the light is the object that is the object that is the shadow.\n * 8) The object that blocks the light is the object that is the object that is the shadow.\n * 9) The object that blocks the light is the object that is the object that is the shadow.\n * 10) The object that blocks the light is the object that is the object that is the shadow.\n * 11) The object that blocks the light is the object that is the object that is the shadow.\n * 12) The object that blocks the light is the object that is the object that is the shadow.\n * 13) The object that blocks the light is the object that is the object that is the shadow.\n * 14) The object that blocks the light is the object that is the object that is the shadow.\n * 15) The object that blocks the light is the object that is the object that is the shadow.\n * 16) The object that blocks the light is the object that is the object that is the shadow.\n * 17) The object that blocks the light is the object that is the object that is the shadow.\n * 18) The object that blocks the light is the object that is the object that is the shadow.\n * 19) The object that blocks the light is the object that is the object that is the shadow.\n * 20) The object that blocks the light is the object that is the object that is the shadow.\n * 21) The object that blocks the light is the object that is the object that is the shadow.\n * 22) The object that blocks the light is the object that is the object that is the shadow.\n * 23) The object that blocks the light is the object that is the object that is the shadow.\n * 24) The object that blocks the",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12836
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "model": "general-base-1b-quality-anneal-01",
+  "model_id": "bfa4820572d5",
+  "run_id": "84ca6c3010dd6fc6",
+  "planned_steps": 14786,
+  "selected_step": 14784,
+  "selected_heldout_loss": 2.4639900824780083,
+  "artifact_reload": "verified",
+  "objective_score": {
+    "responses": 20,
+    "two_complete_sentences": 20,
+    "sampled_eos_diagnostic": 5,
+    "sampled_loops": 1,
+    "greedy_loops": 3,
+    "passed": false
+  },
+  "manual_review": {
+    "criterion": "grammatical and on topic through three sentences",
+    "passed": 8,
+    "required": 18,
+    "passed_prompt_numbers": [5, 7, 9, 10, 12, 13, 14, 18],
+    "result": "fail"
+  },
+  "promotion": "rejected"
+}

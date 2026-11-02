@@ -25,6 +25,28 @@ The exact frozen rung-0006 sampled and greedy suites remain authoritative:
 EOS remains diagnostic. Failure rejects the anneal; it does not weaken the
 5-TPP gate or authorize 10 TPP.
 
+## Completed result
+
+The experiment is rejected. Model `general-base-1b-quality-anneal-01` selected
+step 14,784 of 14,786 with exact artifact reload, but behavioral quality
+regressed materially from the 5-TPP parent:
+
+- 20/20 sampled outputs contain two complete sentences;
+- sampled loops are 1/20;
+- greedy loops are 3/20, failing the frozen maximum of two;
+- sampled EOS fell from 18/20 to 5/20; and
+- conservative manual review found only 8/20 outputs grammatical and on topic
+  through three sentences, versus 13/20 for the parent and 18/20 required.
+
+The restricted held-out loss is not directly comparable to the parent's
+mixed-corpus held-out loss. Its internal trend improved from `2.5695` to
+`2.4640`, but that did not translate into better frozen-suite behavior.
+
+This result rejects late Wikimedia/StackExchange annealing as the correction.
+It does not support changing the validated mixture. Any 10-TPP experiment must
+retain the original mixture and use an intermediate stop/go gate rather than
+assuming that additional exposure will repair coherence.
+
 ## Commands
 
 ```console
