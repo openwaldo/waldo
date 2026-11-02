@@ -153,16 +153,20 @@ func linkTo(node LineageNode) (LineageLink, error) {
 // node hash: each run's and origin's node, and each release node an origin
 // records. A pulled origin's link to its release node is declared: the release
 // says where its weights came from, whatever node it names, and nothing here
-// can check it, so pulled origins' nodes are also returned on their own.
+// can check it. So it also returns the nodes whose parents are only claims:
+// pulled origins' nodes, and release nodes no local record produced.
 func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) {
 	index := map[string]LineageNode{}
-	pulled := map[string]bool{}
-	add := func(node LineageNode) string {
+	local := map[string]bool{}
+	claimed := map[string]bool{}
+	stop := map[string]bool{}
+	add := func(node LineageNode, into map[string]bool) string {
 		digest, err := hashJSON(node)
 		if err != nil {
 			return ""
 		}
 		index[digest] = node
+		into[digest] = true
 		return digest
 	}
 	for _, root := range []string{builder.Root, filepath.Join(builder.Root, ".merges"), filepath.Join(builder.Root, ".origins")} {
@@ -182,7 +186,7 @@ func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) 
 			// still meets the rest of the chain after the model trains on.
 			if nodes, err := runLineage(inspection); err == nil {
 				for _, run := range nodes {
-					add(run.node)
+					add(run.node, local)
 				}
 			}
 			if inspection.Origin == nil {
@@ -190,16 +194,22 @@ func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) 
 			}
 			// The origin's node too, since its first run's node links to it.
 			if node, err := originNode(*inspection.Origin); err == nil {
-				if digest := add(node); inspection.Origin.Merge == nil {
-					pulled[digest] = true
+				if digest := add(node, local); inspection.Origin.Merge == nil {
+					stop[digest] = true
 				}
 			}
 			if inspection.Origin.Merge == nil && inspection.Origin.Lineage != nil {
-				add(*inspection.Origin.Lineage)
+				add(*inspection.Origin.Lineage, claimed)
 			}
 		}
 	}
-	return index, pulled
+	// A release can republish a node whose model is gone from this store.
+	for digest := range claimed {
+		if !local[digest] {
+			stop[digest] = true
+		}
+	}
+	return index, stop
 }
 
 // ancestry walks a node's chain through the nodes the index holds, like git
@@ -242,7 +252,7 @@ type mergeParent struct {
 func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, error) {
 	var parents []mergeParent
 	var shared, recorded map[string]bool
-	index, pulled := builder.lineageIndex()
+	index, stop := builder.lineageIndex()
 	for _, declared := range base.Merge {
 		inspection, err := Inspect(builder.Root, declared.Model)
 		if err != nil {
@@ -270,7 +280,7 @@ func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, erro
 			return nil, false, err
 		}
 		shared = intersect(shared, ancestry(node, index, nil))
-		recorded = intersect(recorded, ancestry(node, index, pulled))
+		recorded = intersect(recorded, ancestry(node, index, stop))
 		parents = append(parents, mergeParent{inspection, path, link, declared.Weight})
 	}
 	if len(shared) == 0 {
@@ -332,6 +342,11 @@ func (builder Builder) recordedMerge(name string, base ComposeBase) (*Inspection
 	}
 	for index, parent := range target.Origin.Merge.Parents {
 		if parent.Model != base.Merge[index].Model || parent.Weight != base.Merge[index].Weight {
+			return nil, nil
+		}
+		// The name must still hold the model that was averaged, as a run pin's model ID does.
+		current, err := Inspect(builder.Root, parent.Model)
+		if err != nil || current.Model.ID != parent.ModelID {
 			return nil, nil
 		}
 	}

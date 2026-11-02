@@ -317,7 +317,7 @@ recompute the merged weights and compare hashes. A compose with
 itself, usable for chat, export, or as another compose's base. With stages, the
 merge initializes training like any origin. Once the model exists, the same
 `base.merge` resolves to the merge it was built from, even after a parent trains
-on, so repeating the compose is a verified no-op and appending stages continues
+on, while each parent's name still holds the model that was averaged, so repeating the compose is a verified no-op and appending stages continues
 the same model. Exports record the model's lineage node in
 their release `BOM.json`, and pulls keep it in the origin, so the chain
 continues across publication.
