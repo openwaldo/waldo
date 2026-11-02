@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """The supported recipe surface, defined here and emitted by probe."""
 from copy import deepcopy
+import math
 
 ARCHITECTURE_DEFAULTS = dict(
     vocab_size=151936, hidden_size=1024, intermediate_size=3072,
-    num_hidden_layers=12, num_attention_heads=16, num_key_value_heads=8,
+    num_hidden_layers=10, num_attention_heads=16, num_key_value_heads=8,
     head_dim=64, max_position_embeddings=32768, rms_norm_eps=1e-6,
     rope_theta=1000000.0, attention_bias=False, attention_dropout=0.0,
     tie_word_embeddings=True, hidden_act="silu", initializer_range=0.02,
@@ -73,6 +74,8 @@ def validate(values, document):
                  "string": (str,), "array": (list,)}
         if type(value) not in types[rule["type"]]:
             raise ValueError(f"invalid type for {key}")
+        if type(value) is float and not math.isfinite(value):
+            raise ValueError(f"non-finite {key}")
         if "minimum" in rule and value < rule["minimum"]:
             raise ValueError(f"{key} below minimum")
         if "exclusiveMaximum" in rule and value >= rule["exclusiveMaximum"]:

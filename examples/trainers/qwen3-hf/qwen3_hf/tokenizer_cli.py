@@ -35,9 +35,7 @@ def main():
                   schemas=dict(configuration=TOKENIZER)))
     elif sys.argv[1] == "serve":
         tokenizer = codec()
-        for line in sys.stdin:
-            import io
-            request = read(io.StringIO(line))
+        while (request := read(allow_eof=True)) is not None:
             if set(request) != {"id", "text"} or not isinstance(request["text"], str):
                 raise ValueError("expected id and text")
             emit(dict(id=request["id"], tokens=tokenizer.encode(request["text"], add_special_tokens=False).ids))

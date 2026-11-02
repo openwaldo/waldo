@@ -6,8 +6,10 @@ import sys
 LIMIT = 16 * 1024 * 1024
 
 
-def read(stream=None):
+def read(stream=None, allow_eof=False):
     line = (stream or sys.stdin).readline(LIMIT)
+    if not line and allow_eof:
+        return None
     if not line or not line.endswith("\n") or len(line.encode()) >= LIMIT:
         raise ValueError("missing, incomplete or oversized protocol frame")
     value = json.loads(line, parse_constant=lambda x: (_ for _ in ()).throw(ValueError(x)))

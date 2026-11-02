@@ -1,7 +1,6 @@
 # Copyright (c) 2026 OpenWALDO Project contributors
 # SPDX-License-Identifier: Apache-2.0
 """Single-process Qwen3 from scratch; WALDO owns every input token."""
-import contextlib
 import hashlib
 import json
 import math
@@ -49,8 +48,13 @@ def resolve(request):
     if parameters["bf16"] and parameters["fp16"]:
         raise ValueError("BF16 and FP16 are mutually exclusive")
     local = global_batch // world
-    micro = supplied.get("per_device_train_batch_size", min(local, 4 if cuda else 2))
-    while "per_device_train_batch_size" not in supplied and local % micro:
+    default_micro = min(local, 4 if cuda else 2)
+    if "gradient_accumulation_steps" in supplied and "per_device_train_batch_size" not in supplied:
+        default_micro = local // supplied["gradient_accumulation_steps"]
+        if default_micro < 1:
+            raise ValueError("accumulation exceeds local batch")
+    micro = supplied.get("per_device_train_batch_size", default_micro)
+    while "per_device_train_batch_size" not in supplied and "gradient_accumulation_steps" not in supplied and local % micro:
         micro -= 1
     accumulation = supplied.get("gradient_accumulation_steps", local // micro)
     if micro * accumulation * world != global_batch:
@@ -115,6 +119,8 @@ class TokenStream(torch.utils.data.IterableDataset):
             yield encoded(record)
 
     def finish(self):
+        if self.ordinal != self.begin["data"]["steps"] * self.begin["data"]["global_batch_sequences"]:
+            raise ValueError("training did not consume the exact sequence budget")
         if not self.ended:
             value = self.pending or self.next_frame()
             self.pending = None

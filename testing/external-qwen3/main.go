@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/model/applaunch"
 	"github.com/openwaldo/waldo/internal/model/application"
 	"github.com/openwaldo/waldo/internal/model/tokenizerapp"
@@ -35,7 +36,23 @@ func run() error {
 	output := flag.String("output", "", "new absolute qualification run directory")
 	python := flag.String("python", "/usr/bin/python3", "Python 3.12.3 with pip and venv")
 	large := flag.Bool("large", false, "run a two-step ~280M GPU smoke instead of tiny conformance")
+	composePath := flag.String("compose", "examples/trainers/qwen3-hf/compose.tiny.yaml", "compose architecture and data/recipe to qualify with synthetic prepared tokens")
 	flag.Parse()
+	document, _, err := model.LoadComposeDocument(*composePath)
+	if err != nil {
+		return err
+	}
+	if document.External == nil || len(document.External.Stages) != 1 {
+		return fmt.Errorf("qualification requires a one-stage external compose")
+	}
+	compose := document.External
+	data, err := compose.Stages[0].ResolveData()
+	if err != nil {
+		return err
+	}
+	if data.GlobalBatchSequences != 4 || data.SequenceLength != 8 {
+		return fmt.Errorf("fixture requires global batch 4 and sequence length 8")
+	}
 	if !filepath.IsAbs(*cache) || !filepath.IsAbs(*output) {
 		return fmt.Errorf("cache and output must be absolute")
 	}
@@ -81,12 +98,8 @@ func run() error {
 		}
 	}
 	spec := tokenizer.Spec()
-	architecture := map[string]any{"vocab_size": 151936, "hidden_size": 32, "intermediate_size": 64, "num_hidden_layers": 2, "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 16, "max_position_embeddings": 64}
-	steps := int64(3)
-	if *large {
-		architecture = map[string]any{}
-		steps = 2
-	}
+	architecture := compose.Architecture
+	steps := data.Steps
 	world := applaunch.World{Nodes: 1, ProcessesPerNode: 1, WorldSize: 1}
 	factory := func(ctx context.Context, name string, alternate bool) (trainerapp.ConformanceAttempt, error) {
 		dir := filepath.Join(*output, name)
@@ -97,12 +110,15 @@ func run() error {
 		if err != nil {
 			return trainerapp.ConformanceAttempt{}, err
 		}
-		data := training.ExternalDataParameters{Steps: steps, GlobalBatchSequences: 4, SequenceLength: 8, Seed: 42, CheckpointEvery: 1, EvaluateEvery: 1}
 		micro := 4
 		if alternate {
 			micro = 2
 		}
-		parameters := map[string]any{"per_device_train_batch_size": micro}
+		parameters := map[string]any{}
+		for k, v := range compose.Stages[0].Trainer {
+			parameters[k] = v
+		}
+		parameters["per_device_train_batch_size"] = micro
 		resolution, err := client.Resolve(ctx, architecture, parameters, data, trainerapp.World{World: world, Devices: client.Probe().Devices})
 		if err != nil {
 			return trainerapp.ConformanceAttempt{}, err
