@@ -138,9 +138,9 @@ and makes changes caused by a generator dependency visible.
 
 ### Parameter roles
 
-Each property in the parameter schema has a role. A property annotated
-`"x-waldo-role": "execution"` is an execution parameter. Every other property
-is a recipe parameter. A property is an execution parameter only if two runs
+Each property in the parameter schema has a role, `recipe` or `execution`,
+set with the `x-waldo-role` annotation. A property without the annotation is a
+recipe parameter. A property is an execution parameter only if two runs
 that differ only in that property perform the same sequence of optimizer
 updates in exact arithmetic, given the same data in the same order. Batch
 decomposition (micro-batch size and accumulation steps), activation
@@ -150,11 +150,11 @@ gradient clipping, numeric precision, loss shaping, and initialization seed
 do not.
 
 - WALDO reads roles from the received schema, never from `resolve` output.
-- The only allowed role value is `execution`. Any other value fails
-  validation.
-- A role on an object applies to its whole subtree. WALDO follows `$ref`
-  before reading roles.
-- The architecture schema must not contain `x-waldo-role`. Architecture is
+- The allowed role values are `recipe` and `execution`. Any other value
+  fails validation.
+- A role on an object applies to its whole subtree. A role inside that
+  subtree must match it. WALDO follows `$ref` before reading roles.
+- The architecture schema may contain only `recipe` roles. Architecture is
   always identity.
 
 `resolve` receives the world shape (world size, processes per node, and the
