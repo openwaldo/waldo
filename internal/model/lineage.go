@@ -106,8 +106,11 @@ func linkTo(node LineageNode) (LineageLink, error) {
 
 // lineageIndex holds every lineage node this model store can show, keyed by
 // node hash: each model's own node and each release node its origin records.
-func (builder Builder) lineageIndex() map[string]LineageNode {
+// Release nodes are declared: a pulled release says where its weights came
+// from, and nothing here can check it, so they are also returned on their own.
+func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) {
 	index := map[string]LineageNode{}
+	declared := map[string]bool{}
 	add := func(node LineageNode) {
 		if digest, err := hashJSON(node); err == nil {
 			index[digest] = node
@@ -131,16 +134,21 @@ func (builder Builder) lineageIndex() map[string]LineageNode {
 			}
 			if inspection.Origin != nil && inspection.Origin.Lineage != nil {
 				add(*inspection.Origin.Lineage)
+				if inspection.Origin.Merge == nil {
+					if digest, err := hashJSON(*inspection.Origin.Lineage); err == nil {
+						declared[digest] = true
+					}
+				}
 			}
 		}
 	}
-	return index
+	return index, declared
 }
 
 // ancestry walks a node's chain through the nodes the index holds, like git
 // merge-base, collecting the weights it reaches; a branch ends where its node
-// is not held.
-func ancestry(node LineageNode, index map[string]LineageNode) map[string]bool {
+// is not held, or where it would follow a node in skip.
+func ancestry(node LineageNode, index map[string]LineageNode, skip map[string]bool) map[string]bool {
 	reached := map[string]bool{}
 	visited := map[string]bool{}
 	queue := []LineageNode{node}
@@ -149,6 +157,9 @@ func ancestry(node LineageNode, index map[string]LineageNode) map[string]bool {
 		queue = queue[1:]
 		reached[current.WeightsSHA256] = true
 		for _, link := range current.Parents {
+			if skip[link.LineageSHA256] {
+				continue
+			}
 			reached[link.WeightsSHA256] = true
 			if next, ok := index[link.LineageSHA256]; ok && !visited[link.LineageSHA256] {
 				visited[link.LineageSHA256] = true
@@ -169,50 +180,56 @@ type mergeParent struct {
 // mergeParents resolves base.merge and fails closed unless every parent has
 // the same architecture and all of them share an ancestor their lineage
 // shows. Averaging weights is only meaningful for models trained from common
-// weights.
-func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, error) {
+// weights. It also reports whether that ancestor rests on lineage a pulled
+// release declared rather than on this store's own records.
+func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, error) {
 	var parents []mergeParent
-	var shared map[string]bool
-	index := builder.lineageIndex()
+	var shared, recorded map[string]bool
+	index, declaredNodes := builder.lineageIndex()
 	for _, declared := range base.Merge {
 		inspection, err := Inspect(builder.Root, declared.Model)
 		if err != nil {
-			return nil, fmt.Errorf("resolve base.merge parent %q: %w", declared.Model, err)
+			return nil, false, fmt.Errorf("resolve base.merge parent %q: %w", declared.Model, err)
 		}
 		if len(parents) > 0 && inspection.Model.ArchitectureSHA256 != parents[0].inspection.Model.ArchitectureSHA256 {
-			return nil, fmt.Errorf("base.merge parent %q does not have the architecture of %q", declared.Model, parents[0].inspection.Model.Name)
+			return nil, false, fmt.Errorf("base.merge parent %q does not have the architecture of %q", declared.Model, parents[0].inspection.Model.Name)
 		}
 		if inspection.Model.Architecture.Tokenizer.Name != "byte" {
-			return nil, fmt.Errorf("base.merge supports byte-tokenizer models; %q uses %s", declared.Model, inspection.Model.Architecture.Tokenizer.Name)
+			return nil, false, fmt.Errorf("base.merge supports byte-tokenizer models; %q uses %s", declared.Model, inspection.Model.Architecture.Tokenizer.Name)
 		}
 		path, _, err := currentWeights(inspection)
 		if err != nil {
-			return nil, fmt.Errorf("base.merge parent: %w", err)
+			return nil, false, fmt.Errorf("base.merge parent: %w", err)
 		}
 		node, err := ModelLineage(inspection)
 		if err != nil {
-			return nil, fmt.Errorf("base.merge parent %q lineage: %w", declared.Model, err)
+			return nil, false, fmt.Errorf("base.merge parent %q lineage: %w", declared.Model, err)
 		}
 		link, err := linkTo(node)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		reached := ancestry(node, index)
-		if shared == nil {
-			shared = reached
-		} else {
-			for digest := range shared {
-				if !reached[digest] {
-					delete(shared, digest)
-				}
-			}
-		}
+		shared = intersect(shared, ancestry(node, index, nil))
+		recorded = intersect(recorded, ancestry(node, index, declaredNodes))
 		parents = append(parents, mergeParent{inspection, path, link, declared.Weight})
 	}
 	if len(shared) == 0 {
-		return nil, fmt.Errorf("base.merge parents share no recorded ancestor; only models trained from common weights can be merged")
+		return nil, false, fmt.Errorf("base.merge parents share no recorded ancestor; only models trained from common weights can be merged")
 	}
-	return parents, nil
+	return parents, len(recorded) == 0, nil
+}
+
+// intersect keeps the weights both sets reached; a nil set is the first one seen.
+func intersect(shared, reached map[string]bool) map[string]bool {
+	if shared == nil {
+		return reached
+	}
+	for digest := range shared {
+		if !reached[digest] {
+			delete(shared, digest)
+		}
+	}
+	return shared
 }
 
 // currentWeights is the newest complete real run's weights, else the origin's.
@@ -238,13 +255,13 @@ func currentWeights(inspection Inspection) (string, string, error) {
 // by the parents and weights so the same merge is built once. Its lineage
 // node names every parent's node, like a git merge commit.
 func (builder Builder) mergeOrigin(base ComposeBase) (Inspection, error) {
-	parents, err := builder.mergeParents(base)
+	parents, declared, err := builder.mergeParents(base)
 	if err != nil {
 		return Inspection{}, err
 	}
 	// Method names version the exact arithmetic: float32 accumulation in parent
 	// order, rounded to nearest-even, so the same parents always merge to the same bytes.
-	merge := &OriginMerge{Method: "mean-f32-v1"}
+	merge := &OriginMerge{Method: "mean-f32-v1", DeclaredAncestry: declared}
 	var paths []string
 	var weights []float64
 	var links []LineageLink

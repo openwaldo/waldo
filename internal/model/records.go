@@ -104,6 +104,9 @@ type LineageLink struct {
 type OriginMerge struct {
 	Method  string              `json:"method"`
 	Parents []OriginMergeParent `json:"parents"`
+	// DeclaredAncestry is true when the parents' common ancestor is shown only
+	// by lineage a pulled release declared, which this store cannot check.
+	DeclaredAncestry bool `json:"declared_ancestry,omitempty"`
 }
 
 type OriginMergeParent struct {

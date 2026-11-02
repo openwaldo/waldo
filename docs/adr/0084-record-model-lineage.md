@@ -34,7 +34,8 @@ store, the walk stops there.
 - Parent pins recorded before lineage nodes keep matching; their history ends
   at the immediate parent.
 - Declared lineage from an unsigned release is recorded as the release declared
-  it. Verifying it against signed releases is future work.
+  it, and a merge that relies on it says so (ADR 0085). Verifying it against
+  signed releases is future work.
 
 Amends [0026](0026-pinned-model-origin.md), [0066](0066-pin-trained-model-parents.md),
 and [0022](0022-model-release-exports.md).

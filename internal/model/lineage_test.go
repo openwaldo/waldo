@@ -62,6 +62,10 @@ func TestMergeComposeRecordsLineageAndFailsClosed(t *testing.T) {
 	if origin == nil || origin.Source.Provider != "merge" || origin.Merge == nil || origin.Merge.Method != "weighted-mean-f32-v1" || len(origin.Merge.Parents) != 2 || origin.Merge.Parents[1].Weight != 3 {
 		t.Fatalf("origin = %+v", origin)
 	}
+	// Only the releases say they share a parent, so the merge records that it rests on their word.
+	if !origin.Merge.DeclaredAncestry {
+		t.Fatal("ancestry shown only by release BOMs was not marked declared")
+	}
 	// Like a git merge commit, the merged node names each parent's node and nothing older.
 	if origin.Lineage == nil || len(origin.Lineage.Parents) != 2 || origin.Lineage.Parents[0].LineageSHA256 != origin.Merge.Parents[0].LineageSHA256 || origin.Merge.Parents[0].LineageSHA256 == "" {
 		t.Fatalf("lineage = %+v", origin.Lineage)
@@ -72,7 +76,8 @@ func TestMergeComposeRecordsLineageAndFailsClosed(t *testing.T) {
 		}
 	}
 	// The common ancestor is two links up the chain, through each release's own node.
-	if reached := ancestry(*origin.Lineage, builder.lineageIndex()); !reached[common] || reached[other] {
+	index, _ := builder.lineageIndex()
+	if reached := ancestry(*origin.Lineage, index, nil); !reached[common] || reached[other] {
 		t.Fatalf("ancestry = %v", reached)
 	}
 	if merged.BOM.CurrentOriginSHA256 == "" || len(merged.Runs) != 0 {
@@ -147,6 +152,34 @@ func TestMergeComposeTrainsFromTheMerge(t *testing.T) {
 	}
 	if trained.Origin == nil || trained.Origin.Merge == nil || len(trained.Runs) != 1 || trained.Plan.OriginBOMSHA256 != trained.Model.OriginBOMSHA256 {
 		t.Fatalf("trained = %+v", trained)
+	}
+}
+
+// A release can claim any parent. The merge goes ahead, but its record says the
+// shared ancestor is declared, never that this store showed it.
+func TestMergeComposeMarksAncestryOnlyAReleaseDeclares(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullRelease(t, root, "victim", strings.Repeat("a", 64), 0)
+	victim, err := Inspect(root, "victim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := ModelLineage(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pullRelease(t, root, "claimant", node.WeightsSHA256, 3)
+	pullRelease(t, root, "twin", strings.Repeat("a", 64), 0)
+	builder := Builder{Root: root}
+	for parent, declared := range map[string]bool{"claimant": true, "twin": false} {
+		merged, err := builder.Compose(t.Context(), "with-"+parent, Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "victim"}, {Model: parent}}}}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if merged.Origin.Merge.DeclaredAncestry != declared {
+			t.Fatalf("%s: declared ancestry = %v, want %v", parent, merged.Origin.Merge.DeclaredAncestry, declared)
+		}
 	}
 }
 

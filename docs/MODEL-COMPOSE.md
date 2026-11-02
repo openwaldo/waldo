@@ -295,6 +295,9 @@ carries the released model's node, so nodes stay the same size however long
 the history behind them. WALDO walks each parent's chain through every node
 the model store holds, like `git merge-base`, and requires a weights hash that
 every parent reaches. Where a chain leaves the store, the walk stops there.
+A pulled release's node is only what the release declared; when the parents
+meet only through such nodes, the merged origin records
+`declared_ancestry: true`.
 Parents trained from random weights, or pulled from releases that record no
 lineage, cannot be merged. Merges accept byte-tokenizer models with `bfloat16`
 or `float32` parameters.

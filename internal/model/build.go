@@ -1424,7 +1424,7 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 	var base Inspection
 	if len(compose.Base.Merge) > 0 {
 		if !acquire {
-			parents, err := builder.mergeParents(*compose.Base)
+			parents, _, err := builder.mergeParents(*compose.Base)
 			if err != nil {
 				return Compose{}, nil, err
 			}
