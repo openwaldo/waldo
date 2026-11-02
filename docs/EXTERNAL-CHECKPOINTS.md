@@ -1,8 +1,8 @@
 # External trainer checkpoints and conformance
 
 The `trainerapp` developer API implements ADRs 0029 and 0084 for external
-checkpoints. CLI/lifecycle wiring, durable run BOM creation and reference-trainer
-CPU/GPU qualification remain planned. Native worker checkpoints are unchanged.
+checkpoints. CLI/lifecycle wiring remains planned. Developer run BOM persistence and
+reference-trainer CPU/GPU qualification are implemented. Native worker checkpoints are unchanged.
 
 ## Lifecycle integration
 
@@ -88,10 +88,14 @@ restoration, and writes a real scalar Safetensors file. Negative controls reset
 optimizer state or average micro-batch losses incorrectly; both must fail.
 
 Run the fake harness with `go test -v ./internal/model/trainerapp -run Conformance`.
-The reference `examples/trainers/qwen3-hf` is not present yet. No reference CPU,
-CUDA, or DGX Spark numerical conformance claim is made. Its future factory must
-select the pinned environment and enforce deterministic algorithms in trainer
-code. WALDO's determinism string alone is not enforcement.
+The [Qwen3 reference](../examples/trainers/qwen3-hf/README.md) supplies a real
+factory in `testing/external-qwen3`. Its tiny compose passes this harness on
+Linux aarch64 CPU and DGX Spark GB10 CUDA with the committed locks: terminal
+weights are byte-identical after resume, and unequal-mask decomposition losses
+agree within the recorded tolerances. Qualification uses synthetic prepared
+tokens through the developer APIs, not the planned external CLI lifecycle. The
+trainer enforces deterministic algorithms when requested; WALDO's determinism
+string alone is not enforcement.
 
 The launch allowlist passes `CUBLAS_WORKSPACE_CONFIG` when explicitly set (for
 example `:4096:8`) and records it in launch evidence. It does not inherit

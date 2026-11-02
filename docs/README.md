@@ -36,6 +36,8 @@ Read these in order:
   token-only train frames, schema evidence and developer API.
 - [External checkpoints](EXTERNAL-CHECKPOINTS.md): verified resume bundles and
   reusable interruption/decomposition conformance harness.
+- [Qwen3 external reference](../examples/trainers/qwen3-hf/README.md): pinned
+  trainer/tokenizer, tiny and 281M composes, CPU/GB10 developer qualification.
 - [Model lifecycle](MODEL-LIFECYCLE.md): managed models, runs, and backends.
 - [Multi-host training](MULTI-NODE-TRAINING.md): TorchTitan cluster
   requirements and exact operator commands.
