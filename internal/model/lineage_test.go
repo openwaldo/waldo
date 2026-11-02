@@ -416,12 +416,12 @@ func TestLineageAndCurrentWeightsSkipRunsThePinMarksSimulated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, current, err := currentWeights(p)
+	current, err := resolveRunInitialization(p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if node.WeightsSHA256 != first || current != first {
-		t.Fatalf("lineage %s and current %s, want the first run's %s", node.WeightsSHA256, current, first)
+	if node.WeightsSHA256 != first || current.Artifact.SHA256 != first {
+		t.Fatalf("lineage %s and current %s, want the first run's %s", node.WeightsSHA256, current.Artifact.SHA256, first)
 	}
 }
 
@@ -518,8 +518,8 @@ func TestComposeRefusesLineagePinOnUntrainedBase(t *testing.T) {
 	stage := testStage("continue")
 	stage.Parameters.SequenceLength = 32
 	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "left", LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
-	if _, err := (Builder{Root: root, Resolver: training.FakeResolver()}).Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil {
-		t.Fatal("origin base accepted a lineage pin")
+	if _, err := (Builder{Root: root, Resolver: training.FakeResolver()}).Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil || !strings.Contains(err.Error(), "cannot assert managed-model run pins") {
+		t.Fatalf("origin base with a lineage pin: %v", err)
 	}
 	source := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Source: "huggingface://org/tiny@" + strings.Repeat("a", 40), LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
 	if err := source.Validate(); err == nil || !strings.Contains(err.Error(), "base.source") {

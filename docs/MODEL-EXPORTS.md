@@ -220,7 +220,8 @@ root. This makes a release relocatable without embedding a machine-specific
 model directory. `lineage` is the lineage node of the managed weights this
 release was converted from ([ADR 0084](adr/0084-record-model-lineage.md)), so
 its `weights_sha256` names no file in the release; a pull keeps it as the node
-its origin descends from, so the chain continues past publication.
+its origin descends from, so the chain continues past publication. A pull
+refuses a release whose `lineage` is malformed rather than drop it silently.
 
 The derived package currently records the source model BOM by hash rather than
 embedding the full `MODEL-BOM.json` and run tree. The hash makes substitution

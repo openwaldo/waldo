@@ -21,8 +21,11 @@ func (node LineageNode) validate() error {
 		return fmt.Errorf("weights %q is not a SHA-256", node.WeightsSHA256)
 	}
 	for _, link := range node.Parents {
-		if !lineageDigest.MatchString(link.WeightsSHA256) || (link.LineageSHA256 != "" && !lineageDigest.MatchString(link.LineageSHA256)) {
-			return fmt.Errorf("parent %q is not a SHA-256", link.WeightsSHA256)
+		if !lineageDigest.MatchString(link.WeightsSHA256) {
+			return fmt.Errorf("parent weights %q is not a SHA-256", link.WeightsSHA256)
+		}
+		if link.LineageSHA256 != "" && !lineageDigest.MatchString(link.LineageSHA256) {
+			return fmt.Errorf("parent lineage %q is not a SHA-256", link.LineageSHA256)
 		}
 	}
 	for _, run := range node.Runs {
@@ -254,7 +257,7 @@ func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, erro
 		if dtype := inspection.Model.Architecture.ParameterDType; dtype != "bfloat16" && dtype != "float32" {
 			return nil, false, fmt.Errorf("base.merge supports bfloat16 and float32 parameters; %q uses %s", declared.Model, dtype)
 		}
-		path, _, err := currentWeights(inspection)
+		path, err := currentWeights(inspection)
 		if err != nil {
 			return nil, false, fmt.Errorf("base.merge parent: %w", err)
 		}
@@ -289,23 +292,23 @@ func intersect(shared, reached map[string]bool) map[string]bool {
 	return shared
 }
 
-// currentWeights is the newest complete real run's weights, else the origin's.
-func currentWeights(inspection Inspection) (string, string, error) {
+// currentWeights is the path of the newest complete real run's weights, else the origin's.
+func currentWeights(inspection Inspection) (string, error) {
 	initialization, err := resolveRunInitialization(inspection, "")
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	if initialization != nil {
-		return initialization.Path, initialization.Artifact.SHA256, nil
+		return initialization.Path, nil
 	}
 	if inspection.Origin != nil && inspection.BOM.CurrentOriginSHA256 != "" {
 		for _, artifact := range inspection.Origin.Artifacts {
 			if artifact.Role == "weights" {
-				return filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path)), artifact.SHA256, nil
+				return filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path)), nil
 			}
 		}
 	}
-	return "", "", fmt.Errorf("model %q has no complete real weights", inspection.Model.Name)
+	return "", fmt.Errorf("model %q has no complete real weights", inspection.Model.Name)
 }
 
 // recordedMerge is the merge model name was built from, when it exists and

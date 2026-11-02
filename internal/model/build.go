@@ -1221,7 +1221,8 @@ func resolveInitialization(inspection Inspection) (*training.Initialization, err
 }
 
 // realRun reports whether the run at position completed with real weights,
-// judged by its pin, as the model BOM's current run is.
+// judged by its pin, as the model BOM's current run is. A pending compose's
+// normalized inspection can hold fewer pins than runs.
 func realRun(inspection Inspection, position int) bool {
 	run := inspection.Runs[position]
 	return run.State == RunComplete && run.Observation != nil && position < len(inspection.Model.Runs) && !inspection.Model.Runs[position].Simulated
