@@ -4,8 +4,9 @@ ADR [0084](adr/0084-external-trainers.md) defines the external trainer design.
 The declarative reader, pinned source cache, manifest checks and probe-schema
 validation, managed Python environment verification and single-process launch
 are implemented as developer APIs.
-Probe/resolve execution, external model identity and training lifecycle
-integration are **planned**.
+Tokenizer probe/serve execution is implemented as a developer API. Trainer
+probe/resolve execution, external model identity persistence and training
+lifecycle integration are **planned**.
 The CLI does not yet run or forecast external composes.
 
 ## Developer entry points
@@ -20,7 +21,7 @@ convert an external architecture into a native one.
 
 Reading has no network or process side effects. Call
 `ExternalCompose.ResolveSources(ctx, cacheDirectory)` explicitly to acquire
-both applications. After the future probe implementation supplies schema
+both applications. After probe supplies schema
 bytes, compile them with `application.CompileSchema` and call
 `ExternalCompose.ValidateSchemas`. No schema is loaded from a manifest.
 
@@ -261,3 +262,55 @@ torchrun and ADR 0072's node-local-cache data plane: each node's local rank zero
 receives begin/data from its own WALDO coordinator; only global rank zero
 reports results. This API does not introduce a global-rank-zero data stream.
 Built-in worker launch and native compose behavior are unchanged.
+
+## Tokenizer protocol 1
+
+`tokenizerapp.Open(ctx, launchRequest, configuration)` runs a tokenizer probe,
+validates the configuration against the returned schema, and starts one `serve`
+process. The launch request must contain freshly verified source/environment
+results and run scratch. Callers must supply a cancellation/deadline context
+and close the client. External lifecycle/CLI orchestration and writing plan/run
+BOM files remain planned; this API supplies their tokenizer identity and launch
+evidence.
+
+Both commands receive one initial line `{"configuration":{...}}`. Probe writes
+exactly one JSON line and exits successfully:
+
+```json
+{"name":"example","vocabulary_size":259,"special_tokens":{"pad":0,"bos":1,"eos":2},"deterministic":true,"schemas":{"configuration":{"type":"object"}}}
+```
+
+Pad, BOS and EOS are required, may alias, and must be within the vocabulary.
+Additional named special IDs are accepted and checked. Determinism must be
+reported explicitly. The configuration schema contains recipe roles only and
+is retained byte for byte with its SHA-256; schemas never come from manifests.
+Probe validates the supplied configuration without inserting defaults.
+
+After its configuration line, serve reads `{"id":1,"text":"hello"}` and
+writes `{"id":1,"tokens":[107,104,111,111,114]}`. Encode ordinary text only:
+never insert BOS/EOS or recognize special-token spellings. WALDO owns framing
+and renders conversation segments separately to preserve loss masks. Requests
+are independently identified; responses may arrive out of order. `EncodeBatch`
+uses this same wire format, pipelines at most 64 requests, and returns results
+in input order. Each NDJSON frame is limited to 16 MiB. Empty token arrays are
+valid; missing/null arrays, invalid IDs, out-of-vocabulary tokens, malformed
+frames, process exit, and `{"id":1,"error":"reason"}` fail the session.
+Pending errors identify their request IDs; data preparation adds record IDs.
+
+The client implements `training.TokenCodec` and its fallible `EncodeChecked`
+extension. WALDO checks that extension in capacity planning, held-out counts,
+corpus balancing and mask rendering. Legacy `Encode`/`Count` callers must check
+`Err`; decoding is unsupported and fails the session. Concurrent corpus workers
+share the bounded pipeline. Pass the client to existing tokenizer-taking
+partition/source APIs; use `Spec()` for vocabulary and special IDs. Native
+codec resolution remains unchanged.
+
+`Identity()` provides source, environment, configuration and its digest,
+probe facts, and schema digest for plan/run BOM builders. `Spec().Revision` is
+the digest of this identity, so the existing prepared-sequence cache identity
+(which hashes the tokenizer specification) changes with every tokenizer pin.
+Host launch evidence from `Evidence()` stays outside that digest. The identity
+snapshot omits source/cache paths and can be serialized into the future plan.
+`training.NewTokenizedRecordSource` wraps a canonical record stream with this
+codec for token-only trainer input, clearing text/conversation data after
+WALDO renders segments and builds masks.

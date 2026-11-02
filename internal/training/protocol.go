@@ -431,3 +431,20 @@ func (event Event) Validate() error {
 	}
 	return nil
 }
+
+// NewTokenizedRecordSource applies WALDO rendering and loss masks using an
+// explicitly supplied codec, including an external tokenizer application.
+func NewTokenizedRecordSource(source RecordSource, codec TokenCodec, objective string, conversation ConversationTransform) (RecordSource, error) {
+	if source == nil || codec == nil {
+		return nil, fmt.Errorf("tokenization requires source and codec")
+	}
+	if objective != "causal-language-modeling" && objective != "assistant-response-modeling" {
+		return nil, fmt.Errorf("unsupported tokenization objective %q", objective)
+	}
+	if conversation.Template != "" {
+		if err := conversation.Validate(); err != nil {
+			return nil, err
+		}
+	}
+	return tokenizedRecordSource{source: source, codec: codec, objective: objective, conversation: conversation}, nil
+}
