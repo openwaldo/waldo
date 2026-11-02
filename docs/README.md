@@ -30,8 +30,8 @@ Read these in order:
 
 - [Model compose](MODEL-COMPOSE.md): portable training-plan schema.
 - [External application loading](EXTERNAL-APPLICATIONS.md): PoC compose reader,
-  pinned sources, manifests, probe schemas and managed Python environments;
-  application execution is planned.
+  pinned sources, manifests, probe schemas, managed Python environments and
+  single-process launch API; CLI execution is planned.
 - [Model lifecycle](MODEL-LIFECYCLE.md): managed models, runs, and backends.
 - [Multi-host training](MULTI-NODE-TRAINING.md): TorchTitan cluster
   requirements and exact operator commands.

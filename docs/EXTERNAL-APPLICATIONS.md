@@ -2,7 +2,8 @@
 
 ADR [0084](adr/0084-external-trainers.md) defines the external trainer design.
 The declarative reader, pinned source cache, manifest checks and probe-schema
-validation and managed Python environment verification are implemented.
+validation, managed Python environment verification and single-process launch
+are implemented as developer APIs.
 Probe/resolve execution, external model identity and training lifecycle
 integration are **planned**.
 The CLI does not yet run or forecast external composes.
@@ -108,7 +109,8 @@ relative `lock` and an exact `python` version (`3.x.y`). Environment creation
 and lock verification use the explicit API below.
 
 Trainer launch profiles are `single-process` and `distributed`; this reader
-only checks declarations and launches neither. Objectives are restricted to
+only checks declarations. The launcher implements `single-process` and rejects
+`distributed` with an explicit not-implemented error. Objectives are restricted to
 `causal-language-modeling` and `assistant-response-modeling`. Artifact profiles
 are declared here; output verification is a later lifecycle responsibility.
 Manifests are strict: in particular, `schemas` is an unknown field.
@@ -220,3 +222,42 @@ these observations do not claim which CUDA runtime a future framework loads.
 Cache paths, installer and host facts are run-only evidence. Native compose
 identity and native execution are unchanged. External plan/run BOM persistence
 and CLI launch remain planned; callers must preserve this identity/run split.
+
+## External process launcher
+
+`internal/model/applaunch` is the shared process boundary for trainer
+`probe`, `resolve`, `train` and tokenizer `probe`, `serve`. Protocol codecs and
+their lifecycle callers remain planned. `Prepare` accepts a freshly verified
+`application.ResolvedSource` and `pythonenv.Result`, a manifest command role,
+arguments, a launch profile, node/world facts and an existing absolute scratch
+directory. Callers must resolve sources and verify environments immediately
+before use; the launcher does not install or independently attest these inputs.
+
+`Start` executes the verified environment's `bin/python -E -s`, followed by
+`-m <module>` or the relative script path, the manifest's command argument and
+the supplied arguments. No shell is involved. The working directory is the
+read-only selected application directory. Its complete environment is
+`WALDO_PROTOCOL=1`, `PATH=/usr/bin:/bin`, `LANG=C.UTF-8`, `LC_ALL=C.UTF-8`,
+`HOME=<scratch>`, plus `CUDA_VISIBLE_DEVICES` only when present in WALDO's
+environment (including an explicitly empty value). No other host variables
+are inherited. `Process.Evidence()` returns the exact argv, directory,
+environment values, launcher, profile and world facts for the future run BOM
+builder; these are run evidence, never model identity. This is process isolation
+from accidental host configuration, not an OS security sandbox.
+
+The returned process exposes stdin/stdout pipes. Callers write protocol frames
+while concurrently reading stdout, close stdin at protocol EOF, always call
+`Wait`, and close stdout when finished. Stderr is continuously drained, retains
+at most 64 KiB plus a truncation marker, and is separate from protocol output.
+`Wait` preserves exit status and cancellation errors and includes captured
+stderr on failure. Callers map Ctrl-C/SIGTERM to context cancellation; cancellation
+sends SIGTERM to the process group, allows five seconds to drain, then kills
+remaining processes. Leader exit also cleans up descendants holding pipes open.
+
+`World` describes a per-node launch, including node rank, processes per node,
+world size and rendezvous address/port. Single-process requires the one-node,
+one-process shape. Distributed execution is **planned** for WALDO-54 with
+torchrun and ADR 0072's node-local-cache data plane: each node's local rank zero
+receives begin/data from its own WALDO coordinator; only global rank zero
+reports results. This API does not introduce a global-rank-zero data stream.
+Built-in worker launch and native compose behavior are unchanged.
