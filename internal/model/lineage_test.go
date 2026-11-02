@@ -86,6 +86,9 @@ func TestMergeComposeRecordsLineageAndFailsClosed(t *testing.T) {
 	if merged.BOM.CurrentOriginSHA256 == "" || len(merged.Runs) != 0 {
 		t.Fatalf("merged model is not usable from its origin: %+v", merged.BOM)
 	}
+	if state := listingFromInspection(merged).State; state != "merged" {
+		t.Fatalf("merged model lists as %q", state)
+	}
 	// A release of the merge records the merged node, so the chain continues past publication.
 	lineage, err := ModelLineage(merged, "")
 	if err != nil || !reflect.DeepEqual(lineage, *origin.Lineage) {
@@ -115,6 +118,10 @@ func TestMergeComposeIsReproducible(t *testing.T) {
 				t.Fatal(err)
 			}
 			weights = append(weights, merged.Origin.Lineage.WeightsSHA256)
+			// Drop the cached merge so the second one is computed again, not reused.
+			if err := os.RemoveAll(filepath.Join(root, ".merges")); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	for _, hash := range weights {

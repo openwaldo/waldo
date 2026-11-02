@@ -64,6 +64,9 @@ func listingFromInspection(inspection Inspection) Listing {
 	}
 	if inspection.Origin != nil {
 		listing.State = "downloaded"
+		if inspection.Origin.Merge != nil {
+			listing.State = "merged"
+		}
 	}
 	if len(inspection.Model.Runs) > 0 {
 		listing.State = string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)

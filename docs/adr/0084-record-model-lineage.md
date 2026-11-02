@@ -1,6 +1,7 @@
 # ADR 0084: Record model lineage as content-addressed nodes
 
-Status: proposed
+Status: accepted
+- Date: 2026-11-01
 
 ## Context
 
@@ -21,9 +22,9 @@ Each complete real run of a model has its own node, whose parent is the node of
 the weights the run started from: an earlier run, the parent pin, or the
 origin. A model's node is its newest run's, or its origin's if it has none. A
 fine-tune's parent pin records the node of the run it starts from, which never
-changes as the parent trains on; a merged origin (ADR 0085) records its own node; a release's
-`BOM.json` carries the released model's node; a pull keeps the release's node
-in the origin.
+changes as the parent trains on; a merged origin (ADR 0085) records its own
+node; a derived release's `BOM.json` (Hugging Face, MLX, GGUF) carries the
+released model's node; a pull keeps the release's node in the origin.
 
 Ancestry is found the way `git merge-base` finds it: by walking each node's
 parents through every node the model store holds. Where a chain leaves the

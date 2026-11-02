@@ -1,6 +1,7 @@
 # ADR 0085: Merge models with a recorded common ancestor into a merged origin
 
-Status: proposed
+Status: accepted
+- Date: 2026-11-01
 
 ## Context
 

@@ -290,8 +290,8 @@ so WALDO fails closed unless the parents share an ancestor
 recorded the way git records history: each training run has a lineage node
 naming the weights it produced and the weights it started from, each by weights
 hash and by the hash of that parent's own node. A fine-tune's parent pin, a pulled model's
-origin, and a merge's origin each record a node, and a release's `BOM.json`
-carries the released model's node, so nodes stay the same size however long
+origin, and a merge's origin each record a node, and a derived release's
+`BOM.json` carries the released model's node, so nodes stay the same size however long
 the history behind them. WALDO walks each parent's chain through every node
 the model store holds, like `git merge-base`, and requires a weights hash that
 every parent reaches. Where a chain leaves the store, the walk stops there.

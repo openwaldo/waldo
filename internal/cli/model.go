@@ -571,6 +571,9 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 	state := "untrained"
 	if inspection.Origin != nil {
 		state = "downloaded"
+		if inspection.Origin.Merge != nil {
+			state = "merged"
+		}
 	}
 	if len(inspection.Model.Runs) > 0 {
 		state = string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
