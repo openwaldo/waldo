@@ -58,6 +58,15 @@ absent; it never treats a token/parameter ratio as a capability promise. The
 formulas and evidence policy are specified in
 [`MODEL-TRAINING-FITNESS.md`](MODEL-TRAINING-FITNESS.md).
 
+## External trainer PoC
+
+Schema 2 without trainer/tokenizer blocks uses the native contract below and
+normalizes to schema 1 without changing hashes. The external schema-2 reader,
+source cache and post-probe schema validation are available as developer APIs;
+external CLI forecasting and training remain planned. See
+[External application loading](EXTERNAL-APPLICATIONS.md) for the implemented
+boundary and field definitions.
+
 ## Why the profile is called causal pretraining
 
 The name is **causal**, not casual. In causal language modeling, the model
