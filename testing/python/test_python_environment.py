@@ -172,6 +172,26 @@ hashes = {{sha256 = "{hashlib.sha256(self.wheel).hexdigest()}"}}
         with self.assertRaisesRegex(ValueError, 'unsafe wheel entry point'):
             env.ensure(self.request)
 
+    def test_shared_wheel_data_is_relocated_and_attested(self):
+        self.wheel = make_wheel({'sample-1.0.data/data/share/man/man1/sample.1': b'man page'})
+        self.lock.write_text(self.lock_text())
+        result, root, _ = self.create()
+        page = root / 'share/man/man1/sample.1'
+        self.assertEqual(page.read_bytes(), b'man page')
+        env.ensure(self.request, 'verify')
+        self.writable(root)
+        page.write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'RECORD mismatch'):
+            env.ensure(self.request, 'verify')
+
+    def test_wheel_data_cannot_target_venv_or_escape(self):
+        for member in ('data/bin/python', 'data/pyvenv.cfg', 'data/share/../../bin/python', 'headers/a.h'):
+            with self.subTest(member=member):
+                wheel = self.temp / 'unsafe.whl'
+                wheel.write_bytes(make_wheel({'sample-1.0.data/' + member: b'bad'}))
+                with self.assertRaises(ValueError):
+                    env.check_wheel(wheel, {})
+
     def test_locked_pth_is_not_executed_by_verifier(self):
         marker = self.temp / 'executed'
         self.wheel = make_wheel({'sample.pth': f'import pathlib; pathlib.Path({str(marker)!r}).touch()\n'.encode()})

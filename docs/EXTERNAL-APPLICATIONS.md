@@ -182,8 +182,10 @@ compatible wheel for each selected package. Multiple matching entries fail.
 Dependency edges are informational; they never trigger resolution or downloads.
 Locks requiring extras/groups, VCS, directories, local paths, archives, or
 builds fail closed. An sdist entry may accompany wheels but is never used.
-Wheel `.data` schemes other than purelib, platlib and scripts are currently
-unsupported. These restrictions are explicit errors, not fallback behavior.
+Wheel `.data` schemes support purelib, platlib, scripts and data files
+strictly beneath `share/` (for dependency documentation such as SymPy man
+pages). Other data destinations and headers remain unsupported. Shared files
+are checked against RECORD hashes and the complete environment inventory. These restrictions are explicit errors, not fallback behavior.
 
 Creation uses an unseeded venv with system site-packages disabled. WALDO
 verifies downloaded artifact hashes before pip installs from an offline

@@ -241,7 +241,8 @@ def check_wheel(path, baseline):
             if name in seen or not parts or name.startswith("/") or ".." in parts or "\\" in name or stat.S_ISLNK(entry.external_attr >> 16):
                 fail(f"unsafe wheel member: {name}")
             seen.add(name)
-            if parts[0].endswith(".data") and (len(parts) < 2 or parts[1] not in ("purelib", "platlib", "scripts")):
+            shared_data = len(parts) >= 3 and parts[1:3] == ("data", "share")
+            if parts[0].endswith(".data") and not shared_data and (len(parts) < 2 or parts[1] not in ("purelib", "platlib", "scripts")):
                 fail(f"unsupported wheel data scheme: {name}")
             if name.endswith(".dist-info/entry_points.txt"):
                 config = configparser.ConfigParser(interpolation=None)
@@ -251,6 +252,9 @@ def check_wheel(path, baseline):
                     for script in config[group] if group in config else []:
                         if not re.fullmatch(r"[A-Za-z0-9_.-]+", script) or script in (".", "..") or "bin/" + script in baseline:
                             fail(f"unsafe wheel entry point: {script}")
+            if parts[0].endswith(".data") and shared_data:
+                if "/".join(parts[2:]) in baseline:
+                    fail(f"wheel overwrites venv baseline: {name}")
             # pip maps .data/scripts into bin. Protect the venv's interpreter
             # and activation files before pip can overwrite them.
             if len(parts) > 2 and parts[0].endswith(".data") and parts[1] == "scripts":
