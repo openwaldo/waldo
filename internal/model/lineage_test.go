@@ -160,6 +160,20 @@ func TestMergeComposeRefusesDifferentArchitectures(t *testing.T) {
 }
 
 // With stages, the merge is the origin training starts from.
+// Merges average bfloat16 and float32 weights; a plan must not accept
+// float16 parents that the merge itself will refuse.
+func TestMergeComposeRefusesFloat16Parents(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	architecture := mergeArchitecture()
+	architecture.ParameterDType = "float16"
+	pullReleaseOf(t, root, "left", strings.Repeat("a", 64), 0, architecture)
+	pullReleaseOf(t, root, "right", strings.Repeat("a", 64), 1, architecture)
+	if _, _, err := (Builder{Root: root}).mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}); err == nil || !strings.Contains(err.Error(), "float16") {
+		t.Fatalf("float16 merge error = %v", err)
+	}
+}
+
 func TestMergeComposeTrainsFromTheMerge(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	root := t.TempDir()

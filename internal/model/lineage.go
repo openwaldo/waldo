@@ -251,6 +251,9 @@ func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, erro
 		if inspection.Model.Architecture.Tokenizer.Name != "byte" {
 			return nil, false, fmt.Errorf("base.merge supports byte-tokenizer models; %q uses %s", declared.Model, inspection.Model.Architecture.Tokenizer.Name)
 		}
+		if dtype := inspection.Model.Architecture.ParameterDType; dtype != "bfloat16" && dtype != "float32" {
+			return nil, false, fmt.Errorf("base.merge supports bfloat16 and float32 parameters; %q uses %s", declared.Model, dtype)
+		}
 		path, _, err := currentWeights(inspection)
 		if err != nil {
 			return nil, false, fmt.Errorf("base.merge parent: %w", err)

@@ -194,7 +194,11 @@ func huggingFaceWeights(t *testing.T, architecture Architecture) []byte {
 			elements *= dimension
 		}
 		bytes := elements * 2
-		header[hf] = map[string]any{"dtype": "BF16", "shape": shapes[name], "data_offsets": []uint64{offset, offset + bytes}}
+		dtype := "BF16"
+		if architecture.ParameterDType == "float16" {
+			dtype = "F16"
+		}
+		header[hf] = map[string]any{"dtype": dtype, "shape": shapes[name], "data_offsets": []uint64{offset, offset + bytes}}
 		offset += bytes
 	}
 	encoded, err := json.Marshal(header)

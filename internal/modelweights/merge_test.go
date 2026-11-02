@@ -112,6 +112,25 @@ func TestMergeWeightsSources(t *testing.T) {
 	}
 }
 
+// Weights that pass validation can still push a product or a sum out of
+// float32 range; the merge fails rather than write the wrong value.
+func TestMergeRefusesValuesFloat32CannotHold(t *testing.T) {
+	for name, test := range map[string]struct {
+		value   float32
+		weights []float64
+		want    string
+	}{
+		"underflow": {1e-8, []float64{0x1p-126, 0x1p-126}, "underflow float32"},
+		"overflow":  {3e38, nil, "overflows"},
+	} {
+		first := writeFixture(t, map[string]fixtureTensor{"a.weight": {"F32", []uint64{1}, []float32{test.value}}})
+		second := writeFixture(t, map[string]fixtureTensor{"a.weight": {"F32", []uint64{1}, []float32{test.value}}})
+		if _, err := Merge([]string{first, second}, test.weights, filepath.Join(t.TempDir(), "merged.safetensors")); err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("%s: error = %v", name, err)
+		}
+	}
+}
+
 func TestBFloat16RoundsToNearestEven(t *testing.T) {
 	for value, want := range map[float32]uint16{1: 0x3f80, 1 + 1.0/256: 0x3f80, 1 + 3.0/256: 0x3f82, 1 + 1.5/256: 0x3f81, -2: 0xc000, float32(math.Inf(1)): 0x7f80} {
 		if got := bfloat16(value); got != want {
@@ -140,7 +159,7 @@ func TestMergeRejectsIncompatibleSources(t *testing.T) {
 		"sum":       {base, []float64{3e38, 3e38}, "sum"},
 		// Subnormal weights lose their precision, and large ones overflow the products.
 		"subnormal": {base, []float64{1.4e-45, 1.4e-45}, "float32"},
-		"products":  {base, []float64{1e38, 1e38}, "non-finite"},
+		"products":  {base, []float64{1e38, 1e38}, "overflows"},
 	} {
 		destination := filepath.Join(t.TempDir(), "merged.safetensors")
 		if _, err := Merge([]string{base, test.other}, test.weights, destination); err == nil || !strings.Contains(err.Error(), test.want) {
