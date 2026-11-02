@@ -43,6 +43,13 @@ func pullReleaseOf(t *testing.T, root, name, parent string, salt byte, architect
 	}
 	weights[len(weights)-1] ^= salt
 	node := LineageNode{WeightsSHA256: strings.Repeat(string("0123456789"[salt]), 64), Parents: []LineageLink{{WeightsSHA256: parent}}}
+	pullClaiming(t, root, name, files, node)
+}
+
+// pullClaiming pulls files as a release whose BOM.json declares node as the
+// lineage its weights came from.
+func pullClaiming(t *testing.T, root, name string, files map[string][]byte, node LineageNode) {
+	t.Helper()
 	bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": node})
 	if err != nil {
 		t.Fatal(err)
@@ -364,8 +371,38 @@ func TestMergeFindsAncestryOfAPulledReleaseThatTrained(t *testing.T) {
 	if _, err := builder.Train(t.Context(), "left", preparedFixture(t, stage)); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := builder.mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}); err != nil {
+	// The two releases meet only through what they declared.
+	if _, declared, err := builder.mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}); err != nil || !declared {
+		t.Fatalf("merge of left and right: declared %v, %v", declared, err)
+	}
+}
+
+// A release can name a node this store records: one any export publishes, or
+// the plain node of weights anyone can pull. Its weights descending from that
+// node is still only its claim.
+func TestReleaseNamingARecordedNodeIsStillDeclared(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	client := &http.Client{Transport: huggingFaceTransport(t, huggingFaceFixture(t, mergeArchitecture(), HuggingFaceTokenizerClass), strings.Repeat("a", 40))}
+	if _, err := (Puller{Root: root, Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "plain", "huggingface://org/tiny"); err != nil {
 		t.Fatal(err)
+	}
+	plain, err := Inspect(root, "plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := ModelLineage(plain, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for salt, claim := range map[byte]LineageNode{1: node, 2: {WeightsSHA256: node.WeightsSHA256}} {
+		files := huggingFaceFixture(t, mergeArchitecture(), HuggingFaceTokenizerClass)
+		files["model.safetensors"][len(files["model.safetensors"])-1] ^= salt
+		name := fmt.Sprintf("claimant-%d", salt)
+		pullClaiming(t, root, name, files, claim)
+		if _, declared, err := (Builder{Root: root}).mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "plain"}, {Model: name}}}); err != nil || !declared {
+			t.Fatalf("%s: declared %v, %v", name, declared, err)
+		}
 	}
 }
 

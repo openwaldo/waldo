@@ -148,18 +148,19 @@ func linkTo(node LineageNode) (LineageLink, error) {
 
 // lineageIndex holds every lineage node this model store can show, keyed by
 // node hash: each run's and origin's node, and each release node an origin
-// records. Release nodes are declared: a pulled release says where its weights
-// came from, and nothing here can check it, so they are also returned on their
-// own, unless this store records the same node itself.
+// records. A pulled origin's link to its release node is declared: the release
+// says where its weights came from, whatever node it names, and nothing here
+// can check it, so pulled origins' nodes are also returned on their own.
 func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) {
 	index := map[string]LineageNode{}
-	recorded := map[string]bool{}
-	releases := map[string]bool{}
-	add := func(node LineageNode, into map[string]bool) {
-		if digest, err := hashJSON(node); err == nil {
-			index[digest] = node
-			into[digest] = true
+	pulled := map[string]bool{}
+	add := func(node LineageNode) string {
+		digest, err := hashJSON(node)
+		if err != nil {
+			return ""
 		}
+		index[digest] = node
+		return digest
 	}
 	for _, root := range []string{builder.Root, filepath.Join(builder.Root, ".merges"), filepath.Join(builder.Root, ".origins")} {
 		entries, err := os.ReadDir(root)
@@ -178,7 +179,7 @@ func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) 
 			// still meets the rest of the chain after the model trains on.
 			if nodes, err := runLineage(inspection); err == nil {
 				for _, run := range nodes {
-					add(run.node, recorded)
+					add(run.node)
 				}
 			}
 			if inspection.Origin == nil {
@@ -186,26 +187,22 @@ func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) 
 			}
 			// The origin's node too, since its first run's node links to it.
 			if node, err := originNode(*inspection.Origin); err == nil {
-				add(node, recorded)
+				if digest := add(node); inspection.Origin.Merge == nil {
+					pulled[digest] = true
+				}
 			}
 			if inspection.Origin.Merge == nil && inspection.Origin.Lineage != nil {
-				add(*inspection.Origin.Lineage, releases)
+				add(*inspection.Origin.Lineage)
 			}
 		}
 	}
-	declared := map[string]bool{}
-	for digest := range releases {
-		if !recorded[digest] {
-			declared[digest] = true
-		}
-	}
-	return index, declared
+	return index, pulled
 }
 
 // ancestry walks a node's chain through the nodes the index holds, like git
 // merge-base, collecting the weights it reaches; a branch ends where its node
-// is not held, or where it would follow a node in skip.
-func ancestry(node LineageNode, index map[string]LineageNode, skip map[string]bool) map[string]bool {
+// is not held, or at a node in stop, whose parents it does not follow.
+func ancestry(node LineageNode, index map[string]LineageNode, stop map[string]bool) map[string]bool {
 	reached := map[string]bool{}
 	visited := map[string]bool{}
 	queue := []LineageNode{node}
@@ -213,10 +210,10 @@ func ancestry(node LineageNode, index map[string]LineageNode, skip map[string]bo
 		current := queue[0]
 		queue = queue[1:]
 		reached[current.WeightsSHA256] = true
+		if digest, err := hashJSON(current); err != nil || stop[digest] {
+			continue
+		}
 		for _, link := range current.Parents {
-			if skip[link.LineageSHA256] {
-				continue
-			}
 			reached[link.WeightsSHA256] = true
 			if next, ok := index[link.LineageSHA256]; ok && !visited[link.LineageSHA256] {
 				visited[link.LineageSHA256] = true
@@ -242,7 +239,7 @@ type mergeParent struct {
 func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, error) {
 	var parents []mergeParent
 	var shared, recorded map[string]bool
-	index, declaredNodes := builder.lineageIndex()
+	index, pulled := builder.lineageIndex()
 	for _, declared := range base.Merge {
 		inspection, err := Inspect(builder.Root, declared.Model)
 		if err != nil {
@@ -267,7 +264,7 @@ func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, erro
 			return nil, false, err
 		}
 		shared = intersect(shared, ancestry(node, index, nil))
-		recorded = intersect(recorded, ancestry(node, index, declaredNodes))
+		recorded = intersect(recorded, ancestry(node, index, pulled))
 		parents = append(parents, mergeParent{inspection, path, link, declared.Weight})
 	}
 	if len(shared) == 0 {

@@ -18,10 +18,10 @@ current weights, requires identical architectures and the byte tokenizer, and
 fails closed unless the parents' lineage chains (ADR 0084) reach a common
 weights hash. It walks each chain through every lineage node the model store
 holds, like `git merge-base`. There is no override: models with no common
-ancestor in that lineage are never averaged. A pulled release's node is what
-the release declared, which the store cannot check, so when the common ancestor
-is shown only through such nodes, and the store does not record them itself,
-the merge records `declared_ancestry: true`.
+ancestor in that lineage are never averaged. That pulled weights came from the
+node their release names is only what the release declared, whatever node it
+names, and the store cannot check it, so when the common ancestor is shown only
+through such claims the merge records `declared_ancestry: true`.
 
 The merge is an origin. WALDO computes the mean in float32 in parent order,
 rounds to nearest-even bfloat16 or float32, and writes it under
