@@ -108,9 +108,9 @@ WALDO can tokenize during preflight, before any training process starts.
 
 The trainer manifest is `waldo-trainer.yaml` at the trainer path. It declares
 `kind`, `schema`, `name`, `protocol`, `entrypoint` (`module` or `script`;
-`executable` is reserved for later), `commands` (`probe`, `resolve`,
-`train`), `launch_profiles`, `objectives`, `artifact_profile`, and named
-`environments`. It names no schema files. Environments of `kind: python-lock` are supported.
+`executable` is reserved for later), `commands` (`probe`, `resolve`, `train`),
+`launch_profiles`, `objectives`, `artifact_profile`, and named `environments`.
+It names no schema files. Environments of `kind: python-lock` are supported.
 
 Rationale: WALDO must know how to launch the trainer, which profiles and
 objectives it supports, and how to interpret its output before running any
