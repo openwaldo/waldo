@@ -140,14 +140,34 @@ and makes changes caused by a generator dependency visible.
 
 Each property in the parameter schema has a role, `recipe` or `execution`,
 set with the `x-waldo-role` annotation. A property without the annotation is a
-recipe parameter. A property is an execution parameter only if two runs
-that differ only in that property perform the same sequence of optimizer
-updates in exact arithmetic, given the same data in the same order. Batch
-decomposition (micro-batch size and accumulation steps), activation
-recomputation, compilation, attention kernel selection, gradient communication
-settings, and logging qualify. Learning rate, schedule, optimizer settings,
-gradient clipping, numeric precision, loss shaping, and initialization seed
-do not.
+recipe parameter. A recipe parameter affects what the model learns: changing
+its value can change the trained weights, so recipe parameters are part of
+the model's identity. Recipe parameters include:
+
+- the learning rate and its schedule, including warmup;
+- optimizer settings, such as weight decay;
+- gradient clipping;
+- numeric precision, such as BF16 or FP32;
+- loss shaping, such as label smoothing; and
+- the seed used to initialize the weights.
+
+An execution parameter affects only how the training work is carried out on
+the hardware, not what is computed. Two runs that see the same data in the
+same order and differ only in an execution parameter make the same weight
+updates, apart from the small rounding differences that also occur between
+different GPU models. Execution parameters are recorded in the run BOM but are
+not part of identity. Execution parameters include:
+
+- how each optimizer step's batch is divided into smaller pieces that fit in
+  GPU memory (micro-batch size and gradient accumulation steps);
+- activation recomputation, which saves memory by recomputing intermediate
+  values instead of storing them;
+- compilation;
+- the choice of attention kernel;
+- how gradients are exchanged between GPUs; and
+- logging.
+
+WALDO applies these rules to roles:
 
 - WALDO reads roles from the received schema, never from `resolve` output.
 - The allowed role values are `recipe` and `execution`. Any other value
