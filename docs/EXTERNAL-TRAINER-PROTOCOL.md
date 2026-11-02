@@ -1,9 +1,9 @@
 # External trainer protocol 1
 
 This is the implemented developer API contract in `internal/model/trainerapp`,
-under ADR [0084](adr/0084-external-trainers.md). The CLI/lifecycle wiring,
-durable plan/run BOM persistence and terminal tensor/file verification
-(WALDO-48) remain **planned**.
+under ADR [0084](adr/0084-external-trainers.md). Terminal tensor/file verification and developer plan/run/model BOM persistence
+are implemented. CLI/lifecycle wiring remains **planned**. See
+[OpenWALDO BOM](OPENWALDO-BOM.md#external-model-provenance-developer-api).
 Checkpoint verification and conformance are implemented; see
 [external checkpoints](EXTERNAL-CHECKPOINTS.md). The built-in workers'
 internal schema-1 protocol is unchanged and is not this protocol.
@@ -60,7 +60,7 @@ and `x-waldo-role` rules. Unknown vendor annotations survive unchanged.
 `Schemas()` returns the original bytes, and `SchemaHashes()` hashes each exact
 document. `SchemaDocument(tokenizerSchema)` creates the schema-1
 `waldo-trainer-schemas` envelope containing `architecture`, `parameters` and
-`tokenizer` **without re-encoding their bytes**. WALDO-48's lifecycle writer must
+`tokenizer` **without re-encoding their bytes**. The lifecycle writer must
 atomically persist those returned bytes as `TRAINER-SCHEMAS.json` beside
 `PLAN.json`, with all three document hashes in identity. Do not pass that file
 through a JSON pretty-printer or marshaler that compacts raw documents.
@@ -170,15 +170,17 @@ zero exit. Every field shown below is required; arrays may be empty only where
 semantically allowed (e.g. evaluations when no evaluation set exists).
 
 ```json
-{"kind":"complete","protocol":1,"complete":{"steps":1,"consumed_tokens":4,"artifacts":[{"path":"model.safetensors","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bytes":16,"role":"weights","format":"safetensors"}],"artifact_profile":"hf-causal-lm","consumption":[{"corpus":"books","token_targets":4}],"evaluations":[{"step":1,"tokens":4,"nll_sum":2.0,"target_tokens":2,"text_bytes":2,"loss":1.0,"bits_per_byte":1.4426950408889634}],"selected_checkpoint":{"step":1,"tokens":4,"metric":"heldout_loss","value":1.0},"environment":{"torch":"2.9.0"}}}
+{"kind":"complete","protocol":1,"complete":{"steps":1,"consumed_tokens":4,"artifacts":[{"path":"model.safetensors","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bytes":16,"role":"weights","format":"safetensors"}],"artifact_profile":"hf-causal-lm","consumption":[{"corpus":"books","token_targets":4}],"evaluations":[{"step":1,"tokens":4,"nll_sum":2.0,"target_tokens":2,"text_bytes":2,"loss":1.0,"bits_per_byte":1.4426950408889634}],"selected_checkpoint":{"step":1,"tokens":4,"metric":"heldout_loss","value":1.0},"artifact_evaluation":{"step":1,"tokens":4,"nll_sum":2.0,"target_tokens":2,"text_bytes":2,"loss":1.0,"bits_per_byte":1.4426950408889634},"environment":{"torch":"2.9.0"}}}
 ```
 
 Artifact declarations require a unique clean relative path, lowercase SHA-256,
 nonnegative size, role and format. Completion paths are relative to artifacts;
 checkpoint paths are relative to checkpoints. Checkpoint events verify and
 commit filesystem contents before the event sink is called. Terminal artifacts
-still require WALDO-48 to enforce containment including symlinks,
-verify sizes/hashes, parse/scan safetensors and reject published pickle.
+are verified after successful process exit: rooted containment, sizes/hashes,
+Safetensors headers and finite floating tensors. Published roles are `weights`
+with format `safetensors`, or `configuration`/`tokenizer` with format `json`
+(JSON files are limited to 16 MiB). Other roles/formats fail closed.
 Checkpoint pickle is private resume state; trainers should use
 `weights_only=True` when loading it.
 
@@ -188,9 +190,18 @@ also reconcile each corpus against sent masks. Resumed attempts merge verified
 checkpoint consumption with current per-corpus sent counts and check the full
 cumulative result. When held-out evaluation exists, selection
 must name the lowest-loss reported candidate, ties choosing the earliest step.
-Without evaluation, select the terminal step. The lifecycle must additionally
-verify that candidates actually exist and are complete persisted checkpoints.
-Receiving a syntactically valid completion never by itself publishes files.
+Without evaluation, select the terminal step. `Train` additionally
+verifies that selected and evaluated candidates exist as complete authenticated
+checkpoint bundles. On resume, callers supply independently persisted
+`Begin.PriorCheckpoints` and `Begin.PriorEvaluations`; neither is sent to the
+trainer. Completion must preserve observed evaluation history.
+When a held-out set exists, completion also requires `artifact_evaluation`,
+with the same fields as an evaluation, describing the reloaded published
+weights at the selected step/tokens. Its NLL arithmetic/counts must match pins
+and its loss must agree with selection within max(0.02, 1%). Without a held-out
+set this field is omitted. WALDO trusts the reported loss beyond these checks.
+Successful `Train` verifies output bytes but does not copy or publish them;
+callers must reverify files at publication/export time.
 
 ## Errors
 

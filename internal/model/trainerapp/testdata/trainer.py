@@ -5,6 +5,7 @@ import os
 import json
 import math
 import sys
+import struct
 
 MODE = 'ok'
 
@@ -65,7 +66,8 @@ else:
         import time
         time.sleep(60)
     tokens = sum(counts.values())
-    payload = b'fake checkpoint'
+    header = json.dumps({'weight': dict(dtype='F32', shape=[1], data_offsets=[0, 4])}).encode()
+    payload = struct.pack('<Q', len(header)) + header + struct.pack('<f', 1.0)
     os.makedirs(begin['paths']['checkpoints'], exist_ok=True)
     with open(os.path.join(begin['paths']['checkpoints'], 'model.safetensors'), 'wb') as f: f.write(payload)
     artifact = dict(path='model.safetensors', sha256=hashlib.sha256(payload).hexdigest(), bytes=len(payload), role='weights', format='safetensors')
@@ -81,7 +83,7 @@ else:
     emit('event', event=dict(kind='evaluation', step=1, tokens=tokens, evaluation=evaluation))
     complete = dict(steps=1, consumed_tokens=tokens, artifacts=[artifact], artifact_profile='hf-causal-lm',
                     consumption=[dict(corpus=c, token_targets=n) for c, n in counts.items()], evaluations=[evaluation],
-                    selected_checkpoint=dict(step=1, tokens=tokens, metric='heldout_loss', value=1.), environment={'fake': '1'})
+                    artifact_evaluation=evaluation, selected_checkpoint=dict(step=1, tokens=tokens, metric='heldout_loss', value=1.), environment={'fake': '1'})
     if MODE == 'missing-complete': del complete['environment']
     if MODE == 'consumption': complete['consumption'][0]['corpus'] = 'wrong'
     if MODE == 'escape': artifact['path'] = '../escape'

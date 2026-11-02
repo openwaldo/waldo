@@ -31,6 +31,8 @@ type Resume struct {
 }
 type Begin struct {
 	// Lifecycle-owned pins and durable checkpoint destination are not trainer input.
+	PriorCheckpoints    []CheckpointReference           `json:"-"`
+	PriorEvaluations    []Evaluation                    `json:"-"`
 	CheckpointIdentity  CheckpointIdentity              `json:"-"`
 	CheckpointDirectory string                          `json:"-"`
 	Paths               Paths                           `json:"paths"`
@@ -112,6 +114,7 @@ func (e Event) Telemetry() training.Event {
 }
 
 type Complete struct {
+	ArtifactEvaluation *Evaluation                   `json:"artifact_evaluation,omitempty"`
 	Steps              int64                         `json:"steps"`
 	ConsumedTokens     int64                         `json:"consumed_tokens"`
 	Artifacts          []Artifact                    `json:"artifacts"`
@@ -137,7 +140,7 @@ type inputFrame struct {
 }
 
 // Train drains output while streaming input and always reaps the child. Returned
-// terminal artifacts remain declarations requiring lifecycle verification.
+// terminal artifacts have passed file, tensor and selection verification.
 // Checkpoints are copied, verified and committed before the sink is called; the
 // lifecycle must persist DurableCheckpoint independently. A sink error stops the run.
 func (c *Client) Train(ctx context.Context, b Begin, evaluations []EvaluationRecord, records SequenceSource, sink func(Event) error) (Complete, error) {
@@ -150,6 +153,23 @@ func (c *Client) Train(ctx context.Context, b Begin, evaluations []EvaluationRec
 	}
 	if err := validateEvaluationRecords(b, evaluations); err != nil {
 		return result, err
+	}
+	candidates := map[int64]CheckpointReference{}
+	for _, ref := range b.PriorCheckpoints {
+		r, err := LoadCheckpoint(b, ref)
+		if err != nil {
+			return result, integrity(err)
+		}
+		candidates[r.Step] = ref
+	}
+	if b.Resume != nil {
+		candidates[b.Resume.Step] = b.Resume.reference
+	}
+	observed := append([]Evaluation(nil), b.PriorEvaluations...)
+	for _, e := range observed {
+		if err := validateEvaluation(e, b); err != nil {
+			return result, integrity(err)
+		}
 	}
 	initial := map[string]int64{}
 	startStep := int64(0)
@@ -197,25 +217,25 @@ func (c *Client) Train(ctx context.Context, b Begin, evaluations []EvaluationRec
 	}
 	for s.Scan() {
 		if terminal {
-			return result, fmt.Errorf("frame after complete")
+			return result, integrity(fmt.Errorf("frame after complete"))
 		}
 		var f outputFrame
 		if err := strict(s.Bytes(), &f); err != nil {
-			return result, err
+			return result, integrity(err)
 		}
 		if f.Protocol != Protocol {
-			return result, fmt.Errorf("unsupported trainer protocol %d", f.Protocol)
+			return result, integrity(fmt.Errorf("unsupported trainer protocol %d", f.Protocol))
 		}
 		switch f.Kind {
 		case "error":
 			return result, decodeError(s.Bytes())
 		case "event":
 			if f.Event == nil || f.Complete != nil || f.Error != "" || f.ErrorClass != "" {
-				return result, fmt.Errorf("invalid event frame")
+				return result, integrity(fmt.Errorf("invalid event frame"))
 			}
 			e := *f.Event
 			if err := validateEvent(e, b, step, tokens); err != nil {
-				return result, err
+				return result, integrity(err)
 			}
 			if e.Kind == "progress" || e.Kind == "checkpoint" {
 				step, tokens = e.Step, e.Tokens
@@ -227,9 +247,13 @@ func (c *Client) Train(ctx context.Context, b Begin, evaluations []EvaluationRec
 				}
 				ref, err := c.commitCheckpoint(b, *e.Checkpoint, counts)
 				if err != nil {
-					return result, err
+					return result, integrity(err)
 				}
 				e.DurableCheckpoint = &ref
+				candidates[e.Step] = ref
+			}
+			if e.Evaluation != nil {
+				observed = append(observed, *e.Evaluation)
 			}
 			if sink != nil {
 				if err := sink(e); err != nil {
@@ -238,11 +262,11 @@ func (c *Client) Train(ctx context.Context, b Begin, evaluations []EvaluationRec
 			}
 		case "complete":
 			if f.Complete == nil || f.Event != nil || f.Error != "" || f.ErrorClass != "" {
-				return result, fmt.Errorf("invalid complete frame")
+				return result, integrity(fmt.Errorf("invalid complete frame"))
 			}
 			result = *f.Complete
 			if err := validateComplete(result, b, c.request.Source.Manifest.ArtifactProfile, step, tokens); err != nil {
-				return result, err
+				return result, integrity(err)
 			}
 			terminal = true
 		default:
@@ -274,7 +298,7 @@ func (c *Client) Train(ctx context.Context, b Begin, evaluations []EvaluationRec
 		baseline = b.Resume.Tokens
 	}
 	if result.ConsumedTokens-baseline != total {
-		return result, fmt.Errorf("consumption differs from tokens sent")
+		return result, integrity(fmt.Errorf("consumption differs from tokens sent"))
 	}
 	reported := map[string]int64{}
 	for _, v := range result.Consumption {
@@ -284,10 +308,10 @@ func (c *Client) Train(ctx context.Context, b Begin, evaluations []EvaluationRec
 		sent.consumption[corpus] += n
 	}
 	if digest(reported) != digest(sent.consumption) {
-		return result, fmt.Errorf("per-corpus consumption differs from tokens sent and checkpoint")
+		return result, integrity(fmt.Errorf("per-corpus consumption differs from tokens sent and checkpoint"))
 	}
 
-	return result, nil
+	return result, verifyCompletionFiles(result, b, candidates, observed)
 }
 func (c *Client) validateBegin(b Begin) error {
 	if err := b.CheckpointIdentity.validate(); err != nil {
@@ -473,6 +497,9 @@ func send(ctx context.Context, p *applaunch.Process, b Begin, evaluations []Eval
 }
 func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 func validateEvaluation(e Evaluation, b Begin) error {
+	if !finite(e.NLLSum) || !finite(e.Loss) || !finite(e.BitsPerByte) {
+		return &training.WorkerError{Class: training.WorkerErrorNumericalIntegrity, Message: "non-finite evaluation"}
+	}
 	if e.Step < 0 || e.Step > b.Data.Steps || e.Tokens < 0 || e.TargetTokens <= 0 || e.TextBytes <= 0 || e.TargetTokens != b.EvaluationSet.TokenTargets || e.TextBytes != b.EvaluationSet.TextBytes || !finite(e.NLLSum) || e.NLLSum < 0 || !finite(e.Loss) || !finite(e.BitsPerByte) {
 		return fmt.Errorf("invalid evaluation counts/metrics")
 	}
@@ -502,6 +529,9 @@ func validateArtifacts(artifacts []Artifact) error {
 	return nil
 }
 func validateEvent(e Event, b Begin, step, tokens int64) error {
+	if e.Loss != nil && !finite(*e.Loss) {
+		return &training.WorkerError{Class: training.WorkerErrorNumericalIntegrity, Message: "non-finite training loss"}
+	}
 	if e.Step < 0 || e.Step > b.Data.Steps || e.Tokens < 0 || e.Tokens > e.Step*b.Data.GlobalBatchSequences*b.Data.SequenceLength || e.Loss != nil && !finite(*e.Loss) {
 		return fmt.Errorf("invalid event counters/loss")
 	}
