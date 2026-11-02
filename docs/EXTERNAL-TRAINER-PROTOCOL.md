@@ -2,8 +2,10 @@
 
 This is the implemented developer API contract in `internal/model/trainerapp`,
 under ADR [0084](adr/0084-external-trainers.md). The CLI/lifecycle wiring,
-checkpoint manifest verification (WALDO-47), durable plan/run BOM persistence
-and tensor/file verification (WALDO-48) remain **planned**. The built-in workers'
+durable plan/run BOM persistence and terminal tensor/file verification
+(WALDO-48) remain **planned**.
+Checkpoint verification and conformance are implemented; see
+[external checkpoints](EXTERNAL-CHECKPOINTS.md). The built-in workers'
 internal schema-1 protocol is unchanged and is not this protocol.
 
 ## Transport and ownership
@@ -108,9 +110,10 @@ and parameters use SHA-256 of Go's JSON encoding of normalized JSON objects
 (sorted object keys, no indentation/newline). The resolver supplies the parameter
 hash. Initialization, when present, uses the existing WALDO initialization facts
 (source type/ID/run, artifact and verified absolute path). Resume, when present,
-is `{step, tokens, checkpoint_manifest}`. The manifest is an opaque non-null
-JSON document here; WALDO-47 owns its authoritative format, compatibility and
-file verification. Never send an unverified manifest to the trainer. The
+is `{step, tokens, checkpoint_manifest, paths}`. WALDO owns the manifest
+format, compatibility and file verification, and maps each manifest filename
+to a verified absolute bundle path in `paths`. `LoadCheckpoint` supplies the
+only accepted resume value; `Train` revalidates it before launch. The
 trainer restores optimizer, scheduler and RNG state, not just weights.
 
 ```json
@@ -172,17 +175,18 @@ semantically allowed (e.g. evaluations when no evaluation set exists).
 
 Artifact declarations require a unique clean relative path, lowercase SHA-256,
 nonnegative size, role and format. Completion paths are relative to artifacts;
-checkpoint paths are relative to checkpoints. The protocol checks declarations,
-not filesystem contents. WALDO-48 must enforce containment including symlinks,
+checkpoint paths are relative to checkpoints. Checkpoint events verify and
+commit filesystem contents before the event sink is called. Terminal artifacts
+still require WALDO-48 to enforce containment including symlinks,
 verify sizes/hashes, parse/scan safetensors and reject published pickle.
 Checkpoint pickle is private resume state; trainers should use
 `weights_only=True` when loading it.
 
 Completion must reach the exact step budget, retain monotonic counters, match
 the manifest artifact profile and reconcile consumption totals. Fresh attempts
-also reconcile each corpus against sent masks. Resumed attempts check the total
-delta against sent targets; historical per-corpus reconciliation belongs to the
-verified checkpoint manifest caller. When held-out evaluation exists, selection
+also reconcile each corpus against sent masks. Resumed attempts merge verified
+checkpoint consumption with current per-corpus sent counts and check the full
+cumulative result. When held-out evaluation exists, selection
 must name the lowest-loss reported candidate, ties choosing the earliest step.
 Without evaluation, select the terminal step. The lifecycle must additionally
 verify that candidates actually exist and are complete persisted checkpoints.

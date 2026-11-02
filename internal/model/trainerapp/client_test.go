@@ -73,7 +73,7 @@ func begin(t *testing.T, c *Client) Begin {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Begin{Paths: Paths{Artifacts: c.request.Scratch, Checkpoints: c.request.Scratch, Scratch: c.request.Scratch}, ModelID: "m", RunID: "r", Stage: "s", Objective: "causal-language-modeling", Data: data(), Architecture: a, ArchitectureSHA256: digest(a), Parameters: r.Parameters, ParametersSHA256: r.ParametersSHA256, Batch: r.Batch, Tokenizer: training.TokenizerSpec{VocabularySize: 10}, EvaluationSet: training.EvaluationSet{Records: 1, TokenTargets: 2, TextBytes: 2}, Determinism: "best-effort", World: single().World}
+	return Begin{CheckpointIdentity: CheckpointIdentity{RunBOMSHA256: digest("run"), TrainerSHA256: digest("trainer"), TokenizerSHA256: digest("tokenizer"), EnvironmentSHA256: digest("environment")}, CheckpointDirectory: filepath.Join(c.request.Scratch, "durable"), Paths: Paths{Artifacts: c.request.Scratch, Checkpoints: c.request.Scratch, Scratch: c.request.Scratch}, ModelID: "m", RunID: "r", Stage: "s", Objective: "causal-language-modeling", Data: data(), Architecture: a, ArchitectureSHA256: digest(a), Parameters: r.Parameters, ParametersSHA256: r.ParametersSHA256, Batch: r.Batch, Tokenizer: training.TokenizerSpec{VocabularySize: 10}, EvaluationSet: training.EvaluationSet{Records: 1, TokenTargets: 2, TextBytes: 2}, Determinism: "best-effort", World: single().World}
 }
 func source(ctx context.Context, consume func(training.PreparedSequence) error) error {
 	for i := int64(0); i < 2; i++ {
@@ -209,7 +209,20 @@ func TestResumeFinalBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := begin(t, c)
-	b.Resume = &Resume{Step: 1, Tokens: 4, CheckpointManifest: json.RawMessage(`{"verified_by_caller":true}`)}
+	var ref CheckpointReference
+	_, err = c.Train(ctx, b, evals(), source, func(e Event) error {
+		if e.DurableCheckpoint != nil {
+			ref = *e.DurableCheckpoint
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Resume, err = LoadCheckpoint(b, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, err = c.Train(ctx, b, evals(), func(context.Context, func(training.PreparedSequence) error) error { return nil }, nil)
 	if err != nil {
 		t.Fatal(err)

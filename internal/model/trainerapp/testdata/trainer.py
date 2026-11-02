@@ -1,5 +1,7 @@
 # Copyright (c) 2026 OpenWALDO Project contributors
 # SPDX-License-Identifier: Apache-2.0
+import hashlib
+import os
 import json
 import math
 import sys
@@ -63,7 +65,10 @@ else:
         import time
         time.sleep(60)
     tokens = sum(counts.values())
-    artifact = dict(path='model.safetensors', sha256='a' * 64, bytes=16, role='weights', format='safetensors')
+    payload = b'fake checkpoint'
+    os.makedirs(begin['paths']['checkpoints'], exist_ok=True)
+    with open(os.path.join(begin['paths']['checkpoints'], 'model.safetensors'), 'wb') as f: f.write(payload)
+    artifact = dict(path='model.safetensors', sha256=hashlib.sha256(payload).hexdigest(), bytes=len(payload), role='weights', format='safetensors')
     checkpoint = dict(step=1, tokens=tokens, artifacts=[artifact])
     evaluation = dict(step=1, tokens=tokens, nll_sum=2., target_tokens=2, text_bytes=2, loss=1., bits_per_byte=1 / math.log(2))
     emit('event', event=dict(kind='log', step=0, tokens=0, message='hello'))

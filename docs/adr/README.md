@@ -81,3 +81,4 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0082: Stream training-ready Parquet into token-budget runs](0082-stream-training-ready-parquet.md)
 - [0083: Infer from explicitly selected interrupted checkpoints](0083-interrupted-checkpoint-inference.md)
 - [0084: External trainers](0084-external-trainers.md)
+- [0085: Commit and authenticate external checkpoint bundles in WALDO](0085-external-checkpoint-bundles.md)

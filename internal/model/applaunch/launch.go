@@ -120,8 +120,10 @@ func Prepare(r Request) (Evidence, error) {
 	argv = append(argv, command)
 	argv = append(argv, r.Args...)
 	environment := []string{"WALDO_PROTOCOL=1", "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "HOME=" + r.Scratch}
-	if value, ok := os.LookupEnv("CUDA_VISIBLE_DEVICES"); ok {
-		environment = append(environment, "CUDA_VISIBLE_DEVICES="+value)
+	for _, name := range []string{"CUDA_VISIBLE_DEVICES", "CUBLAS_WORKSPACE_CONFIG"} {
+		if value, ok := os.LookupEnv(name); ok {
+			environment = append(environment, name+"="+value)
+		}
 	}
 	return Evidence{Profile: r.Profile, Launcher: "python", World: r.World, Directory: r.Source.Directory, Argv: argv, Environment: environment}, nil
 }

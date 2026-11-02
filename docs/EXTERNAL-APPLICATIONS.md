@@ -242,7 +242,7 @@ before use; the launcher does not install or independently attest these inputs.
 the supplied arguments. No shell is involved. The working directory is the
 read-only selected application directory. Its complete environment is
 `WALDO_PROTOCOL=1`, `PATH=/usr/bin:/bin`, `LANG=C.UTF-8`, `LC_ALL=C.UTF-8`,
-`HOME=<scratch>`, plus `CUDA_VISIBLE_DEVICES` only when present in WALDO's
+`HOME=<scratch>`, plus `CUDA_VISIBLE_DEVICES` and `CUBLAS_WORKSPACE_CONFIG` only when present in WALDO's
 environment (including an explicitly empty value). No other host variables
 are inherited. `Process.Evidence()` returns the exact argv, directory,
 environment values, launcher, profile and world facts for the future run BOM

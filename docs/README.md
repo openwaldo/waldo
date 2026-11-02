@@ -34,6 +34,8 @@ Read these in order:
   single-process launch API; CLI execution is planned.
 - [External trainer protocol](EXTERNAL-TRAINER-PROTOCOL.md): probe, resolve and
   token-only train frames, schema evidence and developer API.
+- [External checkpoints](EXTERNAL-CHECKPOINTS.md): verified resume bundles and
+  reusable interruption/decomposition conformance harness.
 - [Model lifecycle](MODEL-LIFECYCLE.md): managed models, runs, and backends.
 - [Multi-host training](MULTI-NODE-TRAINING.md): TorchTitan cluster
   requirements and exact operator commands.

@@ -279,3 +279,21 @@ func TestProtocolPipesAndStartFailures(t *testing.T) {
 		t.Fatal("started missing interpreter")
 	}
 }
+
+func TestCUBLASDeterminismEvidence(t *testing.T) {
+	t.Setenv("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+	r := fixture(t, "print('ok')\n")
+	e, err := Prepare(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, value := range e.Environment {
+		if value == "CUBLAS_WORKSPACE_CONFIG=:4096:8" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("determinism environment omitted from recorded allowlist")
+	}
+}

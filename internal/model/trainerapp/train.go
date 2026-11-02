@@ -22,28 +22,34 @@ type Paths struct {
 	Scratch     string `json:"scratch"`
 }
 type Resume struct {
-	Step               int64           `json:"step"`
-	Tokens             int64           `json:"tokens"`
-	CheckpointManifest json.RawMessage `json:"checkpoint_manifest"`
+	Step               int64             `json:"step"`
+	Tokens             int64             `json:"tokens"`
+	CheckpointManifest json.RawMessage   `json:"checkpoint_manifest"`
+	Paths              map[string]string `json:"paths"`
+	reference          CheckpointReference
+	consumption        map[string]int64
 }
 type Begin struct {
-	Paths              Paths                           `json:"paths"`
-	ModelID            string                          `json:"model_id"`
-	RunID              string                          `json:"run_id"`
-	Stage              string                          `json:"stage"`
-	Objective          string                          `json:"objective"`
-	Data               training.ExternalDataParameters `json:"data"`
-	Architecture       map[string]any                  `json:"architecture"`
-	ArchitectureSHA256 string                          `json:"architecture_sha256"`
-	Parameters         map[string]any                  `json:"parameters"`
-	ParametersSHA256   string                          `json:"parameters_sha256"`
-	Batch              Batch                           `json:"batch"`
-	Tokenizer          training.TokenizerSpec          `json:"tokenizer"`
-	EvaluationSet      training.EvaluationSet          `json:"evaluation_set"`
-	Initialization     *training.WorkerInitialization  `json:"initialization"`
-	Resume             *Resume                         `json:"resume"`
-	Determinism        string                          `json:"determinism"`
-	World              applaunch.World                 `json:"world"`
+	// Lifecycle-owned pins and durable checkpoint destination are not trainer input.
+	CheckpointIdentity  CheckpointIdentity              `json:"-"`
+	CheckpointDirectory string                          `json:"-"`
+	Paths               Paths                           `json:"paths"`
+	ModelID             string                          `json:"model_id"`
+	RunID               string                          `json:"run_id"`
+	Stage               string                          `json:"stage"`
+	Objective           string                          `json:"objective"`
+	Data                training.ExternalDataParameters `json:"data"`
+	Architecture        map[string]any                  `json:"architecture"`
+	ArchitectureSHA256  string                          `json:"architecture_sha256"`
+	Parameters          map[string]any                  `json:"parameters"`
+	ParametersSHA256    string                          `json:"parameters_sha256"`
+	Batch               Batch                           `json:"batch"`
+	Tokenizer           training.TokenizerSpec          `json:"tokenizer"`
+	EvaluationSet       training.EvaluationSet          `json:"evaluation_set"`
+	Initialization      *training.WorkerInitialization  `json:"initialization"`
+	Resume              *Resume                         `json:"resume"`
+	Determinism         string                          `json:"determinism"`
+	World               applaunch.World                 `json:"world"`
 }
 
 // SequenceSource supplies already packed, WALDO-owned sequences positioned at
@@ -77,13 +83,15 @@ type Evaluation struct {
 	BitsPerByte  float64 `json:"bits_per_byte"`
 }
 type Event struct {
-	Kind       string      `json:"kind"`
-	Message    string      `json:"message,omitempty"`
-	Step       int64       `json:"step"`
-	Tokens     int64       `json:"tokens"`
-	Loss       *float64    `json:"loss,omitempty"`
-	Checkpoint *Checkpoint `json:"checkpoint,omitempty"`
-	Evaluation *Evaluation `json:"evaluation,omitempty"`
+	// DurableCheckpoint is available only after the bundle has been verified and committed.
+	DurableCheckpoint *CheckpointReference `json:"-"`
+	Kind              string               `json:"kind"`
+	Message           string               `json:"message,omitempty"`
+	Step              int64                `json:"step"`
+	Tokens            int64                `json:"tokens"`
+	Loss              *float64             `json:"loss,omitempty"`
+	Checkpoint        *Checkpoint          `json:"checkpoint,omitempty"`
+	Evaluation        *Evaluation          `json:"evaluation,omitempty"`
 }
 
 // Telemetry adapts protocol events to existing progress/telemetry sinks. The
@@ -129,9 +137,9 @@ type inputFrame struct {
 }
 
 // Train drains output while streaming input and always reaps the child. Returned
-// artifacts/checkpoints are declarations, NOT verified files: the lifecycle
-// caller must verify bytes, hashes, tensor contents and checkpoint manifests
-// before recording them as accepted durable state. A sink error stops the run.
+// terminal artifacts remain declarations requiring lifecycle verification.
+// Checkpoints are copied, verified and committed before the sink is called; the
+// lifecycle must persist DurableCheckpoint independently. A sink error stops the run.
 func (c *Client) Train(ctx context.Context, b Begin, evaluations []EvaluationRecord, records SequenceSource, sink func(Event) error) (Complete, error) {
 	var result Complete
 	if err := c.validateBegin(b); err != nil {
@@ -141,6 +149,20 @@ func (c *Client) Train(ctx context.Context, b Begin, evaluations []EvaluationRec
 		return result, fmt.Errorf("training requires a sequence source")
 	}
 	if err := validateEvaluationRecords(b, evaluations); err != nil {
+		return result, err
+	}
+	initial := map[string]int64{}
+	startStep := int64(0)
+	if b.Resume != nil {
+		initial = b.Resume.consumption
+		startStep = b.Resume.Step
+	}
+	ledger, err := newLedger(b.Paths.Scratch, initial)
+	if err != nil {
+		return result, err
+	}
+	defer ledger.close()
+	if err := ledger.add(startStep, nil); err != nil {
 		return result, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -159,7 +181,7 @@ func (c *Client) Train(ctx context.Context, b Begin, evaluations []EvaluationRec
 	}
 	done := make(chan sentResult, 1)
 	go func() {
-		counts, e := send(ctx, p, b, evaluations, records)
+		counts, e := send(ctx, p, b, evaluations, records, ledger)
 		p.Stdin.Close()
 		if e != nil {
 			cancel()
@@ -197,6 +219,17 @@ func (c *Client) Train(ctx context.Context, b Begin, evaluations []EvaluationRec
 			}
 			if e.Kind == "progress" || e.Kind == "checkpoint" {
 				step, tokens = e.Step, e.Tokens
+			}
+			if e.Checkpoint != nil {
+				counts, err := ledger.at(e.Step)
+				if err != nil {
+					return result, err
+				}
+				ref, err := c.commitCheckpoint(b, *e.Checkpoint, counts)
+				if err != nil {
+					return result, err
+				}
+				e.DurableCheckpoint = &ref
 			}
 			if sink != nil {
 				if err := sink(e); err != nil {
@@ -243,18 +276,26 @@ func (c *Client) Train(ctx context.Context, b Begin, evaluations []EvaluationRec
 	if result.ConsumedTokens-baseline != total {
 		return result, fmt.Errorf("consumption differs from tokens sent")
 	}
-	if b.Resume == nil {
-		reported := map[string]int64{}
-		for _, v := range result.Consumption {
-			reported[v.Corpus] = v.TokenTargets
-		}
-		if digest(reported) != digest(sent.consumption) {
-			return result, fmt.Errorf("per-corpus consumption differs from tokens sent")
-		}
+	reported := map[string]int64{}
+	for _, v := range result.Consumption {
+		reported[v.Corpus] = v.TokenTargets
 	}
+	for corpus, n := range initial {
+		sent.consumption[corpus] += n
+	}
+	if digest(reported) != digest(sent.consumption) {
+		return result, fmt.Errorf("per-corpus consumption differs from tokens sent and checkpoint")
+	}
+
 	return result, nil
 }
 func (c *Client) validateBegin(b Begin) error {
+	if err := b.CheckpointIdentity.validate(); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(b.CheckpointDirectory) {
+		return fmt.Errorf("checkpoint directory must be absolute")
+	}
 	if b.ModelID == "" || b.RunID == "" || b.Stage == "" {
 		return fmt.Errorf("begin requires model_id, run_id and stage")
 	}
@@ -308,10 +349,27 @@ func (c *Client) validateBegin(b Begin) error {
 		return err
 	}
 	if b.Resume != nil {
-		if b.Resume.Step < 0 || b.Resume.Step > b.Data.Steps || b.Resume.Tokens < 0 || len(b.Resume.CheckpointManifest) == 0 || !json.Valid(b.Resume.CheckpointManifest) || string(b.Resume.CheckpointManifest) == "null" {
-			return fmt.Errorf("resume requires position and verified checkpoint manifest")
+		verified, err := LoadCheckpoint(b, b.Resume.reference)
+		if err != nil {
+			return err
 		}
+		if !sameResume(b.Resume, verified) {
+			return fmt.Errorf("resume differs from verified checkpoint")
+		}
+		_, execution, err := c.parameters.Split(b.Parameters)
+		if err != nil {
+			return err
+		}
+		var m CheckpointManifest
+		if err := json.Unmarshal(verified.CheckpointManifest, &m); err != nil {
+			return err
+		}
+		if digest(execution) != digest(m.Execution) {
+			return fmt.Errorf("checkpoint execution parameters mismatch")
+		}
+		b.Resume.consumption = verified.consumption
 	}
+
 	return nil
 }
 func validateTokens(tokens []int, mask []bool, vocab int) (int64, error) {
@@ -354,7 +412,7 @@ func validateEvaluationRecords(b Begin, records []EvaluationRecord) error {
 	}
 	return nil
 }
-func send(ctx context.Context, p *applaunch.Process, b Begin, evaluations []EvaluationRecord, records SequenceSource) (map[string]int64, error) {
+func send(ctx context.Context, p *applaunch.Process, b Begin, evaluations []EvaluationRecord, records SequenceSource, ledger *consumptionLedger) (map[string]int64, error) {
 	counts := map[string]int64{}
 	if err := write(p.Stdin, inputFrame{Kind: "begin", Protocol: Protocol, Begin: &b}); err != nil {
 		return counts, err
@@ -369,6 +427,7 @@ func send(ctx context.Context, p *applaunch.Process, b Begin, evaluations []Eval
 		ordinal = b.Resume.Step * b.Data.GlobalBatchSequences
 	}
 	limit := b.Data.Steps * b.Data.GlobalBatchSequences
+	stepCounts := map[string]int64{}
 	err := records(ctx, func(r training.PreparedSequence) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -387,9 +446,16 @@ func send(ctx context.Context, p *applaunch.Process, b Begin, evaluations []Eval
 			}
 			total += count
 			counts[corpus] += count
+			stepCounts[corpus] += count
 		}
 		if total != n {
 			return fmt.Errorf("sequence consumption differs from supervised targets")
+		}
+		if (ordinal+1)%b.Data.GlobalBatchSequences == 0 {
+			if err := ledger.add((ordinal+1)/b.Data.GlobalBatchSequences, stepCounts); err != nil {
+				return err
+			}
+			stepCounts = map[string]int64{}
 		}
 		if err = write(p.Stdin, inputFrame{Kind: "record", Protocol: Protocol, Record: r}); err != nil {
 			return err
