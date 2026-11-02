@@ -164,3 +164,28 @@ func TestBuiltinSchemaTwoPreservesHashes(t *testing.T) {
 		t.Fatalf("schema-1 hash = %s", want)
 	}
 }
+
+func TestNativePlanGoldenHash(t *testing.T) {
+	doc, err := loadExternalFixture(t, composeYAML(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	architecture := doc.Builtin.Architecture
+	ah, err := hashJSON(architecture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forecast, err := architecture.Forecast()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := Plan{Kind: "waldo-model-plan", Schema: 1, Name: "native", Architecture: architecture, ArchitectureSHA256: ah, Forecast: forecast}
+	got, err := hashJSON(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const baseline = "85f83122fa673a5b8309b5ff2ef0692a07362d1fcccde118d09db66af285ed68"
+	if got != baseline {
+		t.Fatalf("native plan hash = %s", got)
+	}
+}

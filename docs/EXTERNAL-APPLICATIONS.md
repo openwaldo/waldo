@@ -7,7 +7,9 @@ are implemented as developer APIs.
 Tokenizer probe/serve and trainer probe/resolve/train execution are implemented
 as developer APIs;
 see [external trainer protocol 1](EXTERNAL-TRAINER-PROTOCOL.md). External model
-identity persistence and training lifecycle integration are **planned**.
+identity persistence is available through the developer APIs in
+[OpenWALDO BOM](OPENWALDO-BOM.md#external-model-provenance-developer-api);
+training lifecycle integration is **planned**.
 The CLI does not yet run or forecast external composes.
 
 ## Developer entry points
