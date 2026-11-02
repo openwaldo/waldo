@@ -49,6 +49,8 @@ type ModelParent struct {
 	RunID        string            `json:"run_id"`
 	RunBOMSHA256 string            `json:"run_bom_sha256"`
 	Artifact     training.Artifact `json:"artifact"`
+	// LineageSHA256 names the parent's lineage node, as a git commit names its parent.
+	LineageSHA256 string `json:"lineage_sha256,omitempty"`
 }
 
 type OriginSource struct {
@@ -75,6 +77,41 @@ type OriginBOM struct {
 	ArchitectureSHA256 string           `json:"architecture_sha256"`
 	SourceArtifacts    []OriginArtifact `json:"source_artifacts"`
 	Artifacts          []OriginArtifact `json:"artifacts"`
+	Merge              *OriginMerge     `json:"merge,omitempty"`
+	// Lineage is the source release's lineage node, or a merge's own node.
+	Lineage *LineageNode `json:"lineage,omitempty"`
+}
+
+// LineageNode names a model's weights and the weights they came from, each by
+// its weights hash and the hash of its own node. Like a git commit, a node
+// names only its direct parents, so it stays the same size however long the
+// history behind it; the history is the chain of nodes.
+type LineageNode struct {
+	WeightsSHA256 string        `json:"weights_sha256"`
+	Parents       []LineageLink `json:"parents,omitempty"`
+	// Runs pins the run BOMs of the training that produced these weights from
+	// their parents, so the chain reaches the data each step trained on.
+	Runs []string `json:"runs,omitempty"`
+}
+
+type LineageLink struct {
+	WeightsSHA256 string `json:"weights_sha256"`
+	LineageSHA256 string `json:"lineage_sha256,omitempty"`
+}
+
+// OriginMerge records a merged origin: its parents in merge order, so anyone
+// holding them can recompute the weights and compare hashes.
+type OriginMerge struct {
+	Method  string              `json:"method"`
+	Parents []OriginMergeParent `json:"parents"`
+}
+
+type OriginMergeParent struct {
+	Model         string  `json:"model"`
+	ModelID       string  `json:"model_id"`
+	WeightsSHA256 string  `json:"weights_sha256"`
+	LineageSHA256 string  `json:"lineage_sha256"`
+	Weight        float64 `json:"weight,omitempty"`
 }
 
 type PlannedStage struct {

@@ -54,17 +54,20 @@ type Calibration struct {
 }
 
 type releaseBOM struct {
-	Kind         string               `json:"kind"`
-	Schema       int                  `json:"schema"`
-	Subject      string               `json:"subject"`
-	Format       string               `json:"format"`
-	ModelID      string               `json:"model_id"`
-	Name         string               `json:"name"`
-	Interaction  model.Interaction    `json:"interaction,omitzero"`
-	SourceType   string               `json:"source_type"`
-	SourceID     string               `json:"source_id"`
-	RunID        string               `json:"run_id,omitempty"`
-	SourceBOM    string               `json:"source_bom_sha256"`
+	Kind        string            `json:"kind"`
+	Schema      int               `json:"schema"`
+	Subject     string            `json:"subject"`
+	Format      string            `json:"format"`
+	ModelID     string            `json:"model_id"`
+	Name        string            `json:"name"`
+	Interaction model.Interaction `json:"interaction,omitzero"`
+	SourceType  string            `json:"source_type"`
+	SourceID    string            `json:"source_id"`
+	RunID       string            `json:"run_id,omitempty"`
+	SourceBOM   string            `json:"source_bom_sha256"`
+	// Lineage carries the exported weights and their ancestry, so a model
+	// pulled from this release can prove what it descends from.
+	Lineage      *model.LineageNode   `json:"lineage,omitempty"`
 	Artifacts    []releaseArtifact    `json:"artifacts"`
 	Quantization *releaseQuantization `json:"quantization,omitempty"`
 	Generated    string               `json:"generated"`
@@ -189,7 +192,11 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	if err != nil {
 		return "", err
 	}
-	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
+	lineage, err := model.ModelLineage(inspection)
+	if err != nil {
+		return "", err
+	}
+	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Lineage: &lineage, Artifacts: inventory, Generated: inspection.Model.Updated}
 	if err := writeJSON(filepath.Join(temporary, "BOM.json"), bom); err != nil {
 		return "", err
 	}

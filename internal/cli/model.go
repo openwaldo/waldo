@@ -604,7 +604,13 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 		}
 		fmt.Fprintf(stdout, "INTERACTION:   %s\n", label)
 	}
-	if inspection.Origin != nil {
+	if merge := originMerge(inspection); merge != nil {
+		parents := make([]string, 0, len(merge.Parents))
+		for _, parent := range merge.Parents {
+			parents = append(parents, parent.Model)
+		}
+		fmt.Fprintf(stdout, "ORIGIN:        %s of %s (merge)\n", merge.Method, strings.Join(parents, ", "))
+	} else if inspection.Origin != nil {
 		fmt.Fprintf(stdout, "ORIGIN:        %s@%s (%s)\n", inspection.Origin.Source.Repository, shortModelHash(inspection.Origin.Source.Revision), inspection.Origin.Source.Provider)
 	}
 	for position, pin := range inspection.Model.Runs {
@@ -1472,8 +1478,11 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 			objectives = append(objectives, stage.Objective)
 		}
 	}
-	if err := builder.CheckBackend(context.Execution, compose.Architecture, objectives); err != nil {
-		return err
+	// A merge-only compose trains nothing, so it needs no training backend.
+	if len(objectives) > 0 {
+		if err := builder.CheckBackend(context.Execution, compose.Architecture, objectives); err != nil {
+			return err
+		}
 	}
 	builder.PreparedCacheDirectory = filepath.Join(cache.Scratch(), "prepared")
 	builder.PreparedCacheMaxBytes = cache.MaxBytes()
@@ -2581,4 +2590,11 @@ func humanBytesUint(value uint64) string {
 		return humanBytes(int64(value))
 	}
 	return fmt.Sprintf("%d B", value)
+}
+
+func originMerge(inspection model.Inspection) *model.OriginMerge {
+	if inspection.Origin == nil {
+		return nil
+	}
+	return inspection.Origin.Merge
 }

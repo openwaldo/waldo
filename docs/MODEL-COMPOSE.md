@@ -185,7 +185,7 @@ BOM.
 | `base` | no | object | Optionally initializes a new model from verified managed or external weights. |
 | `architecture` | normally | object | Defines immutable model structure and tokenizer identity. It may be omitted with `base.source`, in which case WALDO inherits the verified source architecture. |
 | `interaction` | no | object | Declares a versioned inference-time prompt contract. Omit it for raw causal continuation. |
-| `stages` | yes | non-empty list | Ordered training stages. Stage names must be unique. |
+| `stages` | yes, unless `base.merge` creates the model | list | Ordered training stages. Stage names must be unique. |
 
 ### Interaction fields
 
@@ -222,28 +222,31 @@ model-level contract. New composes should use only `interaction.tools`.
 
 | Field | Required | Value | Meaning |
 | --- | --- | --- | --- |
-| `model` | exactly one of `model` or `source` | `^[a-z0-9][a-z0-9._-]{0,63}$` | Names a managed model with a verified completed checkpoint or pulled origin. |
-| `source` | exactly one of `model` or `source` | pinned model source | Acquires a supported external model through the same verified importer as `model pull`. Schema 1 accepts `huggingface://organization/model@<commit>`. |
+| `model` | exactly one of `model`, `source`, or `merge` | `^[a-z0-9][a-z0-9._-]{0,63}$` | Names a managed model with a verified completed checkpoint or pulled origin. |
+| `source` | exactly one of `model`, `source`, or `merge` | pinned model source | Acquires a supported external model through the same verified importer as `model pull`. Schema 1 accepts `huggingface://organization/model@<commit>`. |
 | `origin_sha256` | no | SHA-256 | Asserts the expected origin BOM. WALDO always resolves and pins the actual value. |
 | `model_id` | no | model ID | Asserts the identity of a managed base. WALDO fills it during resolution. |
 | `run_id` | no | run ID | Selects a completed run. When omitted, WALDO resolves the latest completed run with real weights. |
 | `run_bom_sha256` | no | SHA-256 | Asserts the selected run BOM. WALDO fills it during resolution. |
 | `artifact_sha256` | no | SHA-256 | Asserts the selected checkpoint bytes. WALDO fills it during resolution. |
 | `artifact_bytes` | no | non-negative bytes | Asserts the selected checkpoint size. WALDO fills it during resolution. |
+| `merge` | exactly one of `model`, `source`, or `merge` | two or more `{model, weight}` | Averages managed models into a merged origin. `weight` is optional and must be given for every parent or none; weighted parents contribute in proportion. |
+| `lineage_sha256` | no | SHA-256 | Asserts a trained base's lineage node. WALDO fills it during resolution. |
 
 ## Base initialization
 
 `base` controls the weights used to initialize a model before its first stage.
 It does not name the destination model; the destination is the first argument
-to `waldo model train`. A compose supports three initialization modes:
+to `waldo model train`. A compose supports four initialization modes:
 
 | Compose declaration | Initial weights | Architecture rule |
 | --- | --- | --- |
 | no `base` | Newly initialized weights | `architecture` is required. |
 | `base.model` | Verified completed checkpoint from a named managed model, falling back to its origin when it has no completed run | `architecture` may be omitted and inherited; when present, it must exactly match. |
 | `base.source` | Verified origin weights acquired from an external source | `architecture` may be omitted and inherited; when present, it must exactly match. |
+| `base.merge` | The weighted mean of two or more managed models that share a recorded ancestor | Every parent must have the same architecture, which the compose inherits. |
 
-`model` and `source` are mutually exclusive. A base initializes the destination
+`model`, `source`, and `merge` are mutually exclusive. A base initializes the destination
 model and is never mutated by its training. For a trained managed base, WALDO
 resolves the latest completed run containing real weights unless `run_id` is
 specified. It verifies and persists the parent model ID, run ID, run BOM hash,
@@ -267,6 +270,48 @@ present, the complete architecture must exactly match. Use this form when the
 base should be visible to `waldo model list` and independently inspectable with
 `waldo model summary conversation`. Resolution turns the inherited architecture
 and omitted pins into immutable values before training starts.
+
+### Merged base
+
+```yaml
+kind: waldo-model-compose
+schema: 1
+base:
+  merge:
+    - model: contributor-a
+      weight: 472344
+    - model: contributor-b
+      weight: 477616
+```
+
+Averaging weights is meaningful only for models trained from common weights,
+so WALDO fails closed unless the parents share an ancestor
+([ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)). Ancestry is
+recorded the way git records history: every model has a lineage node naming
+its current weights and the weights they came from, each by weights hash and by
+the hash of that parent's own node. A fine-tune's parent pin, a pulled model's
+origin, and a merge's origin each record a node, and a release's `BOM.json`
+carries the released model's node, so nodes stay the same size however long
+the history behind them. WALDO walks each parent's chain through every node
+the model store holds, like `git merge-base`, and requires a weights hash that
+every parent reaches. Where a chain leaves the store, the walk stops there.
+Parents trained from random weights, or pulled from releases that record no
+lineage, cannot be merged. Merges accept byte-tokenizer models with `bfloat16`
+or `float32` parameters.
+
+WALDO writes the merge as an origin under the model store's `.merges`
+directory, keyed by its parents and weights, so the same merge is built once.
+Its origin BOM records the method (`mean-f32-v1`, or `weighted-mean-f32-v1`
+with weights: float32 accumulation in parent order, rounded to nearest even),
+each parent's model ID, weights hash, and
+lineage node hash in merge order, and the weights; its lineage node names every
+parent's node, like a git merge commit. Anyone holding the parents can
+recompute the merged weights and compare hashes. A compose with
+`base.merge` may have no stages: the destination is then the merged model
+itself, usable for chat, export, or as another compose's base. With stages, the
+merge initializes training like any origin. Exports record the model's lineage node in
+their release `BOM.json`, and pulls keep it in the origin, so the chain
+continues across publication.
 
 ### Direct external base
 
