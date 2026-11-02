@@ -627,7 +627,7 @@ func (compose Compose) Validate() error {
 			return fmt.Errorf("base.model must name a locally managed model")
 		}
 		if hasSource {
-			if compose.Base.ModelID != "" || compose.Base.RunID != "" || compose.Base.RunBOMSHA256 != "" || compose.Base.ArtifactSHA256 != "" || compose.Base.ArtifactBytes != 0 {
+			if compose.Base.ModelID != "" || compose.Base.RunID != "" || compose.Base.RunBOMSHA256 != "" || compose.Base.ArtifactSHA256 != "" || compose.Base.ArtifactBytes != 0 || compose.Base.LineageSHA256 != "" {
 				return fmt.Errorf("base.source cannot declare managed-model run pins")
 			}
 			_, revision, err := parseHuggingFaceSource(compose.Base.Source)

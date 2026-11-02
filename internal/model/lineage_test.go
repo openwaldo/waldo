@@ -8,6 +8,7 @@ package model
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -36,6 +37,10 @@ func pullReleaseOf(t *testing.T, root, name, parent string, salt byte, architect
 	t.Helper()
 	files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
 	weights := files["model.safetensors"]
+	// Keep each bf16 value below 2, so averaging them stays finite.
+	for index := 8 + int(binary.LittleEndian.Uint64(weights)) + 1; index < len(weights); index += 2 {
+		weights[index] &= 0x3f
+	}
 	weights[len(weights)-1] ^= salt
 	node := LineageNode{WeightsSHA256: strings.Repeat(string("0123456789"[salt]), 64), Parents: []LineageLink{{WeightsSHA256: parent}}}
 	bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": node})
@@ -291,6 +296,78 @@ func TestMergeFindsAncestryThroughEarlierRuns(t *testing.T) {
 	}
 	if _, declared, err := builder.mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "child"}, {Model: "p"}}}); err != nil || declared {
 		t.Fatalf("merge of child and p: declared %v, %v", declared, err)
+	}
+}
+
+// A pulled release that trains on keeps the ancestry its release recorded.
+func TestMergeFindsAncestryOfAPulledReleaseThatTrained(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullRelease(t, root, "left", strings.Repeat("a", 64), 0)
+	pullRelease(t, root, "right", strings.Repeat("a", 64), 1)
+	builder := realWeightsBuilder(root)
+	stage := testStage("continue")
+	stage.Parameters.SequenceLength = 32
+	stage.Parameters.Steps *= 2
+	if _, err := builder.Train(t.Context(), "left", preparedFixture(t, stage)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := builder.mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Pulling back a release of this store's own model declares nodes the store
+// already records, so their ancestry stays recorded.
+func TestPullingOwnReleaseKeepsAncestryRecorded(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	builder := realWeightsBuilder(root)
+	if _, err := builder.Initialize("p", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.Train(t.Context(), "p", preparedFixture(t, testStage("one"))); err != nil {
+		t.Fatal(err)
+	}
+	stage := testStage("child")
+	if _, err := builder.Compose(t.Context(), "child", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Inspect(root, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := ModelLineage(p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := huggingFaceFixture(t, mergeArchitecture(), HuggingFaceTokenizerClass)
+	if files["BOM.json"], err = json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": node}); err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
+	if _, err := (Puller{Root: root, Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "republished", "huggingface://org/tiny"); err != nil {
+		t.Fatal(err)
+	}
+	if _, declared, err := builder.mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "child"}, {Model: "p"}}}); err != nil || declared {
+		t.Fatalf("merge of child and p: declared %v, %v", declared, err)
+	}
+}
+
+// Only a trained base has a lineage node to pin; any other pin is refused, not recorded.
+func TestComposeRefusesLineagePinOnUntrainedBase(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullRelease(t, root, "left", strings.Repeat("a", 64), 0)
+	stage := testStage("continue")
+	stage.Parameters.SequenceLength = 32
+	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "left", LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
+	if _, err := (Builder{Root: root, Resolver: training.FakeResolver()}).Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil {
+		t.Fatal("origin base accepted a lineage pin")
+	}
+	source := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Source: "huggingface://org/tiny@" + strings.Repeat("a", 40), LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
+	if err := source.Validate(); err == nil || !strings.Contains(err.Error(), "base.source") {
+		t.Fatalf("source base with a lineage pin: %v", err)
 	}
 }
 

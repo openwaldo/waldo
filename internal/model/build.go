@@ -1539,7 +1539,7 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		if base.Origin == nil || base.BOM.CurrentOriginSHA256 == "" {
 			return Compose{}, nil, fmt.Errorf("compose base model has no complete real weights")
 		}
-		if compose.Base.RunID != "" || compose.Base.RunBOMSHA256 != "" || compose.Base.ArtifactSHA256 != "" || compose.Base.ArtifactBytes != 0 {
+		if compose.Base.RunID != "" || compose.Base.RunBOMSHA256 != "" || compose.Base.ArtifactSHA256 != "" || compose.Base.ArtifactBytes != 0 || compose.Base.LineageSHA256 != "" {
 			return Compose{}, nil, fmt.Errorf("origin compose base cannot assert managed-model run pins")
 		}
 		if compose.Base.OriginSHA256 != "" && compose.Base.OriginSHA256 != base.Model.OriginBOMSHA256 {

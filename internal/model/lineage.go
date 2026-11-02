@@ -147,15 +147,18 @@ func linkTo(node LineageNode) (LineageLink, error) {
 }
 
 // lineageIndex holds every lineage node this model store can show, keyed by
-// node hash: each model's own node and each release node its origin records.
-// Release nodes are declared: a pulled release says where its weights came
-// from, and nothing here can check it, so they are also returned on their own.
+// node hash: each run's and origin's node, and each release node an origin
+// records. Release nodes are declared: a pulled release says where its weights
+// came from, and nothing here can check it, so they are also returned on their
+// own, unless this store records the same node itself.
 func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) {
 	index := map[string]LineageNode{}
-	declared := map[string]bool{}
-	add := func(node LineageNode) {
+	recorded := map[string]bool{}
+	releases := map[string]bool{}
+	add := func(node LineageNode, into map[string]bool) {
 		if digest, err := hashJSON(node); err == nil {
 			index[digest] = node
+			into[digest] = true
 		}
 	}
 	for _, root := range []string{builder.Root, filepath.Join(builder.Root, ".merges"), filepath.Join(builder.Root, ".origins")} {
@@ -175,20 +178,25 @@ func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) 
 			// still meets the rest of the chain after the model trains on.
 			if nodes, err := runLineage(inspection); err == nil {
 				for _, run := range nodes {
-					add(run.node)
+					add(run.node, recorded)
 				}
 			}
-			if node, err := ModelLineage(inspection, ""); err == nil {
-				add(node)
+			if inspection.Origin == nil {
+				continue
 			}
-			if inspection.Origin != nil && inspection.Origin.Lineage != nil {
-				add(*inspection.Origin.Lineage)
-				if inspection.Origin.Merge == nil {
-					if digest, err := hashJSON(*inspection.Origin.Lineage); err == nil {
-						declared[digest] = true
-					}
-				}
+			// The origin's node too, since its first run's node links to it.
+			if node, err := originNode(*inspection.Origin); err == nil {
+				add(node, recorded)
 			}
+			if inspection.Origin.Merge == nil && inspection.Origin.Lineage != nil {
+				add(*inspection.Origin.Lineage, releases)
+			}
+		}
+	}
+	declared := map[string]bool{}
+	for digest := range releases {
+		if !recorded[digest] {
+			declared[digest] = true
 		}
 	}
 	return index, declared

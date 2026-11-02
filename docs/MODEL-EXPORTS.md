@@ -192,7 +192,7 @@ inventory. Its schema-1 shape is:
   "run_id": "<selected real run; omitted for an origin>",
   "source_bom_sha256": "<managed model BOM hash>",
   "lineage": {
-    "weights_sha256": "<released weights hash>",
+    "weights_sha256": "<hash of the weights this release was converted from>",
     "parents": [{"weights_sha256": "<parent weights hash>", "lineage_sha256": "<parent node hash>"}],
     "runs": ["<run BOM hash>"]
   },
@@ -217,9 +217,10 @@ inventory. Its schema-1 shape is:
 `source_bom_sha256` connects the derived representation to the managed model
 BOM from which it was produced. Each artifact path is relative to the package
 root. This makes a release relocatable without embedding a machine-specific
-model directory. `lineage` is the released weights' lineage node
-([ADR 0084](adr/0084-record-model-lineage.md)); a pull keeps it as the node its
-origin descends from, so the chain continues past publication.
+model directory. `lineage` is the lineage node of the managed weights this
+release was converted from ([ADR 0084](adr/0084-record-model-lineage.md)), so
+its `weights_sha256` names no file in the release; a pull keeps it as the node
+its origin descends from, so the chain continues past publication.
 
 The derived package currently records the source model BOM by hash rather than
 embedding the full `MODEL-BOM.json` and run tree. The hash makes substitution

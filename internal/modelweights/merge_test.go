@@ -138,6 +138,9 @@ func TestMergeRejectsIncompatibleSources(t *testing.T) {
 		"underflow": {base, []float64{1e-50, 1}, "float32"},
 		"overflow":  {base, []float64{1e300, 1e300}, "float32"},
 		"sum":       {base, []float64{3e38, 3e38}, "sum"},
+		// Subnormal weights lose their precision, and large ones overflow the products.
+		"subnormal": {base, []float64{1.4e-45, 1.4e-45}, "float32"},
+		"products":  {base, []float64{1e38, 1e38}, "non-finite"},
 	} {
 		destination := filepath.Join(t.TempDir(), "merged.safetensors")
 		if _, err := Merge([]string{base, test.other}, test.weights, destination); err == nil || !strings.Contains(err.Error(), test.want) {

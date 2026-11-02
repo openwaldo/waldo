@@ -296,8 +296,8 @@ the history behind them. WALDO walks each parent's chain through every node
 the model store holds, like `git merge-base`, and requires a weights hash that
 every parent reaches. Where a chain leaves the store, the walk stops there.
 A pulled release's node is only what the release declared; when the parents
-meet only through such nodes, the merged origin records
-`declared_ancestry: true`.
+meet only through such nodes, and this store does not record those nodes
+itself, the merged origin records `declared_ancestry: true`.
 Parents trained from random weights, or pulled from releases that record no
 lineage, cannot be merged. Merges accept byte-tokenizer models with `bfloat16`
 or `float32` parameters.
@@ -305,7 +305,9 @@ or `float32` parameters.
 WALDO writes the merge as an origin under the model store's `.merges`
 directory, keyed by its parents and weights, so the same merge is built once.
 Its origin BOM records the method (`mean-f32-v1`, or `weighted-mean-f32-v1`
-with weights: float32 accumulation in parent order, rounded to nearest even),
+with weights: float32 accumulation in parent order, rounded to nearest even;
+weights must be normal, finite float32 values, and a merge whose weights push a
+finite value past float32 range fails),
 each parent's model ID, weights hash, and
 lineage node hash in merge order, and the weights; its lineage node names every
 parent's node, like a git merge commit. Anyone holding the parents can

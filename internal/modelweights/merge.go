@@ -22,13 +22,13 @@ type mergeSource struct {
 }
 
 // ValidateWeights checks merge weights as the arithmetic uses them, in float32:
-// a weight that rounds to zero or overflows would make the recorded weights
-// differ from the ones applied.
+// a weight that rounds to zero, loses precision as a subnormal, or overflows
+// would make the recorded weights differ from the ones applied.
 func ValidateWeights(weights []float64) error {
 	var total float64
 	for _, weight := range weights {
-		if applied := float32(weight); !(applied > 0) || math.IsInf(float64(applied), 0) {
-			return fmt.Errorf("merge weights must be positive and finite in float32; got %g", weight)
+		if applied := float32(weight); !(applied >= 0x1p-126) || math.IsInf(float64(applied), 0) {
+			return fmt.Errorf("merge weights must be positive, normal, and finite in float32; got %g", weight)
 		}
 		total += weight
 	}
@@ -140,6 +140,8 @@ func Merge(sources []string, weights []float64, destination string) (map[string]
 		}
 		size := descriptor.DataOffsets[1] - descriptor.DataOffsets[0]
 		sums := make([]float32, size/width)
+		// carried marks values a source already held as Inf or NaN.
+		carried := make([]bool, len(sums))
 		raw := make([]byte, size)
 		for index, source := range opened {
 			start := source.tensors[name].DataOffsets[0]
@@ -148,12 +150,18 @@ func Merge(sources []string, weights []float64, destination string) (map[string]
 			}
 			share := float32(weights[index])
 			for element := range sums {
+				value := decodeFloat(raw, element, width)
+				carried[element] = carried[element] || !finite(value)
 				// The explicit conversion stops Go from fusing the multiply into the add.
-				sums[element] += float32(decodeFloat(raw, element, width) * share)
+				sums[element] += float32(value * share)
 			}
 		}
 		for element, sum := range sums {
-			encodeFloat(raw, element, width, sum/divisor)
+			mean := sum / divisor
+			if !finite(mean) && !carried[element] {
+				return nil, fmt.Errorf("merge weights make tensor %s non-finite in float32", name)
+			}
+			encodeFloat(raw, element, width, mean)
 		}
 		if _, err := output.Write(raw); err != nil {
 			return nil, fmt.Errorf("write tensor %s: %w", name, err)
@@ -203,6 +211,10 @@ func openMergeSource(path string) (mergeSource, error) {
 		tensors[name] = descriptor
 	}
 	return mergeSource{file, tensors, dataStart}, nil
+}
+
+func finite(value float32) bool {
+	return value == value && !math.IsInf(float64(value), 0)
 }
 
 func decodeFloat(raw []byte, index int, width uint64) float32 {

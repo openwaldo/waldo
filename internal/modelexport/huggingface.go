@@ -65,8 +65,8 @@ type releaseBOM struct {
 	SourceID    string            `json:"source_id"`
 	RunID       string            `json:"run_id,omitempty"`
 	SourceBOM   string            `json:"source_bom_sha256"`
-	// Lineage carries the exported weights and their ancestry, so a model
-	// pulled from this release can prove what it descends from.
+	// Lineage is the node of the managed weights this release was converted
+	// from, so a model pulled from it continues the chain it declares.
 	Lineage      *model.LineageNode   `json:"lineage,omitempty"`
 	Artifacts    []releaseArtifact    `json:"artifacts"`
 	Quantization *releaseQuantization `json:"quantization,omitempty"`

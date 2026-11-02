@@ -20,7 +20,8 @@ weights hash. It walks each chain through every lineage node the model store
 holds, like `git merge-base`. There is no override: models with no common
 ancestor in that lineage are never averaged. A pulled release's node is what
 the release declared, which the store cannot check, so when the common ancestor
-is shown only through such nodes the merge records `declared_ancestry: true`.
+is shown only through such nodes, and the store does not record them itself,
+the merge records `declared_ancestry: true`.
 
 The merge is an origin. WALDO computes the mean in float32 in parent order,
 rounds to nearest-even bfloat16 or float32, and writes it under
