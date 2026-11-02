@@ -50,17 +50,20 @@ The plan hash covers:
   manifest SHA-256;
 - tokenizer source, with the same shape;
 - each selected named environment: lock file hash and interpreter version;
-- the resolved trainer and tokenizer configuration;
+- the SHA-256 of each schema document the trainer and tokenizer report;
+- the resolved recipe parameters of every stage and the resolved tokenizer
+  configuration;
 - the architecture; and
 - the corpus BOMs.
 
 WALDO runs the trainer's `resolve` command for every stage before it computes
 the plan hash, so the hash covers the configuration the trainer will actually
-use.
+use. Resolved execution parameters are excluded, as described in
+[Parameter roles](#parameter-roles).
 
 Host facts (GPU, driver, CUDA, kernel, launch profile, launcher, world shape)
-go in the run BOM only. They scope reproducibility claims but do not change
-the model's identity.
+and resolved execution parameters go in the run BOM only. They scope
+reproducibility claims but do not change the model's identity.
 
 Rationale: a model is what produced it. A commit SHA alone is not enough
 because the path inside the repository and the manifest select what actually
@@ -85,10 +88,12 @@ it sees. Token IDs give WALDO one input representation to verify.
 
 A tokenizer has its own manifest, `waldo-tokenizer.yaml`, declaring `kind`,
 `schema`, `name`, `protocol`, `entrypoint`, `commands` (`probe` and `serve`),
-a configuration schema, and named environments. WALDO drives it as a
+and named environments. WALDO drives it as a
 long-lived NDJSON codec, tokenizer protocol version 1, for all tokenization:
 training records, conversation role segments, and held-out records. `probe`
-reports the vocabulary size and special token IDs. WALDO still renders
+reports the vocabulary size, special token IDs, and the tokenizer's
+configuration schema, handled as described in
+[Parameter schemas](#parameter-schemas). WALDO still renders
 conversations with the ADR 0060 templates and derives loss masks from roles;
 the tokenizer only encodes the rendered segments. A tokenizer may share a
 repository and commit with the trainer.
@@ -104,15 +109,80 @@ WALDO can tokenize during preflight, before any training process starts.
 The trainer manifest is `waldo-trainer.yaml` at the trainer path. It declares
 `kind`, `schema`, `name`, `protocol`, `entrypoint` (`module` or `script`;
 `executable` is reserved for later), `commands` (`probe`, `resolve`,
-`train`), `launch_profiles`, `objectives`, `artifact_profile`, `schemas`
-(`architecture` and `parameters`, as JSON Schema), and named `environments`.
-Environments of `kind: python-lock` are supported.
+`train`), `launch_profiles`, `objectives`, `artifact_profile`, optional
+`schemas` (paths to committed `architecture` and `parameters` schema files),
+and named `environments`. Environments of `kind: python-lock` are supported.
 
-Rationale: WALDO must validate a compose, launch the trainer, and interpret
-its output before running any trainer code. A declarative manifest at a
-pinned commit makes those facts part of the hashed source. JSON Schema lets
-the trainer own its parameter vocabulary while WALDO still rejects invalid
-composes before launch.
+Rationale: WALDO must know how to launch the trainer, which profiles and
+objectives it supports, and how to interpret its output before running any
+trainer code. A declarative manifest at a pinned commit makes those facts part
+of the hashed source.
+
+### Parameter schemas
+
+The trainer reports its architecture and parameter schemas, as JSON Schema
+2020-12 documents, in its `probe` response. The tokenizer reports its
+configuration schema the same way. This response is the authoritative source.
+A trainer may generate the documents from code, for example from Python
+classes.
+
+WALDO records every received trainer and tokenizer schema document byte for
+byte, unfiltered, in `TRAINER-SCHEMAS.json` next to `PLAN.json`, and puts each document's SHA-256 in
+the plan hash. When the manifest names a committed schema file, the file must
+be byte-identical to the reported document, or the run fails. WALDO validates
+the compose, and later every `resolve` result, against the full documents.
+
+Rationale: the schema is a deterministic function of the trainer source and
+its locked environment, which identity already covers, so a schema generated
+at run time gives the same guarantee as a committed file. Recording the
+received documents keeps the plan auditable without re-running the trainer
+and makes changes caused by a generator dependency visible. A committed file
+remains useful for offline validation and review, and the byte-equality check
+keeps it from drifting.
+
+### Parameter roles
+
+Each property in the parameter schema has a role. A property annotated
+`"x-waldo-role": "execution"` is an execution parameter. Every other property
+is a recipe parameter. A property is an execution parameter only if two runs
+that differ only in that property perform the same sequence of optimizer
+updates in exact arithmetic, given the same data in the same order. Batch
+decomposition (micro-batch size and accumulation steps), activation
+recomputation, compilation, attention kernel selection, gradient communication
+settings, and logging qualify. Learning rate, schedule, optimizer settings,
+gradient clipping, numeric precision, loss shaping, and initialization seed
+do not.
+
+- WALDO reads roles from the received schema, never from `resolve` output.
+- The only allowed role value is `execution`. Any other value fails
+  validation.
+- A role on an object applies to its whole subtree. WALDO follows `$ref`
+  before reading roles.
+- The architecture schema must not contain `x-waldo-role`. Architecture is
+  always identity.
+
+`resolve` receives the world shape (world size, processes per node, and the
+device facts from `probe`) and returns every parameter. WALDO validates each
+result against the full schema and splits it by role. Recipe values enter the
+plan hash. Execution values go to the run BOM. WALDO calls `resolve` twice,
+for the actual world shape and for a single process, and fails if the recipe
+values differ. A precision or other recipe value the host cannot honor makes
+`resolve` fail rather than fall back.
+
+Trainers must normalize loss by the exact number of supervised target tokens
+across the whole global batch, as ADR 0071 requires of the built-in workers,
+so that batch decomposition does not change the gradient. The conformance
+test runs the same steps under two different decompositions and compares the
+losses within a tolerance.
+
+Rationale: the global batch is fixed by the compose, but its decomposition
+depends on the number of GPUs and their memory. Without roles, the same
+compose run on one GPU and on eight would produce two model identities for
+the same sequence of updates. The default role is recipe, so an unannotated
+property makes identity too strict, never too loose. Roles live in the hashed
+schema, so changing a role is itself an identity change, and the two-shape
+`resolve` check catches a trainer that derives a recipe value, such as a
+learning rate, from the host.
 
 ### Process launch
 
@@ -172,18 +242,24 @@ External trainers speak trainer protocol version 1 over stdin and stdout
 NDJSON. The built-in workers' schema-1 protocol (ADR 0018) stays internal and
 is never declared by an external trainer.
 
-- `begin` carries paths (artifacts, checkpoints, scratch), WALDO-owned data
-  parameters, the opaque resolved trainer parameters and architecture with
-  their hashes, tokenizer facts, the evaluation set, initialization, resume
-  state with its checkpoint manifest, the determinism mode, and world facts
-  (world size, node count, processes per node, node rank).
-- WALDO then sends evaluation records and training sequences as token IDs and
-  loss masks, followed by an end frame.
-- The trainer emits `event` frames (`progress`, `log`, `checkpoint`, and
-  `evaluation` with held-out NLL sums and counts), then one `complete` frame
-  (artifacts with roles and the artifact profile, consumption per corpus,
-  evaluations, the selected checkpoint, and environment evidence) or one
-  `error` frame with an error class.
+- `probe` reports versions, devices, capabilities, and the schema documents
+  of [Parameter schemas](#parameter-schemas).
+- `resolve` receives a stage's `trainer` block, the WALDO-owned data
+  parameters, and the world shape, and returns the fully resolved parameters.
+- `train` runs one stage attempt:
+  - `begin` carries paths (artifacts, checkpoints, scratch), WALDO-owned data
+    parameters, the opaque resolved trainer parameters and architecture with
+    their hashes, tokenizer facts, the evaluation set, initialization, resume
+    state with its checkpoint manifest, the determinism mode, and world facts
+    (world size, node count, processes per node, node rank). The trainer
+    receives both recipe and execution parameters.
+  - WALDO then sends evaluation records and training sequences as token IDs and
+    loss masks, followed by an end frame.
+  - The trainer emits `event` frames (`progress`, `log`, `checkpoint`, and
+    `evaluation` with held-out NLL sums and counts), then one `complete` frame
+    (artifacts with roles and the artifact profile, consumption per corpus,
+    evaluations, the selected checkpoint, and environment evidence) or one
+    `error` frame with an error class.
 
 Under the `distributed` profile, every node's local rank 0 receives `begin`
 and that node's data frames. Only global rank 0 emits `event`, `complete`,
@@ -205,7 +281,10 @@ to WALDO and validated by the trainer's architecture schema. Each stage has a
 `data` block, owned by WALDO (budget, sequence length,
 `global_batch_sequences`, seed, shuffle, evaluation selection, checkpoint and
 evaluation cadence), and a `trainer` block, opaque to WALDO, validated by the
-trainer's parameter schema and completed by `resolve`. WALDO validates the
+trainer's parameter schema and completed by `resolve`. Execution parameters
+are normally omitted from the stage `trainer` block. A value written there is
+validated against the world shape but still stays out of identity. WALDO
+validates the
 batch topology, and the trainer must verify that micro-batch size times
 accumulation steps times world size equals the global batch. YAML anchors and
 aliases are allowed; `yaml.v3` expands them before decoding.
@@ -226,7 +305,9 @@ it on its hardware.
 
 Resume is required. WALDO writes and validates a checkpoint manifest recording
 step, tokens, consumption, identity hashes, and file roles, and streams data
-from the recorded resume position. This applies to both launch profiles: an
+from the recorded resume position. The manifest also records the world shape
+and the resolved execution parameters, and WALDO refuses to resume under a
+different world shape. This applies to both launch profiles: an
 interrupted distributed run resumes on every node from the same verified
 checkpoint, and each node's coordinator starts at its sequence boundary. A
 conformance test compares an interrupted and resumed run with an
@@ -279,7 +360,9 @@ Rationale: objectives are data semantics, which WALDO owns.
 The reference trainer lives in the WALDO repository at
 `examples/trainers/qwen3-hf`. It trains Qwen3 from scratch with Hugging Face
 Transformers and supports both launch profiles. Trainer and tokenizer share
-one directory, and the tokenizer files are committed.
+one directory, and the tokenizer files are committed. Its schemas are defined
+in Python and reported through `probe`, and the generated schema files are
+also committed so they can be reviewed and checked for drift.
 
 Rationale: one maintained trainer exercises the whole contract, serves as the
 conformance target, and shows third parties a complete working layout.
@@ -323,8 +406,16 @@ below still holds unchanged for composes without one.
 - **ADR 0046** (tokenization in Go). With an external tokenizer, WALDO drives
   the tokenizer application instead of its Go codec. Workers still receive
   token IDs only. The Go tokenizers remain the built-in tokenizers.
+- **ADR 0071** (gradient accumulation). Unchanged in substance: as with the
+  built-in `gradient_accumulation_steps`, an external trainer's batch
+  decomposition is pinned in the run BOM, not in identity, and the global
+  batch stays fixed.
 - **ADR 0072** (node-local prepared streams). Unchanged, and the only data
   plane offered to external trainers.
+- **ADR 0073** (pinned precision, recomputation, compilation). For external
+  trainers, recomputation and compilation are execution parameters, as the
+  built-in path treats them, but numeric precision is a recipe parameter and
+  part of identity.
 
 ## Out of scope
 
