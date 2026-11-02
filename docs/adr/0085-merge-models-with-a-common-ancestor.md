@@ -41,7 +41,7 @@ merge-only compose.
 - A merge never invents a training run.
 - Changing the arithmetic requires a new method name.
 - Parents trained from random weights, or pulled without recorded lineage,
-  cannot be merged.
+  cannot be merged, except copies of the same weights.
 - A merge's record says whether its common ancestor rests on this store's own
   records or only on what pulled releases declared. A release can declare any
   parent; the record never presents that claim as shown.

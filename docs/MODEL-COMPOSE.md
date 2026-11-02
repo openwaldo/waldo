@@ -299,7 +299,8 @@ A pulled release's node is only what the release declared; when the parents
 meet only through such nodes, and this store does not record those nodes
 itself, the merged origin records `declared_ancestry: true`.
 Parents trained from random weights, or pulled from releases that record no
-lineage, cannot be merged. Merges accept byte-tokenizer models with `bfloat16`
+lineage, cannot be merged, except copies of the same weights, which are their
+own common ancestor. Merges accept byte-tokenizer models with `bfloat16`
 or `float32` parameters.
 
 WALDO writes the merge as an origin under the model store's `.merges`

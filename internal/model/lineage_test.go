@@ -171,7 +171,8 @@ func TestMergeComposeTrainsFromTheMerge(t *testing.T) {
 }
 
 // A release can claim any parent. The merge goes ahead, but its record says the
-// shared ancestor is declared, never that this store showed it.
+// shared ancestor is declared, never that this store showed it; a model trained
+// here from the same parent shares a recorded one.
 func TestMergeComposeMarksAncestryOnlyAReleaseDeclares(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	root := t.TempDir()
@@ -185,9 +186,36 @@ func TestMergeComposeMarksAncestryOnlyAReleaseDeclares(t *testing.T) {
 		t.Fatal(err)
 	}
 	pullRelease(t, root, "claimant", node.WeightsSHA256, 3)
-	pullRelease(t, root, "twin", strings.Repeat("a", 64), 0)
-	builder := Builder{Root: root}
-	for parent, declared := range map[string]bool{"claimant": true, "twin": false} {
+	// Training flips one bit of its initial weights, so "trained" holds weights of its own.
+	backend := backendFunc(func(_ context.Context, request training.Request) (training.Observation, error) {
+		data, err := os.ReadFile(request.Initialization.Path)
+		if err != nil {
+			return training.Observation{}, err
+		}
+		data[len(data)-1] ^= 1
+		if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
+			return training.Observation{}, err
+		}
+		if err := os.WriteFile(filepath.Join(request.ArtifactDirectory, "model.safetensors"), data, 0o644); err != nil {
+			return training.Observation{}, err
+		}
+		digest := sha256.Sum256(data)
+		return training.Observation{
+			Steps: 2, ConsumedTokens: 128,
+			Evaluations: []training.Evaluation{{Step: 2, Tokens: 128, Metrics: map[string]float64{"heldout_loss": 1}}},
+			Artifacts:   []training.Artifact{{Path: "artifacts/model.safetensors", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}},
+		}, nil
+	})
+	builder := Builder{Root: root, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backend), nil
+	})}
+	stage := testStage("continue")
+	stage.Parameters.SequenceLength = 32
+	stage.Parameters.Steps *= 2
+	if _, err := builder.Compose(t.Context(), "trained", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "victim"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+		t.Fatal(err)
+	}
+	for parent, declared := range map[string]bool{"claimant": true, "trained": false} {
 		merged, err := builder.Compose(t.Context(), "with-"+parent, Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "victim"}, {Model: parent}}}}, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -296,6 +324,30 @@ func TestMergeFindsAncestryThroughEarlierRuns(t *testing.T) {
 	}
 	if _, declared, err := builder.mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "child"}, {Model: "p"}}}); err != nil || declared {
 		t.Fatalf("merge of child and p: declared %v, %v", declared, err)
+	}
+}
+
+// A run its pin marks simulated, as a legacy fake-backend run is, has no
+// lineage node and its weights are never current, whatever its observation says.
+func TestLineageAndCurrentWeightsSkipRunsThePinMarksSimulated(t *testing.T) {
+	root := t.TempDir()
+	trainTwice(t, realWeightsBuilder(root))
+	p, err := Inspect(root, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Model.Runs[1].Simulated = true
+	first := p.Model.Runs[0].Artifacts[0].SHA256
+	node, err := ModelLineage(p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, current, err := currentWeights(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.WeightsSHA256 != first || current != first {
+		t.Fatalf("lineage %s and current %s, want the first run's %s", node.WeightsSHA256, current, first)
 	}
 }
 

@@ -81,7 +81,7 @@ func runLineage(inspection Inspection) ([]runNode, error) {
 	}
 	var nodes []runNode
 	for position, run := range inspection.Runs {
-		if run.State != RunComplete || run.Observation == nil || run.Observation.Simulated {
+		if !realRun(inspection, position) {
 			continue
 		}
 		weights := ""

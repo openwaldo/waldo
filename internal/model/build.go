@@ -1220,13 +1220,20 @@ func resolveInitialization(inspection Inspection) (*training.Initialization, err
 	return nil, nil
 }
 
+// realRun reports whether the run at position completed with real weights,
+// judged by its pin, as the model BOM's current run is.
+func realRun(inspection Inspection, position int) bool {
+	run := inspection.Runs[position]
+	return run.State == RunComplete && run.Observation != nil && position < len(inspection.Model.Runs) && !inspection.Model.Runs[position].Simulated
+}
+
 func resolveRunInitialization(inspection Inspection, requestedRunID string) (*training.Initialization, error) {
 	for index := len(inspection.Runs) - 1; index >= 0; index-- {
 		run := inspection.Runs[index]
 		if requestedRunID != "" && run.ID != requestedRunID {
 			continue
 		}
-		if run.State != RunComplete || run.Observation == nil || run.Observation.Simulated {
+		if !realRun(inspection, index) {
 			continue
 		}
 		for _, artifact := range run.Observation.Artifacts {
