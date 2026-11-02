@@ -1,0 +1,300 @@
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "Mara carried the blue lantern into the cave because the path was dark. Inside the cave,",
+  "result": {
+    "text": " they found a big, shiny treasure chest. They were so happy! They took the treasure and went back home. From that day on, they always remembered the fun they had in the cave.",
+    "tokens": 40,
+    "finish_reason": "eos",
+    "duration_ms": 806
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "Jon found a small red boat beside the lake. He wanted to cross the water, so",
+  "result": {
+    "text": " he took the boat and started to walk. He was so excited! He was going to cross the lake!\nBut when he got to the lake, he saw a big, scary fish. The fish was very big and had a big mouth. The fish saw the boat and swam closer. The boat was too close to the fish. The fish swam away, and the boat was safe.\nJon was sad, but he learned a lesson. He should not take things that are not his. He should ask for permission first. He also learned that fish can be scary, but they can also be nice.",
+    "tokens": 125,
+    "finish_reason": "eos",
+    "duration_ms": 2119
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "Lina planted three sunflower seeds behind the white fence. Every morning,",
+  "result": {
+    "text": " she watered the seeds and watched them grow. She was so proud of her work and couldn't wait to see what the next sunflower would do. \nOne day, she saw a little boy walking by the fence. He was only three years old and he was very curious. He asked her, \"What are you doing?\" \n\"I'm planting a sunflower,\" Lina said. \"I'm going to see what happens.\"\nThe little boy was amazed. He asked, \"Can I help you?\"\nLina smiled and said, \"Yes, you can help me. I'm going to give you a seed and a watering can. Then you can plant the sunflower.\"\nThe little boy was so excited. He helped Lina plant the sunflower and water it every day. He was so proud of his work. \nLina was so happy that she could help the little boy. She was so proud of herself. She had done something very special.",
+    "tokens": 211,
+    "finish_reason": "eos",
+    "duration_ms": 3882
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "Owen left his green scarf on the wooden chair before he went outside. When he returned,",
+  "result": {
+    "text": " he saw his friend, a little girl named Lily, sitting on the grass.\n\"Hi, Lily!\" said Ben. \"I found your green scarf. Do you want to play with me?\"\nLily smiled and said, \"Yes, Ben! Let's play together!\"\nThey played all day, running and laughing in the sun. Ben and Lily became best friends. They loved to play with their green scarves and have fun together. And from that day on, they always played together in the park.",
+    "tokens": 110,
+    "finish_reason": "eos",
+    "duration_ms": 1923
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "Ava heard thunder over the hill and saw rain moving toward the village. She decided",
+  "result": {
+    "text": " to go out and play in the rain. She put on her boots and coat and ran to the hill. She saw the rain and the thunder and the rain. She was happy.\nShe saw a big rainbow in the sky. It was bright and colorful. She wanted to touch it. She ran to the hill and climbed on top of it. She reached out her hand and touched the rainbow. It was soft and smooth. She smiled.\nShe saw a big tree in the middle of the hill. It was tall and green. She wanted to climb it and see the sky. She put her hands on the tree and pulled herself up. She felt the wind and the rain. She was excited.\nShe reached the top of the tree and looked around. She saw the village and the houses and the cars. She saw the people and the houses and the cars. She saw the rainbow and the rainbow and the rainbow. She felt happy.\nShe heard a voice from the sky. It was her mom. She was worried. She shouted, \"Sara, where are you?\"\nSara heard her mom and felt scared. She did not know where she was. She did not know how to get down. She did not know how to go back to the hill. She did not know how to get back to her mom.\nShe started to cry. She was alone. She was afraid. She was alone. She was alone. She was alone. She was alone. She was alone. She was alone.",
+    "tokens": 307,
+    "finish_reason": "eos",
+    "duration_ms": 6123
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "The library was a quiet brick building with tall windows. Near the front door,",
+  "result": {
+    "text": " there was a small door. A little girl named Lily and her mom walked by the door. They saw a big, red ball on the floor. Lily's mom said, \"Let's play with the ball!\"\nLily and her mom played with the ball all day. They had so much fun. When it was time to go home, Lily said, \"Mom, can we come back tomorrow?\" Her mom smiled and said, \"Yes, Lily. We can come back tomorrow.\"\nThe next day, Lily and her mom went back to the quiet brick building. They opened the door and went inside. They found the big, red ball and played with it. They had so much fun that day.",
+    "tokens": 148,
+    "finish_reason": "eos",
+    "duration_ms": 2614
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "A tiny brown rabbit lived under the old apple tree. Its home was",
+  "result": {
+    "text": " very old and dry. The rabbit was sad because it could not find any food to eat.\nOne day, a little boy named Tim saw the old apple tree. He wanted to help the rabbit. Tim picked up the old apple tree and took it to his house. He gave the old apple tree a big bowl of water to drink. The old apple tree was very happy.\nBut then, something unexpected happened! The old apple tree started to talk! It said, \"Thank you, Tim, for helping me. I am a magic apple tree!\" Tim was very surprised. The magic apple tree gave Tim a big, sweet apple to eat. Tim and the old apple tree became best friends. They lived happily ever after.",
+    "tokens": 150,
+    "finish_reason": "eos",
+    "duration_ms": 2645
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "The classroom had a round clock, twelve desks, and a large map. On the teacher’s table,",
+  "result": {
+    "text": " there was a big book with many pages. The teacher read the book out loud, and the students listened. They liked the story very much.\nAfter the story, the teacher said, \"Now, let's go outside and play.\" The students went outside and played in the sun. They ran, jumped, and laughed. The teacher watched them and smiled. The day was fun and full of surprises.",
+    "tokens": 84,
+    "finish_reason": "eos",
+    "duration_ms": 1505
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "The silver bicycle belonged to Elena. It had a basket on the front and",
+  "result": {
+    "text": " a bell on the back. It was a very pretty bike.\n\"Can I have the bike, please?\" Anna asked her mom.\n\"Sure, but you have to pay for it. You have to save money for a long time,\" her mom said.\nAnna nodded. She took the bike and put it in her pocket. She felt happy. She had a new friend.\nShe went to the park with her mom. She saw a big slide. She wanted to go on it. She ran to the slide. But she did not see the big dog. The dog was sleeping on the bench. He had a big smile on his face. He saw Anna. He woke up and saw her.\n\"Hi, Anna!\" the dog said. \"What are you doing here?\"\n\"Hello, dog!\" Anna said. \"I am going on the slide. Do you want to go with me?\"\nThe dog woke up and saw Anna. He woke up and saw her. He wagged his tail. He wanted to go on the slide too.\n\"Hi, Anna!\" the dog said. \"I am going on the slide. Do you want to go with me?\"\nAnna was scared. She did not want to go on the slide. She did not want to go on the dog. She did not want to go on the bench. She did not want to go on the dog.\n\"No, thank you,\" Anna said. \"I do not want to go on the slide. I do not want to go on the bench. I do not want to go on the dog. He is mean. He is not my friend.\"\nThe dog was sad. He did not understand. He thought Anna was scared. He thought she was afraid. He thought she was lonely. He thought she was lonely too.\nHe decided to go on the slide with Anna. He waited for her. He waited for her. He waited for her. He waited for her.\nAnna was happy. She saw the dog. She saw the bench. She saw the dog. She saw the bench. She saw the dog. She saw the bench. She saw the dog.\nShe smiled. She went on the slide. She had fun. She was happy. She was not scared. She was not lonely. She was happy.",
+    "tokens": 490,
+    "finish_reason": "eos",
+    "duration_ms": 11969
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "The beach was empty after the storm. Wet shells covered the sand, while",
+  "result": {
+    "text": " the waves washed away the sand. The sun was still in the sky, but the beach was still empty.\nA little girl named Lily saw the empty beach. She felt sad for the beach. Lily had an idea. She took a big bucket and filled it with water. She put the water in the empty beach. The beach was not empty anymore. The sun was back, and the beach was full of water. Lily and her friends played in the water all day.",
+    "tokens": 96,
+    "finish_reason": "eos",
+    "duration_ms": 1732
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "\"Please close the gate,\" said Nora. \"I will,\" Ben replied, \"because",
+  "result": {
+    "text": " I want to go to the park.\" \nSo, Nora closed the gate and Ben went to the park. He was so excited to explore the world. He ran around and played with the other children. He had so much fun! \nWhen it was time to go home, Nora thanked the other children for helping her. She said goodbye and went home with a smile on her face.",
+    "tokens": 81,
+    "finish_reason": "eos",
+    "duration_ms": 1456
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "\"Why is the puppy hiding?\" asked Eli. Mia looked under the table and said,",
+  "result": {
+    "text": " \"I don't know. Maybe he is scared.\" They both looked around the room and saw the puppy peeking out from behind the curtains. The puppy wagged his tail and came out to play with Eli and Mia. They all laughed and played together, and the puppy was not scared anymore.",
+    "tokens": 70,
+    "finish_reason": "eos",
+    "duration_ms": 1246
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "\"May I borrow your yellow pencil?\" Tom asked. Sara handed it to him and said,",
+  "result": {
+    "text": " \"Here, you can use my yellow pencil. But be careful, it is very special.\"\nTom took the yellow pencil and started to draw. He drew a big sun, a house, and a cat. He was very happy. He said, \"Thank you, Sara. You are very nice.\" Sara smiled and said, \"You are welcome, Tom. I am glad you liked my yellow pencil.\"\nThey finished drawing and looked at their pictures. They were very proud. They had used the yellow pencil to draw something special. They had used the yellow pencil to draw something beautiful. They had used the yellow pencil to draw something fun. They had used the yellow pencil to draw something special. They had used the yellow pencil to draw something special.",
+    "tokens": 154,
+    "finish_reason": "eos",
+    "duration_ms": 2684
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "\"The soup is too hot,\" said Ana. Her father answered,",
+  "result": {
+    "text": " \"It's too hot. You need to eat something else.\"\nAna was sad, but she knew her dad was right. She went to the kitchen and found some vegetables. She ate them all and felt better. She was happy again.",
+    "tokens": 51,
+    "finish_reason": "eos",
+    "duration_ms": 1017
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "Plants need light to grow. Their leaves use energy from sunlight to",
+  "result": {
+    "text": " produce oxygen and carbon dioxide.\n\nNow let's talk about water. Water is essential for all forms of life, including plants. It helps them absorb nutrients from the soil, provides habitat for animals, and even powers the sun. In fact, many plants rely on water to survive!\n\nBut not all plants are created equal. Some plants require more water than others. For example, some plants need more water to grow tall and strong. Other plants need more water to survive. And some plants have special adaptations that help them survive in harsh environments.\n\nSo how do plants know how much water to use? They use a process called photosynthesis. During photosynthesis, plants convert sunlight into energy through a series of chemical reactions. The water in the plant gets converted into glucose, which is a type of sugar that plants use to make energy.\n\nOnce the glucose is converted into glucose, it needs to be converted into oxygen. This is where oxygen comes in. Oxygen is a gas that is necessary for the plant to use energy. Without enough oxygen, the plant can't use its energy.\n\nThe plant uses its oxygen to convert more glucose into glucose, which it uses to make more oxygen. This process is called the \"carbon cycle.\"\n\nAs the plant grows, it needs more oxygen to keep producing oxygen. If there isn't enough oxygen, the plant can't use its energy. But if there is enough oxygen, the plant can use its energy to grow and thrive.\n\nIn summary, plants use water to use for photosynthesis. Water is necessary for the plant to use energy, and it is also used to make oxygen. By using water, plants can use their energy to grow and thrive. So next time you see a tree or a flower, remember that it is using water to use for growth and survival!",
+    "tokens": 368,
+    "finish_reason": "eos",
+    "duration_ms": 7919
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "Rain forms when water vapor in the air cools and",
+  "result": {
+    "text": " condenses into tiny particles. These particles then form clouds, rainbows, and other beautiful phenomena.\n\nNow let's talk about why these clouds form. When the sun heats up the air, it causes the water vapor in the air to rise. This rise creates a layer of hot air near the ground, which cools and condenses into tiny particles. The larger these particles become, the more water vapor they can form.\n\nAs the water vapor rises, it cools and condenses into tiny particles. These particles then form clouds. A cloud is formed when the water vapor in the air cools and condenses into tiny particles.\n\nBut here's where things get interesting. Sometimes, the water vapor in the air can change its shape. It might become bigger or smaller, or change its color. This is called a rainstorm. Rainstorms can be caused by many different factors, including the movement of clouds, the release of moisture from the ground, and the release of pollutants.\n\nSo, what happens when the water vapor in the air gets really hot? That's when clouds form. Clouds are made up of water vapor and other gases, and they can form in all sorts of shapes and sizes. Some clouds are small and round, while others are large and flat.\n\nNo matter how big or small the cloud is, it's important to keep it cool. If it gets too hot, the water vapor in the air can get trapped and form clouds. And if it gets too cold, the water vapor in the air can get trapped and form clouds.\n\nIn summary, clouds are made up of water vapor and other gases, and they form when the sun heats up the air. They can form clouds when the sun is shining brightly, and they can form clouds when the sun is setting.\n\nActivity: Let's make our own miniature clouds! All you need is a clear plastic cup, some water, and a few drops of food coloring. Follow these steps:\n\n1. Fill the cup with water.\n2. Add some drops of food coloring to the water.\n3. Place the cup on a flat surface.\n4. Observe how the water vapor in the cup forms a cloud.\n5. Try adding more water to the cup.\n6. Observe how the water vapor in the cup forms a cloud.\n\nCongratulations! You just made your own miniature cloud. Remember, clouds are made up of water vapor and other gases, and they can form in all",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12709
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "A thermometer is a tool used to measure temperature. When the liquid inside becomes warmer,",
+  "result": {
+    "text": " the thermometer tells us how hot it is. A thermometer is a device that measures the temperature of a liquid.\n\nNow, let's talk about some common types of thermometers. There are many different kinds, but here are three of the most common ones:\n\n1. **Temperature thermometer**: This is the most common type of thermometer. It measures the temperature of a liquid. You might have seen a thermometer before when you leave a hot cup of cocoa out on the counter. The thermometer will tell you how hot the cup is, and whether it's warm or cold.\n2. **Temperature thermometer**: This is the most common type of thermometer. It measures the temperature of a liquid. You might have seen a thermometer before when you leave a cup of tea out on the counter. The thermometer will tell you how hot the tea is, and whether it's warm or cold.\n3. **Temperature thermometer**: This is the most common type of thermometer. It measures the temperature of a liquid. You might have seen a thermometer before when you leave a cup of coffee out on the counter. The thermometer will tell you how hot the coffee is, and whether it's warm or cold.\n\nSo, there you have it! A thermometer is a device that measures temperature. There are many different types of thermometers, and they all have their own unique features and uses. By understanding how thermometers work, you can become a more informed consumer of scientific research.\n\nBut remember, thermometers are just tools. They don't always give accurate measurements, and sometimes they can even give false results. That's why it's important to double-check your measurements and make sure they're correct.\n\nIn summary, thermometers are a useful tool for measuring temperature. They tell us how hot or cold a liquid is, and whether it's warm or cold. There are many different types of thermometers, and they all have their own unique features and uses. By using a thermometer, you can learn more about the world around you and better understand how things work.",
+    "tokens": 434,
+    "finish_reason": "eos",
+    "duration_ms": 10073
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "A map helps people understand where places are. Symbols on a map can show",
+  "result": {
+    "text": " things like roads, buildings, and landmarks. They can also tell us about the weather, the weather, and the seasons.\n\nNow let's talk about some common types of maps. There are two main categories: topographic maps and topographic maps.\n\nThermographic Maps\n--------------------\n\nHave you ever seen a map of a mountain range? A topographic map shows you the shape of the mountains and their heights. It tells you how high the mountains are and how steep they are. A topographic map is a type of topographic map that shows you the shape of the mountains and their heights.\n\nOne famous topographic map is called the \"Map of the Mountains of the United States.\" This map shows the range of mountains in the United States, from the tallest mountain in the country to the smallest one in the world. The map is made by a team of scientists who study the mountains and their heights. By looking at the map, you can see how the mountains are shaped and how they are connected to each other.\n\nThermographic Maps\n-------------------\n\nAnother type of topographic map is called a topographic map. A topographic map shows you the shape of the terrain, such as mountains, valleys, and valleys. It can also show you the elevation of the terrain, which is the height of the land above the surrounding terrain.\n\nA topographic map is a type of topographic map that shows you the shape of the terrain. It can show you how the terrain is connected to the land, and how it is shaped by the movement of the earth. A topographic map is often used to study the shape of the terrain, such as mountains, valleys, and valleys.\n\nThermographic Maps\n-------------------\n\nA topographic map is a type of topographic map that shows you the shape of the terrain. It can show you how the terrain is connected to the land, and how it is shaped by the movement of the earth.\n\nA topographic map is a type of topographic map that shows you the shape of the terrain. It can show you how the terrain is connected to the land, and how it is shaped by the movement of the earth. A topographic map is often used to study the shape of the terrain, such as mountains, valleys, and valleys.\n\nConclusion\n----------\n\nIn this sub-unit, we learned about the different types of topographic maps. We saw how topographic maps show us the shape",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12810
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "Bees visit flowers to collect nectar. As they move from one flower to another,",
+  "result": {
+    "text": " they notice that each flower has its own unique shape and color. Some flowers have stamens, which are shaped like wings. Others have staminodes, which are shaped like branches. And still others have staminodes, which are shaped like spikes.\n\nAs they gather their nectar, the bees realize that they are not just collecting nectar, but also learning about the different types of flowers and the different types of nectar. They see that there are many different kinds of flowers, each with its own unique characteristics and characteristics.\n\nFor example, some flowers have staminodes, which are shaped like spikes. Others have staminodes, which are shaped like spikes. Still others have staminodes, which are shaped like spikes. By observing these differences, the bees can learn a lot about the diversity of flowers and the different types of nectar.\n\nBut why stop at flowers? The bees are also interested in nectar, and they start to notice that certain types of flowers are more attractive to bees than others. For example, some flowers have staminodes that are shaped like spikes, which are more attractive to bees. Other flowers have staminodes that are shaped like spikes, which are more attractive to bees.\n\nBy studying nectar, the bees can learn about the different types of flowers and the different types of nectar that are available to them. They can also learn about the different types of nectar that are available to them, and how they are used to their daily lives.\n\nIn summary, nectar is a fascinating and important part of the natural world. It is made up of many different types of flowers, each with its own unique characteristics and behaviors. By studying nectar, the bees can learn about the diversity of flowers and the different types of nectar that are available to them. So next time you see a flower, remember that it is not just a pretty thing, but also a valuable resource for the bees and other creatures in the garden.",
+    "tokens": 420,
+    "finish_reason": "eos",
+    "duration_ms": 9672
+  }
+}
+{
+  "model": "general-base-1b-10tpp-01",
+  "source_type": "checkpoint",
+  "source_id": "6010726e9d3c7ac1",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "interrupted_checkpoint": true,
+  "prompt": "A shadow appears when an object blocks light. If the light source moves,",
+  "result": {
+    "text": " the shadow changes.\n\nNow let's try a fun activity! Grab a flashlight and shine it on a piece of paper. Observe how the light beam changes as it moves. Can you guess what the shadow might look like based on its movement?\n\n**Section 2: Exploring Different Types of Shadows**\n\nShadows come in many shapes and sizes, but there are three main types: fixed, fixed, and irregular. Let's explore each one!\n\n*Fixed Shadows:* These are the simplest type of shadow. A fixed shadow looks exactly the same as the light source, except that the light source is fixed. A fixed shadow is similar to a mirror image, except that the light source is fixed.\n\n*Fixed Shadows:* On the other hand, an irregular shadow looks like a wavy line, similar to a cloud. An irregular shadow is created when the light source is slightly off or slightly off.\n\n*Infinite Shadows:* Finally, infinite shadows are created when the light source is completely fixed. An infinite shadow is a perfect example of an infinite shadow.\n\n**Section 3: Creating Your Own Shadows**\n\nTo create your own shadow, follow these steps:\n\n1. Gather a few flashlights or a flashlight with a flat surface.\n2. Shine the flashlight on the paper or screen. Observe how the light beam changes as it moves.\n3. Try creating different shades of light, such as red, blue, green, and yellow.\n4. Observe how the light source affects the shadow. Does it change the color or intensity?\n5. Experiment with different shades of light and observe how they affect the shadow.\n\n**Section 4: Creating Your Own Shadows**\n\nNow that you know all about shadowing, it's time to put your knowledge into practice! Grab a flashlight and find a flat surface. Follow these steps to create your own shadow:\n\n1. Place the flashlight on the paper or screen.\n2. Observe how the light beam changes as it moves.\n3. Experiment with different shades of light and observe how they affect the shadow.\n4. Play with the shadows to create interesting effects.\n\n**Section 5: Exploring Different Shadows**\n\nFinally, let's take a closer look at some common shadows and how they work. Here are a few examples:\n\n*Shadows of the Sun:* The sun",
+    "tokens": 512,
+    "finish_reason": "max_tokens",
+    "duration_ms": 12766
+  }
+}

@@ -40,6 +40,26 @@ At 10 core TPP, the original rung-0008 final behavioral gates remain frozen:
 Held-out BPB must improve on a comparable mixed-corpus partition. EOS remains
 diagnostic for this raw base model.
 
+## Probe result
+
+The additional-exposure hypothesis is rejected before the +1-TPP gate. The
+run was cleanly interrupted after the persisted +0.5-TPP checkpoint at step
+29,571 because both comparable held-out loss and frozen-suite behavior moved
+in the wrong direction:
+
+- held-out loss worsened from `2.2166` at continuation start to `2.3016`;
+- 20/20 sampled outputs still contain two complete sentences;
+- sampled loops are 0/20 and greedy loops are 2/20;
+- sampled EOS is 17/20; but
+- conservative manual review is only 11/20 grammatical and on topic through
+  three sentences, below both the parent's 13/20 and the 15/20 trend gate.
+
+The exact checkpoint therefore does not justify another half-TPP, much less
+the full continuation to 10 TPP. The interrupted run is not resumed. These
+results show that additional exposure under a restarted cosine schedule is not
+the correction for rung 0008; future work must revisit the model/data design
+rather than spend more tokens on this lineage.
+
 ## Commands
 
 ```console

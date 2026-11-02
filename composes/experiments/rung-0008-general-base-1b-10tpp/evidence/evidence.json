@@ -1,0 +1,27 @@
+{
+  "model": "general-base-1b-10tpp-01",
+  "model_id": "1e4f21d229e56ad12d73baa9fd6e41c7fd151d839a89d6949b487939ef9e9c98",
+  "run_id": "6010726e9d3c7ac1",
+  "checkpoint_step": 29571,
+  "checkpoint_additional_core_tpp": 0.5,
+  "continuation_initial_heldout_loss": 2.2166,
+  "checkpoint_heldout_loss": 2.3016,
+  "exact_checkpoint_inference": "verified",
+  "objective_score": {
+    "responses": 20,
+    "two_complete_sentences": 20,
+    "sampled_eos_diagnostic": 17,
+    "sampled_loops": 0,
+    "greedy_loops": 2,
+    "passed": true
+  },
+  "manual_review": {
+    "criterion": "grammatical and on topic through three sentences",
+    "passed": 11,
+    "parent_passed": 13,
+    "trend_gate_required": 15,
+    "passed_prompt_numbers": [1, 2, 3, 5, 7, 10, 11, 12, 13, 14, 18],
+    "result": "fail"
+  },
+  "decision": "reject additional exposure and do not resume"
+}
