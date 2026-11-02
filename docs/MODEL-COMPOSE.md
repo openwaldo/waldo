@@ -287,9 +287,9 @@ base:
 Averaging weights is meaningful only for models trained from common weights,
 so WALDO fails closed unless the parents share an ancestor
 ([ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)). Ancestry is
-recorded the way git records history: every model has a lineage node naming
-its current weights and the weights they came from, each by weights hash and by
-the hash of that parent's own node. A fine-tune's parent pin, a pulled model's
+recorded the way git records history: each training run has a lineage node
+naming the weights it produced and the weights it started from, each by weights
+hash and by the hash of that parent's own node. A fine-tune's parent pin, a pulled model's
 origin, and a merge's origin each record a node, and a release's `BOM.json`
 carries the released model's node, so nodes stay the same size however long
 the history behind them. WALDO walks each parent's chain through every node

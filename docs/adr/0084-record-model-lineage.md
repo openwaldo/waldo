@@ -13,12 +13,15 @@ record grow with the length of its history.
 
 ## Decision
 
-Every model has a lineage node: the SHA-256 of its current weights, its
-direct parents, each by weights hash and by the hash of the parent's own node,
-and the run BOMs that trained these weights from those parents.
-Like a git commit, a node names only its direct parents, so its size does not
-depend on the history behind it. A fine-tune's parent pin records the parent's
-node hash; a merged origin (ADR 0085) records its own node; a release's
+A lineage node is the SHA-256 of some weights, their direct parents, each by
+weights hash and by the hash of the parent's own node, and the run BOM that
+trained these weights from those parents. Like a git commit, a node names only
+its direct parents, so its size does not depend on the history behind it.
+Each complete real run of a model has its own node, whose parent is the node of
+the weights the run started from: an earlier run, the parent pin, or the
+origin. A model's node is its newest run's, or its origin's if it has none. A
+fine-tune's parent pin records the node of the run it starts from, which never
+changes as the parent trains on; a merged origin (ADR 0085) records its own node; a release's
 `BOM.json` carries the released model's node; a pull keeps the release's node
 in the origin.
 

@@ -1519,7 +1519,7 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		if compose.Base.ArtifactBytes != 0 && compose.Base.ArtifactBytes != initialization.Artifact.Bytes {
 			return Compose{}, nil, fmt.Errorf("compose base artifact has %d bytes, not requested %d", initialization.Artifact.Bytes, compose.Base.ArtifactBytes)
 		}
-		node, err := ModelLineage(base)
+		node, err := ModelLineage(base, initialization.SourceRunID)
 		if err != nil {
 			return Compose{}, nil, err
 		}

@@ -33,40 +33,82 @@ func (node LineageNode) validate() error {
 	return nil
 }
 
-// ModelLineage is a model's lineage node: its current weights and the weights
-// they came from. Trained weights descend from the model's starting weights;
-// a model with no runs is its origin, pulled or merged.
-func ModelLineage(inspection Inspection) (LineageNode, error) {
-	initialization, err := resolveRunInitialization(inspection, "")
+// ModelLineage is the lineage node of a model's weights after its run runID,
+// or after its newest complete real run when runID is empty. A model with no
+// such run is its origin, pulled or merged.
+func ModelLineage(inspection Inspection, runID string) (LineageNode, error) {
+	nodes, err := runLineage(inspection)
 	if err != nil {
 		return LineageNode{}, err
 	}
-	if initialization == nil {
-		if inspection.Origin == nil || inspection.BOM.CurrentOriginSHA256 == "" {
-			return LineageNode{}, fmt.Errorf("model %q has no complete real weights", inspection.Model.Name)
-		}
-		return originNode(*inspection.Origin)
-	}
-	node := LineageNode{WeightsSHA256: initialization.Artifact.SHA256}
-	for _, pin := range inspection.Model.Runs {
-		if pin.State == RunComplete && !pin.Simulated {
-			node.Runs = append(node.Runs, pin.BOMSHA256)
+	for index := len(nodes) - 1; index >= 0; index-- {
+		if runID == "" || nodes[index].runID == runID {
+			return nodes[index].node, nil
 		}
 	}
+	if runID != "" {
+		return LineageNode{}, fmt.Errorf("model %q has no complete real weights for run %s", inspection.Model.Name, runID)
+	}
+	if inspection.Origin == nil || inspection.BOM.CurrentOriginSHA256 == "" {
+		return LineageNode{}, fmt.Errorf("model %q has no complete real weights", inspection.Model.Name)
+	}
+	return originNode(*inspection.Origin)
+}
+
+type runNode struct {
+	runID string
+	node  LineageNode
+}
+
+// runLineage is a node for each complete real run, in order. Like a git commit,
+// each names the run that produced its weights and the node of the weights it
+// started from: an earlier run's, the parent pin's, or the origin's. Weights
+// with no node here, such as a simulated run's, are named by hash alone.
+func runLineage(inspection Inspection) ([]runNode, error) {
+	known := map[string]LineageLink{}
 	if parent := inspection.Model.Parent; parent != nil {
-		node.Parents = []LineageLink{{WeightsSHA256: parent.Artifact.SHA256, LineageSHA256: parent.LineageSHA256}}
+		known[parent.Artifact.SHA256] = LineageLink{WeightsSHA256: parent.Artifact.SHA256, LineageSHA256: parent.LineageSHA256}
 	} else if inspection.Origin != nil {
 		start, err := originNode(*inspection.Origin)
 		if err != nil {
-			return LineageNode{}, err
+			return nil, err
 		}
 		link, err := linkTo(start)
 		if err != nil {
-			return LineageNode{}, err
+			return nil, err
 		}
-		node.Parents = []LineageLink{link}
+		known[start.WeightsSHA256] = link
 	}
-	return node, nil
+	var nodes []runNode
+	for position, run := range inspection.Runs {
+		if run.State != RunComplete || run.Observation == nil || run.Observation.Simulated {
+			continue
+		}
+		weights := ""
+		for _, artifact := range run.Observation.Artifacts {
+			if artifact.Path == "artifacts/model.safetensors" {
+				weights = artifact.SHA256
+			}
+		}
+		if weights == "" {
+			continue
+		}
+		node := LineageNode{WeightsSHA256: weights, Runs: []string{run.BOMSHA256}}
+		if start := inspection.RunBOMs[position].Initialization; start != nil {
+			link, ok := known[start.Artifact.SHA256]
+			if !ok {
+				link = LineageLink{WeightsSHA256: start.Artifact.SHA256}
+			}
+			node.Parents = []LineageLink{link}
+		}
+		link, err := linkTo(node)
+		if err != nil {
+			return nil, err
+		}
+		known[weights] = link
+		nodes = append(nodes, runNode{run.ID, node})
+	}
+	return nodes, nil
 }
 
 // originNode is an origin's node. A merge records its own; pulled weights
@@ -129,7 +171,14 @@ func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) 
 			if err != nil {
 				continue
 			}
-			if node, err := ModelLineage(inspection); err == nil {
+			// Every run's node, not only the newest, so a pin to an earlier run
+			// still meets the rest of the chain after the model trains on.
+			if nodes, err := runLineage(inspection); err == nil {
+				for _, run := range nodes {
+					add(run.node)
+				}
+			}
+			if node, err := ModelLineage(inspection, ""); err == nil {
 				add(node)
 			}
 			if inspection.Origin != nil && inspection.Origin.Lineage != nil {
@@ -201,7 +250,7 @@ func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, erro
 		if err != nil {
 			return nil, false, fmt.Errorf("base.merge parent: %w", err)
 		}
-		node, err := ModelLineage(inspection)
+		node, err := ModelLineage(inspection, "")
 		if err != nil {
 			return nil, false, fmt.Errorf("base.merge parent %q lineage: %w", declared.Model, err)
 		}

@@ -196,7 +196,7 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	if err != nil {
 		return "", err
 	}
-	lineage, err := model.ModelLineage(inspection)
+	lineage, err := model.ModelLineage(inspection, artifacts.RunID)
 	if err != nil {
 		return "", err
 	}

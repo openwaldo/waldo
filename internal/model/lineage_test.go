@@ -7,7 +7,10 @@ package model
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -84,7 +87,7 @@ func TestMergeComposeRecordsLineageAndFailsClosed(t *testing.T) {
 		t.Fatalf("merged model is not usable from its origin: %+v", merged.BOM)
 	}
 	// A release of the merge records the merged node, so the chain continues past publication.
-	lineage, err := ModelLineage(merged)
+	lineage, err := ModelLineage(merged, "")
 	if err != nil || !reflect.DeepEqual(lineage, *origin.Lineage) {
 		t.Fatalf("export lineage = %+v, %v", lineage, err)
 	}
@@ -165,7 +168,7 @@ func TestMergeComposeMarksAncestryOnlyAReleaseDeclares(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := ModelLineage(victim)
+	node, err := ModelLineage(victim, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,6 +183,107 @@ func TestMergeComposeMarksAncestryOnlyAReleaseDeclares(t *testing.T) {
 		if merged.Origin.Merge.DeclaredAncestry != declared {
 			t.Fatalf("%s: declared ancestry = %v, want %v", parent, merged.Origin.Merge.DeclaredAncestry, declared)
 		}
+	}
+}
+
+// realWeightsBuilder trains with a backend that writes distinct, non-simulated
+// weights for every run, so each run has its own lineage node.
+func realWeightsBuilder(root string) Builder {
+	ids := 0
+	backend := backendFunc(func(_ context.Context, request training.Request) (training.Observation, error) {
+		if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
+			return training.Observation{}, err
+		}
+		data := []byte("weights-" + request.RunID)
+		if err := os.WriteFile(filepath.Join(request.ArtifactDirectory, "model.safetensors"), data, 0o644); err != nil {
+			return training.Observation{}, err
+		}
+		digest := sha256.Sum256(data)
+		return training.Observation{
+			Steps: 2, ConsumedTokens: 128,
+			Evaluations: []training.Evaluation{{Step: 2, Tokens: 128, Metrics: map[string]float64{"heldout_loss": 1}}},
+			Artifacts:   []training.Artifact{{Path: "artifacts/model.safetensors", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}},
+		}, nil
+	})
+	return Builder{Root: root, NewID: func() (string, error) { ids++; return fmt.Sprintf("run%04d", ids), nil },
+		Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+			return testSelection(backend), nil
+		})}
+}
+
+// trainTwice initializes model p and trains it twice, returning its first run's ID.
+func trainTwice(t *testing.T, builder Builder) string {
+	t.Helper()
+	if _, err := builder.Initialize("p", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	p, err := builder.Train(t.Context(), "p", preparedFixture(t, testStage("one")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.Train(t.Context(), "p", preparedFixture(t, testStage("two"))); err != nil {
+		t.Fatal(err)
+	}
+	return p.Model.Runs[0].ID
+}
+
+// Pinning an earlier run records that run's node: its weights and only the run that made them.
+func TestComposePinnedToEarlierRunRecordsThatRunsLineage(t *testing.T) {
+	builder := realWeightsBuilder(t.TempDir())
+	first := trainTwice(t, builder)
+	resolved, err := builder.ResolveCompose(t.Context(), Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first}, Stages: []Stage{testStage("child")}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, _ := builder.lineageIndex()
+	node, ok := index[resolved.Base.LineageSHA256]
+	if !ok || node.WeightsSHA256 != resolved.Base.ArtifactSHA256 || len(node.Runs) != 1 || node.Runs[0] != resolved.Base.RunBOMSHA256 {
+		t.Fatalf("pin weights %s, run %s; lineage node %+v", resolved.Base.ArtifactSHA256, resolved.Base.RunBOMSHA256, node)
+	}
+}
+
+// A run's node never changes, so a child pinned to it keeps accepting stages after its parent trains on.
+func TestChildAcceptsStagesAfterItsParentTrainsOn(t *testing.T) {
+	builder := realWeightsBuilder(t.TempDir())
+	if _, err := builder.Initialize("p", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	p, err := builder.Train(t.Context(), "p", preparedFixture(t, testStage("one")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := testStage("child")
+	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: p.Model.Runs[0].ID}, Stages: []Stage{stage}}
+	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.Train(t.Context(), "p", preparedFixture(t, testStage("two"))); err != nil {
+		t.Fatal(err)
+	}
+	compose.Stages = []Stage{stage, testStage("more")}
+	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage), preparedFixture(t, testStage("more"))}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A child of p's first run and p after its second run meet at the first run's weights.
+func TestMergeFindsAncestryThroughEarlierRuns(t *testing.T) {
+	builder := realWeightsBuilder(t.TempDir())
+	if _, err := builder.Initialize("p", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.Train(t.Context(), "p", preparedFixture(t, testStage("one"))); err != nil {
+		t.Fatal(err)
+	}
+	stage := testStage("child")
+	if _, err := builder.Compose(t.Context(), "child", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.Train(t.Context(), "p", preparedFixture(t, testStage("two"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, declared, err := builder.mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "child"}, {Model: "p"}}}); err != nil || declared {
+		t.Fatalf("merge of child and p: declared %v, %v", declared, err)
 	}
 }
 
