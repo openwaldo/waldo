@@ -593,7 +593,7 @@ func validateComposeMerge(base ComposeBase) error {
 		for _, parent := range base.Merge {
 			weights = append(weights, parent.Weight)
 		}
-		if err := modelweights.ValidateWeights(weights); err != nil {
+		if _, err := modelweights.ValidateWeights(weights); err != nil {
 			return fmt.Errorf("base.merge: %w", err)
 		}
 	}

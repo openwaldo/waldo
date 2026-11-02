@@ -57,21 +57,27 @@ func List(root string, patterns []string) ([]Listing, error) {
 }
 
 func listingFromInspection(inspection Inspection) Listing {
-	listing := Listing{
+	return Listing{
 		Name: inspection.Model.Name, ID: inspection.Model.ID, Path: inspection.Path,
 		Parameters: inspection.Model.Forecast.ApproximateParameters,
 		Runs:       len(inspection.Model.Runs), Updated: inspection.Model.Updated,
+		State: State(inspection),
 	}
-	if inspection.Origin != nil {
-		listing.State = "downloaded"
-		if inspection.Origin.Merge != nil {
-			listing.State = "merged"
-		}
-	}
+}
+
+// State is the model's newest run state, else "downloaded" or "merged" for an
+// origin, else empty for an untrained model.
+func State(inspection Inspection) string {
 	if len(inspection.Model.Runs) > 0 {
-		listing.State = string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
+		return string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
 	}
-	return listing
+	if inspection.Origin == nil {
+		return ""
+	}
+	if inspection.Origin.Merge != nil {
+		return "merged"
+	}
+	return "downloaded"
 }
 
 func matchesAny(name string, patterns []string) bool {
