@@ -1,8 +1,8 @@
 # Testing
 
 Focused Go tests live beside their packages. Process-level tests live under
-`testing/`. Python worker unit tests (stdlib `unittest`, no pip installs)
-live under `testing/python/`.
+`testing/`. Python worker and environment tests use stdlib `unittest` under
+`testing/python/`. Environment tests also require pip and venv (see below).
 
 ## Local checks
 
@@ -111,3 +111,10 @@ WALDO_E2E_AWS_REGION=us-west-2 \
 
 Credentials come from the AWS SDK chain or `waldo lookaside login`; tests must
 not write credentials to fixtures.
+
+External environment tests require host Python 3.11+ with `venv` and pip 22.3+.
+They install locally generated test wheels through pip into unseeded temporary
+venvs; they require no package-index access or GPUs. The standard Python suite
+includes these tests and fails (rather than skips) when tooling is missing.
+The Go `pythonenv` integration test exercises the embedded helper through its
+public API. On Debian test images install `python3-pip` and `python3-venv`.

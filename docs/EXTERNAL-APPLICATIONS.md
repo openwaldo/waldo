@@ -2,8 +2,9 @@
 
 ADR [0084](adr/0084-external-trainers.md) defines the external trainer design.
 The declarative reader, pinned source cache, manifest checks and probe-schema
-validation are implemented. Environment creation, probe/resolve execution,
-external model identity and training lifecycle integration are **planned**.
+validation and managed Python environment verification are implemented.
+Probe/resolve execution, external model identity and training lifecycle
+integration are **planned**.
 The CLI does not yet run or forecast external composes.
 
 ## Developer entry points
@@ -104,7 +105,7 @@ on tokenizers. `entrypoint` contains exactly one of `module` or `script`;
 not shell strings. A script and lock must name regular files within the
 selected application directory. Environments require `kind: python-lock`, a
 relative `lock` and an exact `python` version (`3.x.y`). Environment creation
-and lock verification are a separate forthcoming step.
+and lock verification use the explicit API below.
 
 Trainer launch profiles are `single-process` and `distributed`; this reader
 only checks declarations and launches neither. Objectives are restricted to
@@ -155,3 +156,67 @@ matching combinator branches and dependencies. Role annotations beneath
 `unevaluatedProperties` or `unevaluatedItems` currently fail projection because
 it cannot safely derive their evaluated-instance set. Unannotated assertions
 at those locations still validate normally.
+
+## Managed Python environments
+
+After source resolution, call `ResolvedSource.EnsureEnvironment(ctx, name,
+python, cache)` explicitly. `python` selects a trusted host interpreter with
+Python 3.11+ (including `venv` and `tomllib`) and pip 22.3+. Its exact version
+must match the selected manifest. The embedded helper uses pip's vendored
+packaging implementation for PEP 508 markers, version specifiers and wheel
+compatibility tags; no additional Go or target-environment dependency is added.
+The helper runs isolated outside the source checkout with an empty environment
+plus `PATH=/usr/bin:/bin`, a temporary `HOME`, and `LANG=C.UTF-8`.
+
+The input is PEP 751 `pylock.toml` (or `pylock.<name>.toml`), version 1.0.
+This PoC accepts single-use locks, package/environment markers, Python version
+constraints, and HTTPS wheel URLs with SHA-256. It chooses the highest-ranked
+compatible wheel for each selected package. Multiple matching entries fail.
+Dependency edges are informational; they never trigger resolution or downloads.
+Locks requiring extras/groups, VCS, directories, local paths, archives, or
+builds fail closed. An sdist entry may accompany wheels but is never used.
+Wheel `.data` schemes other than purelib, platlib and scripts are currently
+unsupported. These restrictions are explicit errors, not fallback behavior.
+
+Creation uses an unseeded venv with system site-packages disabled. WALDO
+verifies downloaded artifact hashes before pip installs from an offline
+wheelhouse using `--require-hashes --only-binary=:all: --no-deps --no-compile`.
+Installer configuration files are disabled with `PIP_CONFIG_FILE=/dev/null`.
+The environment contains no pip unless pip itself is locked. Installed package
+names and versions must equal the selected lock entries. Every installed
+`RECORD` must account for its files with SHA-256/384/512 and size checks (except
+its own row and bytecode caches). Baseline venv files are separately attested.
+Extra files anywhere in the venv, including `bin/`, fail; regular `.pyc` files
+inside `__pycache__` are excepted. Editable/local installs, unsafe RECORD paths,
+symlinks outside the venv baseline and overwritten baseline files fail.
+
+Before publishing, WALDO relocates generated scripts/activation paths, updates
+the affected RECORD hashes, verifies again, and writes a schema-1
+`waldo-python-environment` receipt. It includes the full verified file inventory
+so changing a file and its RECORD together still fails cache verification.
+Entries become read-only and are atomically renamed into a cache keyed by lock
+SHA-256, interpreter executable SHA-256 (after resolving symlinks), and the
+highest-priority interpreter/platform wheel tag. Concurrent creators verify the
+winner. Failed/interrupted creation publishes no partial entry; abrupt process
+or host termination may leave hidden temporary directories, never cache hits.
+Published entries are never repaired or reinstalled on reuse.
+
+`pythonenv.Verify` is separate from creation and checks an existing managed
+entry without installing anything. Every use repeats package, RECORD, inventory,
+configuration and interpreter checks. Verification does not import target
+packages or run their `.pth` files; the target interpreter is only queried with
+`-I -S` after its files have been checked. This is integrity checking, not a
+sandbox against the cache owner/root rewriting both evidence and files, or
+concurrent mutation after verification. The base interpreter's stdlib is
+covered only by the interpreter realpath executable digest, not hashed file by
+file (known PoC limit).
+
+`pythonenv.Result.Identity` exposes name, kind, lock SHA-256, interpreter version
+and executable digest, and platform tag to the future external BOM builder.
+`Result.Run` holds the cache path, original installer/version and fresh host
+observations: kernel, NVIDIA GPU models/drivers, CUDA driver capability and CUDA
+toolkit version. Missing tooling/query results are recorded as unavailable;
+these observations do not claim which CUDA runtime a future framework loads.
+Cache paths, installer and host facts are run-only evidence. Native compose
+identity and native execution are unchanged. External plan/run BOM persistence
+and CLI launch remain planned; callers must preserve this identity/run split.

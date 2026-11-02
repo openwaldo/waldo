@@ -117,6 +117,29 @@ objectives it supports, and how to interpret its output before running any
 trainer code. A declarative manifest at a pinned commit makes those facts part
 of the hashed source.
 
+### Python lock environments
+
+Use PEP 751 `pylock.toml`: it is a standard, tool-neutral lock representation
+and can be exported by uv. The PoC creates WALDO-managed venvs only; supplied
+venvs remain deferred. Creation and verification are separate operations so
+future supplied environments can reuse the verifier.
+
+Install only hash-verified wheels into a venv without pip or system
+site-packages. Verify the exact distribution set and versions, installed
+RECORD hashes, interpreter pin and absence of unattested files. Build in a
+temporary directory, verify, then atomically publish an immutable cache keyed
+by lock SHA-256, interpreter executable digest and platform tag. Reverify on
+every use, including cache hits. The BOM-facing environment evidence includes
+the named environment, kind, lock hash, interpreter version/realpath executable
+digest and platform tag. The cache location, installer/version, GPU, driver,
+CUDA and kernel observations belong only to run provenance.
+
+The base interpreter's standard library is covered only by the interpreter
+realpath executable digest, not by hashing every stdlib file. This is a known
+PoC limit, not a complete attestation of the host Python installation.
+Implementation prerequisites and supported lock features are maintained in
+[External applications](../EXTERNAL-APPLICATIONS.md#managed-python-environments).
+
 ### Parameter schemas
 
 The trainer reports its architecture and parameter schemas, as JSON Schema
