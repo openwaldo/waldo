@@ -319,10 +319,7 @@ func TestMergeComposeKeepsItsRecordedMerge(t *testing.T) {
 	if _, err := builder.Compose(t.Context(), "trained", trained, []PreparedStage{preparedFixture(t, stage), preparedFixture(t, two)}); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := os.ReadDir(filepath.Join(root, ".merges"))
-	if err != nil || len(entries) != 1 {
-		t.Fatalf(".merges holds %d entries, want 1: %v", len(entries), err)
-	}
+	assertMerges(t, root, 1)
 }
 
 // realWeightsBuilder trains with a backend that writes distinct, non-simulated
@@ -625,6 +622,79 @@ func TestRecordedMergeRefusesARecreatedParent(t *testing.T) {
 	pullClaiming(t, root, "left", mergeableFixture(t, mergeArchitecture(), 9), LineageNode{WeightsSHA256: strings.Repeat("c", 64)})
 	if _, err := builder.ResolveCompose(t.Context(), "merged", merge, true); err == nil {
 		t.Fatal("merge compose resolved to the merge of the removed left")
+	}
+	assertMerges(t, root, 1)
+}
+
+// A parent rebuilt from the same base keeps its plan's model ID but not its
+// weights; the merge of the old weights is refused before anything is merged.
+func TestRecordedMergeRefusesAParentRebuiltUnderItsID(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullRelease(t, root, "base", strings.Repeat("a", 64), 0)
+	builder := flipWeightsBuilder(root)
+	child := func(name string, stages ...Stage) {
+		var prepared []PreparedStage
+		for _, stage := range stages {
+			prepared = append(prepared, preparedFixture(t, stage))
+		}
+		if _, err := builder.Compose(t.Context(), name, Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "base"}, Stages: stages}, prepared); err != nil {
+			t.Fatal(err)
+		}
+	}
+	child("left", mergeStage("one"))
+	child("right", mergeStage("two"))
+	merge := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}}
+	if _, err := builder.Compose(t.Context(), "merged", merge, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Remove(root, []string{"left"}); err != nil {
+		t.Fatal(err)
+	}
+	child("left", mergeStage("other"), mergeStage("data"))
+	if _, err := builder.ResolveCompose(t.Context(), "merged", merge, true); err == nil || !strings.Contains(err.Error(), "no longer holds") {
+		t.Fatalf("rebuilt parent error = %v", err)
+	}
+	assertMerges(t, root, 1)
+}
+
+// A merge-only compose describes the merged model only until it runs a stage,
+// even one that leaves its weights as they were.
+func TestMergeOnlyComposeIsNotCompleteAfterAStage(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullRelease(t, root, "left", strings.Repeat("a", 64), 0)
+	pullRelease(t, root, "right", strings.Repeat("a", 64), 1)
+	merge := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}}
+	simulated := Builder{Root: root, Resolver: training.FakeResolver()}
+	if _, err := simulated.Compose(t.Context(), "merged", merge, nil); err != nil {
+		t.Fatal(err)
+	}
+	stage := mergeStage("simulated")
+	grown := merge
+	grown.Stages = []Stage{stage}
+	if _, err := simulated.Compose(t.Context(), "merged", grown, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := Inspect(root, "merged")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := simulated.ResolveCompose(t.Context(), "merged", merge, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed, err := ComposeCompleted(resolved, merged); err != nil || completed {
+		t.Fatalf("merge-only compose after a simulated stage completed = %v, %v", completed, err)
+	}
+}
+
+// assertMerges checks how many merged origins the store holds.
+func assertMerges(t *testing.T, root string, want int) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(root, ".merges"))
+	if err != nil || len(entries) != want {
+		t.Fatalf(".merges holds %d entries, want %d: %v", len(entries), want, err)
 	}
 }
 

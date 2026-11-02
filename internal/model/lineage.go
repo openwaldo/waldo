@@ -321,9 +321,11 @@ func currentWeights(inspection Inspection) (string, error) {
 	return "", fmt.Errorf("model %q has no complete real weights", inspection.Model.Name)
 }
 
-// recordedMerge is the merge model name was built from, when it exists and
-// base.merge names the same parents and weights: its base stays that merge
-// after the parents train on, as a run pin keeps a fine-tune's base.
+// recordedMerge is the merge an existing model name was built from: its base
+// stays that merge after the parents train on, as a run pin keeps a
+// fine-tune's base. An existing model built otherwise, or from parents whose
+// names no longer hold the weights that were averaged, is refused before
+// anything is merged.
 func (builder Builder) recordedMerge(name string, base ComposeBase) (*Inspection, error) {
 	if len(base.Merge) == 0 || ValidateName(name) != nil {
 		return nil, nil
@@ -337,17 +339,22 @@ func (builder Builder) recordedMerge(name string, base ComposeBase) (*Inspection
 	if err != nil {
 		return nil, err
 	}
+	mismatch := fmt.Errorf("compose base does not match existing model %q; use a new model name", name)
 	if target.Origin == nil || target.Origin.Merge == nil || len(target.Origin.Merge.Parents) != len(base.Merge) {
-		return nil, nil
+		return nil, mismatch
 	}
 	for index, parent := range target.Origin.Merge.Parents {
 		if parent.Model != base.Merge[index].Model || parent.Weight != base.Merge[index].Weight {
-			return nil, nil
+			return nil, mismatch
 		}
-		// The name must still hold the model that was averaged, as a run pin's model ID does.
 		current, err := Inspect(builder.Root, parent.Model)
-		if err != nil || current.Model.ID != parent.ModelID {
-			return nil, nil
+		if err != nil {
+			return nil, fmt.Errorf("resolve base.merge parent %q: %w", parent.Model, err)
+		}
+		if held, err := holdsNode(current, parent.LineageSHA256); err != nil {
+			return nil, err
+		} else if !held {
+			return nil, fmt.Errorf("base.merge parent %q no longer holds the weights model %q merged; use a new model name", parent.Model, name)
 		}
 	}
 	key, err := hashJSON(*target.Origin.Merge)
@@ -359,6 +366,34 @@ func (builder Builder) recordedMerge(name string, base ComposeBase) (*Inspection
 		return nil, nil
 	}
 	return &merged, nil
+}
+
+// holdsNode reports whether a model's own history, its origin's node or one
+// of its runs', is the lineage node digest.
+func holdsNode(inspection Inspection, digest string) (bool, error) {
+	nodes, err := runLineage(inspection)
+	if err != nil {
+		return false, err
+	}
+	var own []LineageNode
+	for _, run := range nodes {
+		own = append(own, run.node)
+	}
+	if inspection.Origin != nil {
+		node, err := originNode(*inspection.Origin)
+		if err != nil {
+			return false, err
+		}
+		own = append(own, node)
+	}
+	for _, node := range own {
+		if hashed, err := hashJSON(node); err != nil {
+			return false, err
+		} else if hashed == digest {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // mergeOrigin averages the parents into a merged origin under .merges, named

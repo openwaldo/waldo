@@ -289,15 +289,15 @@ so WALDO fails closed unless the parents share an ancestor
 ([ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)). Ancestry is
 recorded the way git records history: each training run has a lineage node
 naming the weights it produced and the weights it started from, each by weights
-hash and by the hash of that parent's own node. A fine-tune's parent pin, a pulled model's
-origin, and a merge's origin each record a node, and a derived release's
-`BOM.json` carries the released model's node, so nodes stay the same size however long
-the history behind them. WALDO walks each parent's chain through every node
-the model store holds, like `git merge-base`, and requires a weights hash that
-every parent reaches. Where a chain leaves the store, the walk stops there.
-That pulled weights came from the node their release names is only what the
-release declared, whatever node it names; when the parents meet only through
-such claims, the merged origin records `declared_ancestry: true`.
+hash and by the hash of that parent's own node. A fine-tune's parent pin, a
+pulled model's origin, and a merge's origin each record a node, and a derived
+release's `BOM.json` carries the released model's node, so nodes stay the same
+size however long the history behind them. WALDO walks each parent's chain
+through every node the model store holds, like `git merge-base`, and requires a
+weights hash that every parent reaches. Where a chain leaves the store, the
+walk stops there. That pulled weights came from the node their release names is
+only what the release declared, whatever node it names; when the parents meet
+only through such claims, the merged origin records `declared_ancestry: true`.
 Parents trained from random weights, or pulled from releases that record no
 lineage, cannot be merged, except copies of the same weights, which are their
 own common ancestor. Merges accept byte-tokenizer models with `bfloat16`
@@ -309,19 +309,19 @@ Its origin BOM records the method (`mean-f32-v1`, or `weighted-mean-f32-v1`
 with weights: float32 accumulation from +0 in parent order, rounded to nearest
 even, with subnormal results as IEEE float32 computes them; weights must be
 normal, finite float32 values, and a merge fails if the average overflows
-float32),
-each parent's model ID, weights hash, and
-lineage node hash in merge order, and the weights; its lineage node names every
-parent's node, like a git merge commit. Anyone holding the parents can
-recompute the merged weights and compare hashes. A compose with
-`base.merge` may have no stages: the destination is then the merged model
-itself, usable for chat, export, or as another compose's base. With stages, the
-merge initializes training like any origin. Once the model exists, the same
-`base.merge` resolves to the merge it was built from, even after a parent trains
-on, while each parent's name still holds the model that was averaged, so repeating the compose is a verified no-op and appending stages continues
-the same model. Exports record the model's lineage node in
-their release `BOM.json`, and pulls keep it in the origin, so the chain
-continues across publication.
+float32), each parent's model ID, weights hash, and lineage node hash in merge
+order, and the weights; its lineage node names every parent's node, like a git
+merge commit. Anyone holding the parents can recompute the merged weights and
+compare hashes. A compose with `base.merge` may have no stages: the destination
+is then the merged model itself, usable for chat, export, or as another
+compose's base. With stages, the merge initializes training like any origin.
+Once the model exists, the same `base.merge` resolves to the merge it was built
+from while each parent's name still holds the weights that were averaged, or a
+model that trained on from them; otherwise the compose is refused before
+anything is merged. Repeating a merge-only compose is a verified no-op until the
+model runs a stage, and appending stages continues the same model. Exports
+record the model's lineage node in their release `BOM.json`, and pulls keep it
+in the origin, so the chain continues across publication.
 
 ### Direct external base
 
