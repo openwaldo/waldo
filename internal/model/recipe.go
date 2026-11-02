@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/corpus"
+	"github.com/openwaldo/waldo/internal/modelweights"
 	waldotokenizer "github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/openwaldo/waldo/internal/training"
 	"gopkg.in/yaml.v3"
@@ -586,6 +587,15 @@ func validateComposeMerge(base ComposeBase) error {
 	}
 	if weighted != 0 && weighted != len(base.Merge) {
 		return fmt.Errorf("base.merge weights must be given for every parent or for none")
+	}
+	if weighted != 0 {
+		weights := make([]float64, 0, len(base.Merge))
+		for _, parent := range base.Merge {
+			weights = append(weights, parent.Weight)
+		}
+		if err := modelweights.ValidateWeights(weights); err != nil {
+			return fmt.Errorf("base.merge: %w", err)
+		}
 	}
 	return nil
 }

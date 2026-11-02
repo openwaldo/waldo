@@ -21,6 +21,23 @@ type mergeSource struct {
 	dataStart int64
 }
 
+// ValidateWeights checks merge weights as the arithmetic uses them, in float32:
+// a weight that rounds to zero or overflows would make the recorded weights
+// differ from the ones applied.
+func ValidateWeights(weights []float64) error {
+	var total float64
+	for _, weight := range weights {
+		if applied := float32(weight); !(applied > 0) || math.IsInf(float64(applied), 0) {
+			return fmt.Errorf("merge weights must be positive and finite in float32; got %g", weight)
+		}
+		total += weight
+	}
+	if math.IsInf(float64(float32(total)), 0) {
+		return fmt.Errorf("merge weights must sum to a finite float32; got %g", total)
+	}
+	return nil
+}
+
 // Merge writes the weighted mean of every source's tensors to destination.
 // Sources must hold the same tensors with the same dtypes and shapes. Values
 // accumulate in float32 in source order, rounding each product before it is
@@ -38,11 +55,11 @@ func Merge(sources []string, weights []float64, destination string) (map[string]
 	if len(weights) != len(sources) {
 		return nil, fmt.Errorf("a merge needs one weight per source; got %d for %d sources", len(weights), len(sources))
 	}
+	if err := ValidateWeights(weights); err != nil {
+		return nil, err
+	}
 	var total float64
 	for _, weight := range weights {
-		if !(weight > 0) || math.IsInf(weight, 0) {
-			return nil, fmt.Errorf("merge weights must be positive and finite")
-		}
 		total += weight
 	}
 	opened := make([]mergeSource, 0, len(sources))

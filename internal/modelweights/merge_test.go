@@ -134,6 +134,10 @@ func TestMergeRejectsIncompatibleSources(t *testing.T) {
 		"dtype":   {writeFixture(t, map[string]fixtureTensor{"a.weight": {"F32", []uint64{2}, []float32{1, 2}}}), nil, "dtype and shape"},
 		"tensors": {writeFixture(t, map[string]fixtureTensor{"a.weight": {"BF16", []uint64{2}, []float32{1, 2}}, "b.weight": {"BF16", []uint64{1}, []float32{1}}}), nil, "tensors"},
 		"weights": {base, []float64{1, 0}, "positive"},
+		// 1e-50 rounds to zero in float32 and 1e300 overflows, so neither is the weight applied.
+		"underflow": {base, []float64{1e-50, 1}, "float32"},
+		"overflow":  {base, []float64{1e300, 1e300}, "float32"},
+		"sum":       {base, []float64{3e38, 3e38}, "sum"},
 	} {
 		destination := filepath.Join(t.TempDir(), "merged.safetensors")
 		if _, err := Merge([]string{base, test.other}, test.weights, destination); err == nil || !strings.Contains(err.Error(), test.want) {

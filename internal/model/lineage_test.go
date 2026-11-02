@@ -157,6 +157,8 @@ func TestMergeComposeValidation(t *testing.T) {
 		"partial weight": {Merge: []ComposeMergeParent{{Model: "a", Weight: 2}, {Model: "b"}}},
 		"with model":     {Model: "c", Merge: []ComposeMergeParent{{Model: "a"}, {Model: "b"}}},
 		"run pin":        {RunID: "r", Merge: []ComposeMergeParent{{Model: "a"}, {Model: "b"}}},
+		"tiny weight":    {Merge: []ComposeMergeParent{{Model: "a", Weight: 1e-50}, {Model: "b", Weight: 1}}},
+		"huge weights":   {Merge: []ComposeMergeParent{{Model: "a", Weight: 1e300}, {Model: "b", Weight: 1e300}}},
 	} {
 		if err := (Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &base}).Validate(); err == nil {
 			t.Fatalf("%s: compose accepted", name)
