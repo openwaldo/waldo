@@ -151,11 +151,7 @@ func Merge(sources []string, weights []float64, destination string) (map[string]
 				value := decodeFloat(raw, element, width)
 				carried[element] = carried[element] || !finite(value)
 				// The explicit conversion stops Go from fusing the multiply into the add.
-				product := float32(value * share)
-				if math.Abs(float64(value)) >= 0x1p-126 && math.Abs(float64(product)) < 0x1p-126 {
-					return nil, fmt.Errorf("merge weights underflow float32 in tensor %s", name)
-				}
-				sums[element] += product
+				sums[element] += float32(value * share)
 			}
 		}
 		for element, sum := range sums {

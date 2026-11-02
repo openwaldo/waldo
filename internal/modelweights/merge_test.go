@@ -112,22 +112,24 @@ func TestMergeWeightsSources(t *testing.T) {
 	}
 }
 
-// Weights that pass validation can still push a product or a sum out of
-// float32 range; the merge fails rather than write the wrong value.
-func TestMergeRefusesValuesFloat32CannotHold(t *testing.T) {
-	for name, test := range map[string]struct {
-		value   float32
-		weights []float64
-		want    string
-	}{
-		"underflow": {1e-8, []float64{0x1p-126, 0x1p-126}, "underflow float32"},
-		"overflow":  {3e38, nil, "overflows"},
-	} {
-		first := writeFixture(t, map[string]fixtureTensor{"a.weight": {"F32", []uint64{1}, []float32{test.value}}})
-		second := writeFixture(t, map[string]fixtureTensor{"a.weight": {"F32", []uint64{1}, []float32{test.value}}})
-		if _, err := Merge([]string{first, second}, test.weights, filepath.Join(t.TempDir(), "merged.safetensors")); err == nil || !strings.Contains(err.Error(), test.want) {
-			t.Fatalf("%s: error = %v", name, err)
+// Finite values can still overflow float32 while they are averaged; the
+// merge fails rather than write Inf. Subnormal results are what IEEE float32
+// computes.
+func TestMergeRefusesAnAverageFloat32CannotHold(t *testing.T) {
+	merge := func(value float32, weights []float64) (float32, error) {
+		first := writeFixture(t, map[string]fixtureTensor{"a.weight": {"F32", []uint64{1}, []float32{value}}})
+		second := writeFixture(t, map[string]fixtureTensor{"a.weight": {"F32", []uint64{1}, []float32{0}}})
+		destination := filepath.Join(t.TempDir(), "merged.safetensors")
+		if _, err := Merge([]string{first, second}, weights, destination); err != nil {
+			return 0, err
 		}
+		return readFixture(t, destination, "a.weight")[0], nil
+	}
+	if _, err := merge(3e38, []float64{2, 1}); err == nil || !strings.Contains(err.Error(), "overflows") {
+		t.Fatalf("overflow error = %v", err)
+	}
+	if got, err := merge(0x1p-126, []float64{0.5, 0.5}); err != nil || got != 0x1p-127 {
+		t.Fatalf("subnormal mean = %v, %v", got, err)
 	}
 }
 

@@ -307,8 +307,9 @@ WALDO writes the merge as an origin under the model store's `.merges`
 directory, keyed by its parents and weights, so the same merge is built once.
 Its origin BOM records the method (`mean-f32-v1`, or `weighted-mean-f32-v1`
 with weights: float32 accumulation from +0 in parent order, rounded to nearest
-even; weights must be normal, finite float32 values, and a merge fails if a
-weighted value underflows or the average overflows float32),
+even, with subnormal results as IEEE float32 computes them; weights must be
+normal, finite float32 values, and a merge fails if the average overflows
+float32),
 each parent's model ID, weights hash, and
 lineage node hash in merge order, and the weights; its lineage node names every
 parent's node, like a git merge commit. Anyone holding the parents can

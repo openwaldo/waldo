@@ -168,7 +168,6 @@ func TestMergeComposeRefusesDifferentArchitectures(t *testing.T) {
 	}
 }
 
-// With stages, the merge is the origin training starts from.
 // Merges average bfloat16 and float32 weights; a plan must not accept
 // float16 parents that the merge itself will refuse.
 func TestMergeComposeRefusesFloat16Parents(t *testing.T) {
@@ -183,6 +182,7 @@ func TestMergeComposeRefusesFloat16Parents(t *testing.T) {
 	}
 }
 
+// With stages, the merge is the origin training starts from.
 func TestMergeComposeTrainsFromTheMerge(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	root := t.TempDir()
@@ -469,28 +469,44 @@ func TestMergeFindsAncestryOfAPulledReleaseThatTrained(t *testing.T) {
 	}
 }
 
-// A release can name a node this store records: one any export publishes, or
-// the plain node of weights anyone can pull. Its weights descending from that
-// node is still only its claim.
+// A release can name a node this store records: the plain node of weights
+// anyone can pull, or a run node any export publishes. Its weights descending
+// from that node is still only its claim.
 func TestReleaseNamingARecordedNodeIsStillDeclared(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	root := t.TempDir()
-	pullClaiming(t, root, "plain", huggingFaceFixture(t, mergeArchitecture(), HuggingFaceTokenizerClass), LineageNode{})
-	plain, err := Inspect(root, "plain")
-	if err != nil {
+	pullClaiming(t, root, "plain", mergeableFixture(t, mergeArchitecture(), 0), LineageNode{})
+	stage := mergeStage("local")
+	if _, err := flipWeightsBuilder(root).Compose(t.Context(), "trained", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "plain"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)}); err != nil {
 		t.Fatal(err)
 	}
-	node, err := ModelLineage(plain, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for salt, claim := range map[byte]LineageNode{1: node, 2: {WeightsSHA256: node.WeightsSHA256}} {
-		files := huggingFaceFixture(t, mergeArchitecture(), HuggingFaceTokenizerClass)
-		files["model.safetensors"][len(files["model.safetensors"])-1] ^= salt
-		name := fmt.Sprintf("claimant-%d", salt)
-		pullClaiming(t, root, name, files, claim)
-		if _, declared, err := (Builder{Root: root}).mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "plain"}, {Model: name}}}); err != nil || !declared {
+	for salt, recorded := range map[byte]string{1: "plain", 2: "trained"} {
+		inspection, err := Inspect(root, recorded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		node, err := ModelLineage(inspection, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := "claims-" + recorded
+		pullClaiming(t, root, name, mergeableFixture(t, mergeArchitecture(), salt), node)
+		if _, declared, err := (Builder{Root: root}).mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: recorded}, {Model: name}}}); err != nil || !declared {
 			t.Fatalf("%s: declared %v, %v", name, declared, err)
+		}
+	}
+}
+
+// A release whose lineage is not a lineage node is refused, not pulled as if
+// it recorded none.
+func TestPullRefusesMalformedReleaseLineage(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	for name, lineage := range map[string]string{"type": `{"weights_sha256":123}`, "parents": `{"weights_sha256":"` + strings.Repeat("a", 64) + `","parents":"oops"}`, "digest": `{"weights_sha256":"xyz"}`} {
+		files := huggingFaceFixture(t, mergeArchitecture(), HuggingFaceTokenizerClass)
+		files["BOM.json"] = []byte(`{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":` + lineage + `}`)
+		client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
+		if _, err := (Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "tiny", "huggingface://org/tiny"); err == nil || !strings.Contains(err.Error(), "lineage") {
+			t.Fatalf("%s: pull error = %v", name, err)
 		}
 	}
 }

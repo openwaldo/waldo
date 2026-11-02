@@ -691,15 +691,19 @@ func releaseLineage(path string) (*LineageNode, error) {
 		return nil, err
 	}
 	var release struct {
-		Kind    string       `json:"kind"`
-		Subject string       `json:"subject"`
-		Lineage *LineageNode `json:"lineage"`
+		Kind    string          `json:"kind"`
+		Subject string          `json:"subject"`
+		Lineage json.RawMessage `json:"lineage"`
 	}
-	if json.Unmarshal(data, &release) != nil || release.Kind != "openwaldo-bom" || release.Subject != "model-release" || release.Lineage == nil {
+	if json.Unmarshal(data, &release) != nil || release.Kind != "openwaldo-bom" || release.Subject != "model-release" || release.Lineage == nil || string(release.Lineage) == "null" {
 		return nil, nil
 	}
-	if err := release.Lineage.validate(); err != nil {
+	var lineage LineageNode
+	if err := json.Unmarshal(release.Lineage, &lineage); err != nil {
 		return nil, fmt.Errorf("release BOM.json lineage: %w", err)
 	}
-	return release.Lineage, nil
+	if err := lineage.validate(); err != nil {
+		return nil, fmt.Errorf("release BOM.json lineage: %w", err)
+	}
+	return &lineage, nil
 }

@@ -325,7 +325,7 @@ func currentWeights(inspection Inspection) (string, error) {
 // base.merge names the same parents and weights: its base stays that merge
 // after the parents train on, as a run pin keeps a fine-tune's base.
 func (builder Builder) recordedMerge(name string, base ComposeBase) (*Inspection, error) {
-	if name == "" || len(base.Merge) == 0 {
+	if len(base.Merge) == 0 || ValidateName(name) != nil {
 		return nil, nil
 	}
 	if _, err := os.Stat(filepath.Join(builder.Root, name)); os.IsNotExist(err) {
