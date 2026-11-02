@@ -298,6 +298,22 @@ func TestMergeComposeKeepsItsRecordedMerge(t *testing.T) {
 	if completed, err := ComposeCompleted(resolved, merged); err != nil || !completed {
 		t.Fatalf("merge-only compose completed = %v, %v", completed, err)
 	}
+	// A failed run leaves the weights as they were, so the merge-only model is still complete.
+	failing := backendFunc(func(context.Context, training.Request) (training.Observation, error) {
+		return training.Observation{}, fmt.Errorf("interrupted")
+	})
+	failer := Builder{Root: root, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(failing), nil
+	})}
+	if _, err := failer.Train(t.Context(), "merged", preparedFixture(t, mergeStage("failed"))); err == nil {
+		t.Fatal("failing backend trained")
+	}
+	if merged, err = Inspect(root, "merged"); err != nil {
+		t.Fatal(err)
+	}
+	if completed, err := ComposeCompleted(resolved, merged); err != nil || !completed {
+		t.Fatalf("merge-only compose after a failed run completed = %v, %v", completed, err)
+	}
 	two := mergeStage("two")
 	trained.Stages = []Stage{stage, two}
 	if _, err := builder.Compose(t.Context(), "trained", trained, []PreparedStage{preparedFixture(t, stage), preparedFixture(t, two)}); err != nil {
@@ -593,6 +609,42 @@ func TestRecordedMergeRefusesARecreatedParent(t *testing.T) {
 	pullClaiming(t, root, "left", mergeableFixture(t, mergeArchitecture(), 9), LineageNode{WeightsSHA256: strings.Repeat("c", 64)})
 	if _, err := builder.ResolveCompose(t.Context(), "merged", merge, true); err == nil {
 		t.Fatal("merge compose resolved to the merge of the removed left")
+	}
+}
+
+// A merge-only compose interrupted after its model is written leaves its
+// transaction pending; repeating the compose finishes it.
+func TestMergeComposeFinishesAnInterruptedTransaction(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullRelease(t, root, "left", strings.Repeat("a", 64), 0)
+	pullRelease(t, root, "right", strings.Repeat("a", 64), 1)
+	builder := Builder{Root: root}
+	merge := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}}
+	resolved, err := builder.ResolveCompose(t.Context(), "", merge, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.Compose(t.Context(), "merged", merge, nil); err != nil {
+		t.Fatal(err)
+	}
+	// The transaction Compose writes before the model exists, left behind by an interruption.
+	transaction := composeTransaction{Kind: "waldo-model-compose-transaction", Schema: 1, Name: "merged", Compose: resolved}
+	id, err := hashJSON(transaction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(filepath.Join(root, ".waldo-compose", id, "COMPOSE.json"), transaction); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := HasPendingCompose(root, "merged"); err != nil || !pending {
+		t.Fatalf("pending = %v, %v", pending, err)
+	}
+	if _, err := builder.Compose(t.Context(), "merged", merge, nil); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := HasPendingCompose(root, "merged"); err != nil || pending {
+		t.Fatalf("after repeating the compose, pending = %v, %v", pending, err)
 	}
 }
 

@@ -1374,6 +1374,13 @@ func runCompletedComposeNoop(context Context, args []string, stdout, stderr io.W
 	return finishCompletedComposeNoop(context, name, composePath, compose, inspection, skipped, stdout, stderr)
 }
 
+// completesWithoutCompose reports whether a request with no stages left can
+// finish as a verified no-op. A pending merge-only compose cannot: only
+// Compose finishes its transaction.
+func completesWithoutCompose(pending bool, compose model.Compose) bool {
+	return !pending || compose.Base == nil || len(compose.Base.Merge) == 0
+}
+
 func finishCompletedComposeNoop(context Context, name, composePath string, requested model.Compose, inspection model.Inspection, skipped []model.SkippedCorpus, stdout, stderr io.Writer) (bool, error) {
 	for _, selected := range skipped {
 		fmt.Fprintf(stderr, "preflight/%s          skipped %s (already completed by this model)\n", selected.Stage, selected.Path)
@@ -1381,6 +1388,9 @@ func finishCompletedComposeNoop(context Context, name, composePath string, reque
 	completed, err := model.ComposeCompleted(requested, inspection)
 	if err != nil {
 		return false, err
+	}
+	if !completed && len(requested.Stages) == 0 {
+		return false, fmt.Errorf("model %q is no longer the merge compose %q describes; it has trained since, or was built from another base — use a new model name for this compose", name, composePath)
 	}
 	if !completed {
 		return false, fmt.Errorf("model %q previously trained every selected corpus path, but its completed run BOMs do not match compose %q; WALDO will not treat changed stages, filters, order, or training parameters as completed — use a new model name for this compose", name, composePath)
@@ -1459,7 +1469,7 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 		for _, corpus := range skipped {
 			fmt.Fprintf(stderr, "preflight/%s          skipped %s (already completed by this model)\n", corpus.Stage, corpus.Path)
 		}
-		if len(compose.Stages) == 0 {
+		if len(compose.Stages) == 0 && completesWithoutCompose(pending, compose) {
 			_, err := finishCompletedComposeNoop(context, name, composePath, requestedCompose, inspection, skipped, stdout, io.Discard)
 			return err
 		}
