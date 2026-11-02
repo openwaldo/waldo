@@ -127,10 +127,11 @@ A trainer may generate the documents from code, for example from Python
 classes.
 
 WALDO records every received trainer and tokenizer schema document byte for
-byte, unfiltered, in `TRAINER-SCHEMAS.json` next to `PLAN.json`, and puts
-each document's SHA-256 in the plan hash. When the manifest names a committed schema file, the file must
-be byte-identical to the reported document, or the run fails. WALDO validates
-the compose, and later every `resolve` result, against the full documents.
+byte, unfiltered, in `TRAINER-SCHEMAS.json` next to `PLAN.json`, and puts each
+document's SHA-256 in the plan hash. When the manifest names a committed
+schema file, the file must be byte-identical to the reported document, or the
+run fails. WALDO validates the compose, and later every `resolve` result,
+against the full documents.
 
 Rationale: the schema is a deterministic function of the trainer source and
 its locked environment, which identity already covers, so a schema generated
