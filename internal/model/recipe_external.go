@@ -199,19 +199,7 @@ func (c ExternalCompose) Validate() error {
 }
 
 // ResolvedExternalData contains only resolved WALDO-owned data facts.
-type ResolvedExternalData struct {
-	Epochs               int64                      `json:"epochs,omitempty"`
-	RequestedTokens      int64                      `json:"requested_tokens,omitempty"`
-	Steps                int64                      `json:"steps"`
-	GlobalBatchSequences int64                      `json:"global_batch_sequences"`
-	SequenceLength       int64                      `json:"sequence_length"`
-	Seed                 uint64                     `json:"seed"`
-	Order                training.DataPlan          `json:"order"`
-	Evaluation           *training.EvaluationPolicy `json:"evaluation,omitempty"`
-	CheckpointEvery      int64                      `json:"checkpoint_every"`
-	EvaluateEvery        int64                      `json:"evaluate_every"`
-	PlannedTokenCapacity int64                      `json:"planned_token_capacity"`
-}
+type ResolvedExternalData = training.ExternalDataParameters
 
 // ResolveData reuses WALDO's existing data rules without exporting native
 // optimizer defaults as external trainer parameters.

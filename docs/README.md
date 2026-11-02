@@ -32,6 +32,8 @@ Read these in order:
 - [External application loading](EXTERNAL-APPLICATIONS.md): PoC compose reader,
   pinned sources, manifests, probe schemas, managed Python environments and
   single-process launch API; CLI execution is planned.
+- [External trainer protocol](EXTERNAL-TRAINER-PROTOCOL.md): probe, resolve and
+  token-only train frames, schema evidence and developer API.
 - [Model lifecycle](MODEL-LIFECYCLE.md): managed models, runs, and backends.
 - [Multi-host training](MULTI-NODE-TRAINING.md): TorchTitan cluster
   requirements and exact operator commands.

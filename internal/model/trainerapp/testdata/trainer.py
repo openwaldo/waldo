@@ -1,0 +1,85 @@
+# Copyright (c) 2026 OpenWALDO Project contributors
+# SPDX-License-Identifier: Apache-2.0
+import json
+import math
+import sys
+
+MODE = 'ok'
+
+def emit(kind, **fields):
+    print(json.dumps(dict(kind=kind, protocol=1, **fields)), flush=True)
+
+command = sys.argv[1]
+request = json.loads(sys.stdin.readline())
+if command == 'probe':
+    result = dict(kind='probe', protocol=1,
+                  capabilities=dict(objectives=['causal-language-modeling'], launch_profiles=['single-process'], resume=True),
+                  frameworks={'fake': '1'}, devices=[dict(name='cpu', kind='cpu', memory_bytes=1024)], driver='unavailable', cuda='unavailable',
+                  schemas=dict(architecture={'type': 'object'}, parameters={'type': 'object', 'properties': {
+                      'lr': {'type': 'number'}, 'micro': {'type': 'integer', 'x-waldo-role': 'execution'}}}))
+    if MODE == 'version': result['protocol'] = 9
+    if MODE == 'schemas': del result['schemas']
+    if MODE == 'role': result['schemas']['parameters']['properties']['micro']['x-waldo-role'] = 'host'
+    if MODE == 'capability': result['capabilities']['resume'] = False
+    if MODE == 'objective': result['capabilities']['objectives'] = []
+    if MODE == 'missing': del result['devices']
+    print(json.dumps(result), flush=True)
+    if MODE == 'extra': print('{}', flush=True)
+elif command == 'resolve':
+    world = request['world']['world_size']
+    global_batch = request['data']['global_batch_sequences']
+    parameters = dict(lr=0.1, micro=global_batch // world)
+    if MODE == 'world-recipe': parameters['lr'] *= world
+    if MODE == 'invalid-resolved': parameters['micro'] = 'bad'
+    emit('resolve', parameters=parameters, batch=dict(micro_batch_sequences=global_batch // world,
+         accumulation_steps=2 if MODE == 'batch' else 1, world_size=world))
+else:
+    assert request['kind'] == 'begin'
+    begin = request['begin']
+    counts = {}
+    if begin['resume'] is not None:
+        assert begin['resume']['checkpoint_manifest']
+        counts['books'] = begin['resume']['tokens']
+    for line in sys.stdin:
+        frame = json.loads(line)
+        if frame['kind'] == 'evaluation_record':
+            assert 'tokens' in frame['record'] and 'loss_mask' in frame['record']
+        if frame['kind'] == 'record':
+            assert 'text' not in frame['record']
+            for corpus, count in frame['record']['consumption'].items():
+                counts[corpus] = counts.get(corpus, 0) + count
+        if frame['kind'] == 'end': break
+    if MODE == 'crash': sys.exit(4)
+    if MODE == 'error':
+        emit('error', error='fake failure', error_class='numerical-integrity')
+        sys.exit(0)
+    if MODE == 'unknown':
+        emit('surprise')
+        sys.exit(0)
+    if MODE == 'train-version':
+        print('{"kind":"event","protocol":2}')
+        sys.exit(0)
+    if MODE == 'hang':
+        import time
+        time.sleep(60)
+    tokens = sum(counts.values())
+    artifact = dict(path='model.safetensors', sha256='a' * 64, bytes=16, role='weights', format='safetensors')
+    checkpoint = dict(step=1, tokens=tokens, artifacts=[artifact])
+    evaluation = dict(step=1, tokens=tokens, nll_sum=2., target_tokens=2, text_bytes=2, loss=1., bits_per_byte=1 / math.log(2))
+    emit('event', event=dict(kind='log', step=0, tokens=0, message='hello'))
+    emit('event', event=dict(kind='progress', step=1, tokens=tokens, loss=1.))
+    emit('event', event=dict(kind='checkpoint', step=1, tokens=tokens, checkpoint=checkpoint))
+    if MODE == 'nonmonotonic': emit('event', event=dict(kind='progress', step=0, tokens=0, loss=1.))
+    if MODE == 'bad-metrics': evaluation['nll_sum'] = 4.
+    if MODE == 'missing-nll': del evaluation['nll_sum']
+    if MODE == 'null-nll': evaluation['nll_sum'] = None
+    emit('event', event=dict(kind='evaluation', step=1, tokens=tokens, evaluation=evaluation))
+    complete = dict(steps=1, consumed_tokens=tokens, artifacts=[artifact], artifact_profile='hf-causal-lm',
+                    consumption=[dict(corpus=c, token_targets=n) for c, n in counts.items()], evaluations=[evaluation],
+                    selected_checkpoint=dict(step=1, tokens=tokens, metric='heldout_loss', value=1.), environment={'fake': '1'})
+    if MODE == 'missing-complete': del complete['environment']
+    if MODE == 'consumption': complete['consumption'][0]['corpus'] = 'wrong'
+    if MODE == 'escape': artifact['path'] = '../escape'
+    if MODE == 'selection': complete['selected_checkpoint']['step'] = 0
+    emit('complete', complete=complete)
+    if MODE == 'after-complete': emit('event', event=dict(kind='log', message='late'))

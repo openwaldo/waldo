@@ -4,9 +4,10 @@ ADR [0084](adr/0084-external-trainers.md) defines the external trainer design.
 The declarative reader, pinned source cache, manifest checks and probe-schema
 validation, managed Python environment verification and single-process launch
 are implemented as developer APIs.
-Tokenizer probe/serve execution is implemented as a developer API. Trainer
-probe/resolve execution, external model identity persistence and training
-lifecycle integration are **planned**.
+Tokenizer probe/serve and trainer probe/resolve/train execution are implemented
+as developer APIs;
+see [external trainer protocol 1](EXTERNAL-TRAINER-PROTOCOL.md). External model
+identity persistence and training lifecycle integration are **planned**.
 The CLI does not yet run or forecast external composes.
 
 ## Developer entry points
@@ -150,9 +151,10 @@ WALDO does not remove `required`, inject defaults, or weaken the schema.
 
 `ValidateSchemas` checks all opaque sections after probe. `ParameterSchema.Split`
 validates a complete resolve result and separates recipe values from execution
-values. Execution overrides in a stage remain execution values. The future
-resolve caller must validate batch topology and world shape, compare recipe
-results across world shapes, and record execution values only in the run BOM.
+values. Execution overrides in a stage remain execution values. The trainer
+protocol client validates batch topology and world shape and compares
+recipe results across world shapes. Lifecycle callers must record execution
+values only in the run BOM.
 Schema byte persistence and final plan hashing belong to that lifecycle work.
 Role projection handles references, object properties and patterns, arrays,
 matching combinator branches and dependencies. Role annotations beneath
@@ -227,7 +229,8 @@ and CLI launch remain planned; callers must preserve this identity/run split.
 ## External process launcher
 
 `internal/model/applaunch` is the shared process boundary for trainer
-`probe`, `resolve`, `train` and tokenizer `probe`, `serve`. Protocol codecs and
+`probe`, `resolve`, `train` and tokenizer `probe`, `serve`. Protocol codecs are
+implemented;
 their lifecycle callers remain planned. `Prepare` accepts a freshly verified
 `application.ResolvedSource` and `pythonenv.Result`, a manifest command role,
 arguments, a launch profile, node/world facts and an existing absolute scratch
