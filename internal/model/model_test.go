@@ -600,7 +600,7 @@ func TestComposeInitializesFromCompletedManagedModelRun(t *testing.T) {
 		Base:   &ComposeBase{Model: "conversation"},
 		Stages: []Stage{stage},
 	}
-	resolved, err := builder.ResolveCompose(context.Background(), compose, false)
+	resolved, err := builder.ResolveCompose(context.Background(), "", compose, false)
 	if err != nil {
 		t.Fatal(err)
 	}

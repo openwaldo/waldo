@@ -75,6 +75,10 @@ func logicalCorpusPath(path string) string {
 // deliberately insufficient: stage order, filters, budgets, conversation
 // transforms, and all resolved training parameters must also match.
 func ComposeCompleted(compose Compose, inspection Inspection) (bool, error) {
+	// A merge-only compose is the merged model itself, until it trains.
+	if len(compose.Stages) == 0 && compose.Base != nil && len(compose.Base.Merge) > 0 {
+		return len(inspection.Runs) == 0 && inspection.Origin != nil && inspection.Origin.Merge != nil && compose.Base.OriginSHA256 == inspection.Model.OriginBOMSHA256, nil
+	}
 	if len(compose.Stages) == 0 || len(inspection.Runs) != len(inspection.RunBOMs) || len(inspection.Runs) < len(compose.Stages) {
 		return false, nil
 	}

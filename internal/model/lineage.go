@@ -305,6 +305,41 @@ func currentWeights(inspection Inspection) (string, string, error) {
 	return "", "", fmt.Errorf("model %q has no complete real weights", inspection.Model.Name)
 }
 
+// recordedMerge is the merge model name was built from, when it exists and
+// base.merge names the same parents and weights: its base stays that merge
+// after the parents train on, as a run pin keeps a fine-tune's base.
+func (builder Builder) recordedMerge(name string, base ComposeBase) (*Inspection, error) {
+	if name == "" || len(base.Merge) == 0 {
+		return nil, nil
+	}
+	if _, err := os.Stat(filepath.Join(builder.Root, name)); os.IsNotExist(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	target, err := Inspect(builder.Root, name)
+	if err != nil {
+		return nil, err
+	}
+	if target.Origin == nil || target.Origin.Merge == nil || len(target.Origin.Merge.Parents) != len(base.Merge) {
+		return nil, nil
+	}
+	for index, parent := range target.Origin.Merge.Parents {
+		if parent.Model != base.Merge[index].Model || parent.Weight != base.Merge[index].Weight {
+			return nil, nil
+		}
+	}
+	key, err := hashJSON(*target.Origin.Merge)
+	if err != nil {
+		return nil, err
+	}
+	merged, err := Inspect(filepath.Join(builder.Root, ".merges"), key)
+	if err != nil || merged.Model.OriginBOMSHA256 != target.Model.OriginBOMSHA256 {
+		return nil, nil
+	}
+	return &merged, nil
+}
+
 // mergeOrigin averages the parents into a merged origin under .merges, named
 // by the parents and weights so the same merge is built once. Its lineage
 // node names every parent's node, like a git merge commit.

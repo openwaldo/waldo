@@ -110,7 +110,7 @@ func runModelComposeForecast(context Context, path string, stdout, progress io.W
 	if err != nil {
 		return err
 	}
-	compose, err = builder.ResolveCompose(context.Execution, compose, false)
+	compose, err = builder.ResolveCompose(context.Execution, "", compose, false)
 	if err != nil {
 		return err
 	}
@@ -1347,11 +1347,11 @@ func runCompletedComposeNoop(context Context, args []string, stdout, stderr io.W
 	if err != nil {
 		return false, err
 	}
-	compose, err = builder.ResolveCompose(context.Execution, compose, true)
+	name := args[0]
+	compose, err = builder.ResolveCompose(context.Execution, name, compose, true)
 	if err != nil {
 		return false, err
 	}
-	name := args[0]
 	if err := builder.CheckComposeTarget(name, compose); err != nil {
 		return false, err
 	}
@@ -1422,7 +1422,7 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 	if err != nil {
 		return err
 	}
-	compose, err = builder.ResolveCompose(context.Execution, compose, true)
+	compose, err = builder.ResolveCompose(context.Execution, name, compose, true)
 	if err != nil {
 		return err
 	}

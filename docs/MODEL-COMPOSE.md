@@ -315,7 +315,10 @@ parent's node, like a git merge commit. Anyone holding the parents can
 recompute the merged weights and compare hashes. A compose with
 `base.merge` may have no stages: the destination is then the merged model
 itself, usable for chat, export, or as another compose's base. With stages, the
-merge initializes training like any origin. Exports record the model's lineage node in
+merge initializes training like any origin. Once the model exists, the same
+`base.merge` resolves to the merge it was built from, even after a parent trains
+on, so repeating the compose is a verified no-op and appending stages continues
+the same model. Exports record the model's lineage node in
 their release `BOM.json`, and pulls keep it in the origin, so the chain
 continues across publication.
 

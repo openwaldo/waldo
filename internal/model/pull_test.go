@@ -113,7 +113,7 @@ func TestComposeAcquiresPinnedHuggingFaceBaseWithoutVisibleModel(t *testing.T) {
 	stage := testStage("adapt")
 	stage.Parameters.SequenceLength = 32
 	compose := Compose{Kind: "waldo-model-compose", Schema: 1, Base: &ComposeBase{Source: "huggingface://org/tiny@" + revision}, Stages: []Stage{stage}}
-	probed, err := builder.ResolveCompose(t.Context(), compose, false)
+	probed, err := builder.ResolveCompose(t.Context(), "", compose, false)
 	if err != nil {
 		t.Fatal(err)
 	}
