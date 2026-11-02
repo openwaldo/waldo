@@ -19,6 +19,76 @@ Run the complete local suite with:
 ./testing/all.sh
 ```
 
+For an explicitly CPU-only suite, use `WALDO_TEST_CPU_ONLY=1 ./testing/all.sh`.
+This hides CUDA devices from the conformance test and skips accelerator lifecycle
+scripts, including MLX. Skipped hardware coverage is not a hardware qualification.
+
+## Fixed-global-batch FP32 qualification
+
+`testing/training-fixed-batch.sh` exercises the production PyTorch worker's
+sequence ownership, loss normalization, accumulation, and AdamW updates. It
+compares every step with the independent functional oracle in
+`testing/python/pytorch_conformance.py` and with the singleton worker baseline.
+It does not replace CLI ingestion/export acceptance or test checkpoint resume.
+
+Prepare a tiny synthetic fixture and initial FP32 Safetensors on CPU:
+
+```bash
+./testing/training-fixed-batch.sh prepare --output /path/to/new-fixture
+./testing/training-fixed-batch.sh verify --fixture /path/to/new-fixture
+./testing/training-fixed-batch.sh run \
+  --fixture /path/to/new-fixture --output /path/to/new-cpu-results --device cpu
+./testing/training-fixed-batch.sh verify-results \
+  --fixture /path/to/new-fixture --output /path/to/new-cpu-results
+```
+
+Set `WALDO_PYTHON` to the explicit PyTorch interpreter. Preparation requires
+PyTorch and NumPy but no GPU or external corpus. Reuse the staged fixture bytes
+on other hosts; do not regenerate weights independently for each matrix cell.
+`verify` uses only the Python standard library. `verify-results` recomputes
+the oracle on CPU, checks inventory hashes and every required rank/cell, and
+does not rewrite evidence. Hashes are integrity checks, not signer attestation.
+
+The default eight-update fixture uses global batch eight, sequence length
+eight, dropout disabled, and an eager FP32 model. Both all-valid and uneven
+loss masks are tested. World sizes one, two, and four each run accumulation
+one, and additionally accumulation four/world-size where distinct: ten cells.
+The accumulation variant keeps per-rank microbatch two. The test records actual
+sample ownership and rejects omissions, duplication, reordering, nonfinite
+tensors, optimizer-step mismatches, and missing tensor names. Tensor tolerances
+are fixed to the existing CUDA FP32 oracle thresholds in the test source.
+
+CPU uses a test-only Gloo/DDP placement adapter because production distributed
+placement requires CUDA. The adapter leaves Trainer's sampling and optimizer
+methods intact. A CPU pass explicitly reports `cuda_qualified: false`.
+
+Only after allocating otherwise-unused GPUs, run the CUDA matrix:
+
+```bash
+CUDA_VISIBLE_DEVICES=GPU-UUID-1,GPU-UUID-2,GPU-UUID-3,GPU-UUID-4 \
+WALDO_FIXED_BATCH_ALLOW_CUDA=1 \
+./testing/training-fixed-batch.sh run \
+  --fixture /path/to/new-fixture --output /path/to/new-cuda-results \
+  --device cuda --strategy data-parallel
+```
+
+CUDA uses the actual TorchTitan Trainer constructor and NCCL. Four visible GPUs
+are required for the full matrix. `fully-sharded-data-parallel` selects FSDP2
+instead of DDP and requires the compatible TorchTitan runtime; report the two
+strategies separately. CUDA, FSDP2, BF16, and resume coverage must not be inferred
+from CPU results. Smaller `--world-sizes` matrices are diagnostic and cannot
+produce a complete qualification receipt.
+
+Each cell has a 600-second default timeout; the default aggregate CUDA budget
+is two GPU-hours. Overrides are bounded to at most eight GPU-hours. A failed
+cell stops the matrix and retains its log. Timeouts terminate only that test's
+process group. Output directories must be new. Preserve the fixture manifest,
+source revision and patch, exact runtime lock, per-rank tensor snapshots,
+comparison reports, logs, `summary.json`, and `SHA256SUMS` together. Tests do not
+reserve hardware, inspect serving workloads, modify drivers, or publish results.
+Instrumentation copies tensors and changes timing: its telemetry is not a
+performance benchmark. Durable storage and signer trust are operator choices.
+
 Run the independent PyTorch numerical conformance gate with:
 
 ```bash
@@ -111,3 +181,64 @@ WALDO_E2E_AWS_REGION=us-west-2 \
 
 Credentials come from the AWS SDK chain or `waldo lookaside login`; tests must
 not write credentials to fixtures.
+
+## BF16 and committed-checkpoint resume qualification
+
+`testing/training-precision-resume.sh` extends the fixed-batch fixture without
+modifying the FP32 runner or production training code. Its `run` command accepts
+`--mode bf16` or `--mode resume`, `--device cpu|cuda`, and the same explicit
+fixture, new output directory, and DDP/FSDP2 strategy as the FP32 test. CUDA still
+requires `WALDO_FIXED_BATCH_ALLOW_CUDA=1` and explicitly allocated visible GPUs.
+
+```bash
+./testing/training-precision-resume.sh run --mode bf16 --device cpu \
+  --fixture /path/to/fixture --output /path/to/new-bf16-results
+./testing/training-precision-resume.sh run --mode resume --device cpu \
+  --world-sizes 1 --fixture /path/to/fixture --output /path/to/new-resume-results
+./testing/training-precision-resume.sh verify \
+  --fixture /path/to/fixture --output /path/to/results
+```
+
+The BF16 test confirms BF16 forward outputs and FP32 master weights, gradients,
+and moments. At each update, logits/loss/gradients are compared with the
+independent FP32 functional oracle at the same current weights. AdamW is
+independently recomputed from its measured input gradients and prior moments,
+using the existing strict FP32 optimizer tolerance. Comparing Adam updates
+against a different FP32 gradient trajectory is unsound near zero gradients.
+The original full FP32 oracle trajectory is also retained for investigation.
+
+A separate topology gate compares complete BF16 trajectories to the singleton
+baseline. Its proposed (not upstream-approved) atol/rtol pairs are frozen in
+`POLICY`: logits .01/.02, loss .005/.002, gradients .002/.05, weights .002/.02,
+first moments .0005/.05, second moments .00005/.05. Every tensor is checked.
+Arithmetic conformance and topology drift are reported separately. Independent
+matrix cells continue after a topology-only mismatch to characterize coverage;
+an arithmetic failure stops the matrix. Any topology mismatch still fails the
+qualification and returns nonzero. Thresholds must not be loosened after seeing
+qualification failures. The verifier can authenticate a complete negative
+verdict as well as a pass; it does not turn a negative verdict into a pass.
+
+Resume tests use native Trainer checkpoint save/restore with dropout .1,
+uneven masks, eight total updates, and checkpoint step four. For each FP32/BF16
+and world-size combination, the runner executes an uninterrupted control,
+then a separate prefix. Once every rank has saved its evidence and the native
+checkpoint has been committed/fsynced, rank zero terminates itself with SIGKILL and torchrun shuts down its peers.
+The runner verifies that no experiment workers remain before launching fresh
+processes at the same topology. The
+resume input retains the original total-step target and initialization, and
+replays the original sample stream through the production cursor logic.
+
+The test requires bitwise-equal continuation logits, gradients, weights,
+optimizer state, and native final weights; exact restored/final CPU and CUDA
+RNG states; and exact sample/corpus/token accounting. It checks FP32 and BF16
+at one/two/four GPUs for each selected strategy. CPU resume tests use the native
+serial CPU worker and support world size one only. This is committed optimizer-
+step resume, not mid-microbatch, changed-world-size, CLI transaction, or audited
+corpus/export acceptance. Prefix termination is an expected recorded event;
+other process errors remain failures. Preserve checkpoints, receipts, logs,
+source/policy hashes, and all failed attempts. Verification runs on CPU.
+Completed resume comparison failures retain a negative verdict and allow the
+remaining independent cells to run. Launch, checkpoint-interruption, or worker
+cleanup errors still stop the matrix. The verifier recomputes each positive or
+negative verdict; numerical thresholds and the bitwise resume requirement are
+unchanged.
