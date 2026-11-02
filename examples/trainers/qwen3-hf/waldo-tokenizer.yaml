@@ -1,0 +1,8 @@
+kind: waldo-tokenizer
+schema: 1
+name: qwen3-tokenizer
+protocol: 1
+entrypoint: {module: qwen3_hf.tokenizer_cli}
+commands: {probe: probe, serve: serve}
+environments:
+  tokenizer: {kind: python-lock, lock: env/tokenizer/pylock.toml, python: 3.12.3}
