@@ -55,20 +55,21 @@ type ExternalPlan struct {
 // ExternalRunBOM embeds the same immutable identity and separates actual
 // execution parameters, launch allowlists and host observations from it.
 type ExternalRunBOM struct {
-	Kind          string                 `json:"kind"`
-	Schema        int                    `json:"schema"`
-	Subject       string                 `json:"subject"`
-	ID            string                 `json:"id"`
-	ModelID       string                 `json:"model_id"`
-	Stage         string                 `json:"stage"`
-	Identity      ExternalIdentity       `json:"identity"`
-	CorpusBOM     corpus.BOM             `json:"corpus_bom"`
-	Resolved      trainerapp.Resolved    `json:"resolved"`
-	EvaluationSet training.EvaluationSet `json:"evaluation_set"`
-	TrainerHost   pythonenv.RunEvidence  `json:"trainer_host"`
-	TokenizerHost pythonenv.RunEvidence  `json:"tokenizer_host"`
-	Probe         trainerapp.Probe       `json:"probe"`
-	Launches      []applaunch.Evidence   `json:"launches"`
+	Initialization *training.WorkerInitialization `json:"initialization,omitempty"`
+	Kind           string                         `json:"kind"`
+	Schema         int                            `json:"schema"`
+	Subject        string                         `json:"subject"`
+	ID             string                         `json:"id"`
+	ModelID        string                         `json:"model_id"`
+	Stage          string                         `json:"stage"`
+	Identity       ExternalIdentity               `json:"identity"`
+	CorpusBOM      corpus.BOM                     `json:"corpus_bom"`
+	Resolved       trainerapp.Resolved            `json:"resolved"`
+	EvaluationSet  training.EvaluationSet         `json:"evaluation_set"`
+	TrainerHost    pythonenv.RunEvidence          `json:"trainer_host"`
+	TokenizerHost  pythonenv.RunEvidence          `json:"tokenizer_host"`
+	Probe          trainerapp.Probe               `json:"probe"`
+	Launches       []applaunch.Evidence           `json:"launches"`
 }
 
 type ExternalModelBOM struct {
