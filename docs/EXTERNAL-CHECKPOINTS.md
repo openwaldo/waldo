@@ -1,7 +1,7 @@
 # External trainer checkpoints and conformance
 
 The `trainerapp` developer API implements ADRs 0029 and 0084 for external
-checkpoints. CLI/lifecycle wiring remains planned. Developer run BOM persistence and
+checkpoints. The CLI lifecycle (ADR 0087) uses them. Run BOM persistence and
 reference-trainer CPU/GPU qualification are implemented. Native worker checkpoints are unchanged.
 
 ## Lifecycle integration

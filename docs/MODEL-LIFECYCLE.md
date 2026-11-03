@@ -587,6 +587,52 @@ Machine-local index roots and cache paths never enter identity. Run BOMs retain
 logical index paths, manifest and shard hashes, licenses, source evidence, and
 the index Git identity when available.
 
+## External trainer lifecycle
+
+A schema-2 compose with a `trainer` block (see
+[Model compose](MODEL-COMPOSE.md#external-trainer-poc)) uses a separate
+lifecycle record under ADR [0087](adr/0087-external-training-lifecycle.md);
+native composes are unchanged. `waldo model train <name> <compose>` performs:
+
+1. Fetch and pin the trainer and tokenizer sources by commit, tree hash and
+   manifest hash; build or verify the named Python-lock environments.
+2. Run `probe`, validate the architecture and parameter schemas, and run
+   `resolve` to complete the stage recipe.
+3. Resolve corpus BOMs, hold out evaluation records, tokenize through the
+   tokenizer application, pack sequences and masks in WALDO, and write the
+   immutable `PLAN.json`, `TRAINER-SCHEMAS.json` and `RUN-BOM.json`.
+4. Launch the trainer (`$ENV/bin/python -E -s -m <module> train`, clean
+   environment plus a recorded allowlist) and stream token IDs. WALDO writes
+   checkpoint manifests and persists checkpoint references and evaluations.
+5. Verify the completed run (below) and publish the artifacts.
+
+Layout: `PLAN.json`, `TRAINER-SCHEMAS.json`, `MODEL.json`, `MODEL-BOM.json`,
+`COMPOSE.json`, `TELEMETRY.csv`, and per stage `runs/<stage>/` with `RUN.json`,
+`RUN-BOM.json`, `artifacts/`, `bundles/` and `checkpoints/`.
+
+**Resume.** An interrupted run (SIGINT or a trainer failure after a durable
+checkpoint) is resumed by repeating the same `train` command, or by
+`model continue`. WALDO reuses the run ID and run BOM, authenticates the last
+checkpoint bundle, and streams data from the resume position. The qualification
+run produces byte-identical terminal weights against an uninterrupted run. A
+completed identical invocation verifies artifacts and trains nothing.
+
+**Verification.** Before publication WALDO checks artifact paths, hashes and
+sizes, monotonic step/token counters, finite metrics, consumption per corpus
+against tokens sent, held-out token and byte counts against the pins, loss and
+bits-per-byte against the reported NLL sums, safetensors headers, NaN/Inf, and
+that published files contain no pickle. The trainer's held-out metrics are
+trusted beyond these checks; ADR 0075 promotion gates are unchanged.
+
+`model export` copies only verified published artifacts, run BOMs, plan and
+schemas into an `hf-causal-lm` package, excludes private resume state, and
+signs `BOM.json` and `EU-BOM.json` with the configured signer. Without a
+signing configuration the export is written unsigned and the command warns.
+`WALDO_APPLICATION_PYTHON` and `WALDO_APPLICATION_CACHE` select the bootstrap
+interpreter and application cache. Distributed launch, conversion and
+quantization, inference and `model forecast` are not supported for external
+models. End-to-end testing: [Testing](TESTING.md#external-trainer-end-to-end).
+
 ## Resource forecast
 
 ```bash

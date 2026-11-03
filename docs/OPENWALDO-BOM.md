@@ -98,13 +98,14 @@ identity invariant requires a new schema. Writers always emit resolved values
 for fields with index-level inheritance; consumers must not reconstruct those
 values from machine-local configuration.
 
-## External model provenance (developer API)
+## External model provenance
 
 External trainers use schema-2 `waldo-model-plan` and `openwaldo-bom` records
 under ADRs 0084 and 0086. Native schema-1 plan hashes and BOMs are unchanged.
-The implemented persistence APIs in `internal/model/external_bom.go` are
-`WriteExternalPlan`, `ReadExternalPlan`, `WriteExternalRunBOM` and
-`WriteExternalModelBOM`. CLI training/export integration remains planned.
+`waldo model train` writes these records for external composes and
+`waldo model export` publishes them (ADR 0087). The persistence code is in
+`internal/model/external_bom.go` (`WriteExternalPlan`, `ReadExternalPlan`,
+`WriteExternalRunBOM`, `WriteExternalModelBOM`).
 
 `PLAN.json` contains `kind`, `schema`, `name` and `identity`. Its SHA-256 is
 computed from compact Go JSON encoding, without a trailing newline. Identity

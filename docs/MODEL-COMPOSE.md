@@ -60,12 +60,61 @@ formulas and evidence policy are specified in
 
 ## External trainer PoC
 
-Schema 2 without trainer/tokenizer blocks uses the native contract below and
-normalizes to schema 1 without changing hashes. The external schema-2 reader,
-source cache and post-probe schema validation are available as developer APIs;
-external CLI forecasting and training remain planned. See
-[External application loading](EXTERNAL-APPLICATIONS.md) for the implemented
-boundary and field definitions.
+A schema-2 compose with a top-level `trainer` block replaces the built-in
+trainer and tokenizer with user-supplied applications. Schema 2 without
+`trainer`/`tokenizer` blocks uses the native contract below and normalizes to
+schema 1 without changing hashes. `waldo model train <name> <compose>` and
+`model continue` run external composes; `model forecast` does not yet accept
+them. See ADRs [0084](adr/0084-external-trainers.md) and
+[0087](adr/0087-external-training-lifecycle.md),
+[External application loading](EXTERNAL-APPLICATIONS.md) and the runnable
+[Qwen3 reference](../examples/trainers/qwen3-hf/compose.tiny.yaml).
+
+```yaml
+kind: waldo-model-compose
+schema: 2
+trainer:
+  source: &application          # YAML anchors and aliases are expanded on load
+    repository: https://github.com/kyleishie/waldo.git
+    commit: a1011336c464cc3d951f3b694cf3f96f639aee77   # full commit SHA
+    path: examples/trainers/qwen3-hf                   # contains waldo-trainer.yaml
+  environment: cpu              # a named environment from the manifest
+  determinism: required
+tokenizer:
+  source: *application          # contains waldo-tokenizer.yaml
+  environment: tokenizer
+  configuration: {}
+architecture: { hidden_size: 32, ... }   # opaque; validated by the trainer schema
+stages:
+  - name: pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    corpora: [books]
+    data:                       # WALDO-owned
+      steps: 3
+      global_batch_sequences: 4
+      sequence_length: 8
+      seed: 42
+      checkpoint_every: 1
+      evaluate_every: 1
+    trainer:                    # opaque; validated and completed by `resolve`
+      learning_rate: 0.0003
+```
+
+| Block | Owner | Contents |
+| --- | --- | --- |
+| `trainer`, `tokenizer` | WALDO | Pinned source (`repository`, full `commit`, `path`), named `environment`, `determinism` (trainer) or `configuration` (tokenizer). |
+| `architecture` | trainer schema | Opaque to WALDO; hashed into the plan and validated by the trainer's probe schema. |
+| stage `data` | WALDO | Budget (`tokens`, `epochs` or `steps`), `sequence_length`, `global_batch_sequences`, `seed`, shuffle, held-out selection, checkpoint and evaluation cadence. Trainers never read the index or Parquet; they receive token IDs only. |
+| stage `trainer` | trainer schema | Opaque recipe parameters. `resolve` completes defaults and chooses execution values (micro-batch, accumulation); micro-batch x accumulation x world size must equal `global_batch_sequences`. |
+
+Identity: the plan hash covers the trainer and tokenizer sources (repository,
+commit, tree hash, path, manifest hash), the selected environment (lock hash,
+interpreter), resolved configuration, architecture and corpus BOMs. Execution
+parameters and host facts (GPU, driver, CUDA, kernel) are recorded only in the
+run BOM. A changed identity requires a new model name. Protocol-1 finite-epoch
+budgets must fill every declared supervised batch slot; otherwise the command
+fails before launching the trainer.
 
 ## Why the profile is called causal pretraining
 

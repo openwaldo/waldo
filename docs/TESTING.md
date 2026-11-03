@@ -49,6 +49,7 @@ Individual end-to-end tests are available under `testing/e2e/`:
 ./testing/e2e/model-pytorch-memorization.sh
 ./testing/e2e/model-torchtitan.sh
 ./testing/e2e/model-torchtitan-multinode.sh
+./testing/e2e/model-external-trainer.sh
 ```
 
 `model-torchtitan-multinode.sh` is opt-in and uses two GPUs on one Linux host
@@ -87,6 +88,39 @@ least 90%, reach a held-out loss no greater than 0.25, reproduce the fixed
 held-out continuation, and terminate it with EOS. This distinguishes a backend
 that can merely execute from one that can demonstrably learn and publish the
 learned weights.
+
+## External trainer end-to-end
+
+`testing/e2e/model-external-trainer.sh` drives the real `waldo` CLI with the
+pinned Qwen3 reference trainer (`examples/trainers/qwen3-hf/compose.tiny.yaml`).
+It is opt-in because it clones the pinned commit and installs locked wheels
+through pip (Python 3.12.3 with pip and venv; `WALDO_APPLICATION_PYTHON`
+selects it, `WALDO_APPLICATION_CACHE` keeps the downloads between runs):
+
+```bash
+WALDO_E2E_EXTERNAL=1 ./testing/e2e/model-external-trainer.sh
+```
+
+Each variant ingests a disposable corpus, trains, interrupts after the first
+durable checkpoint, resumes with the same command, and asserts byte-identical
+weights against an uninterrupted run, a no-op completed rerun, `model continue`,
+a verified `hf-causal-lm` export, and signing dispatch (a mock `cosign`; this
+is not a signature qualification). The script runs:
+
+- **CPU** (`env/cpu`): always, for hosts and CI without a GPU.
+- **GPU** (`env/cuda`, same compose with the environment rewritten): only when
+  `nvidia-smi -L` lists a GPU. Otherwise it prints that the GPU run was skipped,
+  which is not a pass.
+- **~280M GPU** (`compose.yaml`), when `WALDO_E2E_EXTERNAL_LARGE=1`: one
+  budget-capped run (10 steps, sequence length 512, global batch 8) that prints
+  wall time and sampled host memory in use (GB10 unified memory; `nvidia-smi`
+  reports N/A).
+- the existing schema-1 lifecycle (`model-fake.sh`) to show native behavior is
+  unchanged. This step needs Go on the host.
+
+The script builds `waldo` with `go build` unless `WALDO_BIN` names a binary.
+Run a single variant directly with
+`python3 testing/external-qwen3/cli-smoke.py --help`.
 
 ## Live tests
 

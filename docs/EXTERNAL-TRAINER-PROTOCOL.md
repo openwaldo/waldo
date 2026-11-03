@@ -2,8 +2,8 @@
 
 This is the implemented developer API contract in `internal/model/trainerapp`,
 under ADR [0084](adr/0084-external-trainers.md). Terminal tensor/file verification and developer plan/run/model BOM persistence
-are implemented. CLI/lifecycle wiring remains **planned**. See
-[OpenWALDO BOM](OPENWALDO-BOM.md#external-model-provenance-developer-api).
+are implemented, and the CLI lifecycle drives them (ADR 0087). See
+[OpenWALDO BOM](OPENWALDO-BOM.md#external-model-provenance).
 Checkpoint verification and conformance are implemented; see
 [external checkpoints](EXTERNAL-CHECKPOINTS.md). The built-in workers'
 internal schema-1 protocol is unchanged and is not this protocol.

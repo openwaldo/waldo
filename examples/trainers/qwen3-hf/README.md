@@ -5,9 +5,9 @@ Qwen3 weights from scratch with Transformers 4.57.1 and PyTorch 2.9.0. It never
 reads a corpus index, Parquet or raw text. WALDO supplies ordered, packed token
 IDs, loss masks, evaluation records and exact optimizer-step budgets.
 
-The external developer APIs execute this example. External compose CLI and
-production lifecycle integration remain planned; these files are not yet
-executable with `waldo model train`. `distributed` is an interface declaration
+`waldo model train <name> compose.tiny.yaml` executes this example (see
+`docs/TESTING.md`, "External trainer end-to-end"); `compose.yaml` selects
+the `cuda` environment and the ~281M model. `distributed` is an interface declaration
 only: this implementation explicitly rejects multi-process/multi-device
 training. Restrict CUDA visibility to one device on multi-GPU hosts.
 

@@ -8,9 +8,10 @@ Tokenizer probe/serve and trainer probe/resolve/train execution are implemented
 as developer APIs;
 see [external trainer protocol 1](EXTERNAL-TRAINER-PROTOCOL.md). External model
 identity persistence is available through the developer APIs in
-[OpenWALDO BOM](OPENWALDO-BOM.md#external-model-provenance-developer-api);
-training lifecycle integration is **planned**.
-The CLI does not yet run or forecast external composes.
+[OpenWALDO BOM](OPENWALDO-BOM.md#external-model-provenance);
+`waldo model train`, `model continue` and `model export` run external composes
+(ADR [0087](adr/0087-external-training-lifecycle.md)). `model forecast` does not
+yet accept them.
 
 ## Developer entry points
 
@@ -227,15 +228,13 @@ observations: kernel, NVIDIA GPU models/drivers, CUDA driver capability and CUDA
 toolkit version. Missing tooling/query results are recorded as unavailable;
 these observations do not claim which CUDA runtime a future framework loads.
 Cache paths, installer and host facts are run-only evidence. Native compose
-identity and native execution are unchanged. External plan/run BOM persistence
-and CLI launch remain planned; callers must preserve this identity/run split.
+identity and native execution are unchanged. The lifecycle persists plan and run BOMs and preserves this identity/run split.
 
 ## External process launcher
 
 `internal/model/applaunch` is the shared process boundary for trainer
 `probe`, `resolve`, `train` and tokenizer `probe`, `serve`. Protocol codecs are
-implemented;
-their lifecycle callers remain planned. `Prepare` accepts a freshly verified
+implemented and are called by the external lifecycle. `Prepare` accepts a freshly verified
 `application.ResolvedSource` and `pythonenv.Result`, a manifest command role,
 arguments, a launch profile, node/world facts and an existing absolute scratch
 directory. Callers must resolve sources and verify environments immediately
@@ -276,9 +275,7 @@ Built-in worker launch and native compose behavior are unchanged.
 validates the configuration against the returned schema, and starts one `serve`
 process. The launch request must contain freshly verified source/environment
 results and run scratch. Callers must supply a cancellation/deadline context
-and close the client. External lifecycle/CLI orchestration and writing plan/run
-BOM files remain planned; this API supplies their tokenizer identity and launch
-evidence.
+and close the client. The external lifecycle uses this API for tokenizer identity and launch evidence.
 
 Both commands receive one initial line `{"configuration":{...}}`. Probe writes
 exactly one JSON line and exits successfully:
