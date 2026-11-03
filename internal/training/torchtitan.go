@@ -149,20 +149,29 @@ func (backend TorchTitan) launchArguments(workerPath string, request Request) []
 }
 
 func (backend TorchTitan) environment() ([]string, error) {
-	environment := append(os.Environ(), "PYTHONUNBUFFERED=1")
-	interfaceName := backend.Interface
-	if interfaceName == "" && backend.Nodes > 1 {
+	settings, err := NCCLEnvironment(backend.Nodes, backend.Rendezvous, backend.Interface, backend.HCA)
+	if err != nil {
+		return nil, err
+	}
+	return append(append(os.Environ(), "PYTHONUNBUFFERED=1"), settings...), nil
+}
+
+// NCCLEnvironment resolves the shared native/external transport policy without inheriting host variables.
+func NCCLEnvironment(nodes int, rendezvous, iface, hca string) ([]string, error) {
+	var environment []string
+	interfaceName := iface
+	if interfaceName == "" && nodes > 1 {
 		var err error
-		interfaceName, err = selectRendezvousInterface(backend.Rendezvous)
+		interfaceName, err = selectRendezvousInterface(rendezvous)
 		if err != nil {
-			return nil, fmt.Errorf("select NCCL interface for rendezvous %s: %w", backend.Rendezvous, err)
+			return nil, fmt.Errorf("select NCCL interface for rendezvous %s: %w", rendezvous, err)
 		}
 	}
 	if interfaceName != "" {
 		environment = append(environment, "NCCL_SOCKET_IFNAME="+interfaceName)
 	}
-	if backend.HCA != "" {
-		environment = append(environment, "NCCL_IB_HCA="+backend.HCA, "NCCL_IB_DISABLE=0")
+	if hca != "" {
+		environment = append(environment, "NCCL_IB_HCA="+hca, "NCCL_IB_DISABLE=0")
 	} else {
 		// RDMA must be explicitly selected. NCCL can otherwise prefer an HCA
 		// that is present but not routable between the training hosts.

@@ -9,10 +9,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/openwaldo/waldo/internal/model/application"
 	"github.com/openwaldo/waldo/internal/model/pythonenv"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 const StderrLimit = 64 * 1024
@@ -38,13 +41,15 @@ type World struct {
 }
 
 type Request struct {
-	Source      application.ResolvedSource
-	Environment pythonenv.Result
-	Command     string // Manifest command role: probe, resolve, train, or serve.
-	Args        []string
-	Profile     string
-	World       World
-	Scratch     string // Existing run scratch directory, used as HOME.
+	Source        application.ResolvedSource
+	Environment   pythonenv.Result
+	Command       string // Manifest command role: probe, resolve, train, or serve.
+	Args          []string
+	Profile       string
+	World         World
+	Scratch       string // Existing run scratch directory, used as HOME.
+	NCCLInterface string
+	NCCLHCA       string
 }
 
 // Evidence is run-only provenance. The lifecycle caller must persist it in the
@@ -69,10 +74,7 @@ func Prepare(r Request) (Evidence, error) {
 	if r.Profile == "" {
 		r.Profile = "single-process"
 	}
-	if r.Profile == "distributed" {
-		return e, fmt.Errorf("distributed launch profile (torchrun, node-local-cache) is not implemented yet")
-	}
-	if r.Profile != "single-process" {
+	if r.Profile != "single-process" && r.Profile != "distributed" {
 		return e, fmt.Errorf("unsupported launch profile %q", r.Profile)
 	}
 	if m.Kind == "waldo-trainer" && !slices.Contains(m.LaunchProfiles, r.Profile) {
@@ -81,8 +83,17 @@ func Prepare(r Request) (Evidence, error) {
 	if r.World == (World{}) {
 		r.World = World{Nodes: 1, ProcessesPerNode: 1, WorldSize: 1}
 	}
-	if r.World != (World{Nodes: 1, ProcessesPerNode: 1, WorldSize: 1}) {
+	if r.Profile == "single-process" && r.World != (World{Nodes: 1, ProcessesPerNode: 1, WorldSize: 1}) {
 		return e, fmt.Errorf("single-process requires one node and one process")
+	}
+	if r.Profile == "distributed" {
+		w := r.World
+		if m.Kind != "waldo-trainer" || w.Nodes < 1 || w.ProcessesPerNode < 1 || w.WorldSize < 1 || w.WorldSize/w.ProcessesPerNode != w.Nodes || w.WorldSize%w.ProcessesPerNode != 0 || w.NodeRank < 0 || w.NodeRank >= w.Nodes {
+			return e, fmt.Errorf("invalid distributed world shape")
+		}
+		if w.Nodes > 1 && (w.MasterAddress == "" || w.MasterPort < 1 || w.MasterPort > 65535) {
+			return e, fmt.Errorf("distributed multi-node launch requires master address and port")
+		}
 	}
 	command := map[string]string{"probe": m.Commands.Probe, "resolve": m.Commands.Resolve, "train": m.Commands.Train, "serve": m.Commands.Serve}[r.Command]
 	if command == "" {
@@ -112,6 +123,16 @@ func Prepare(r Request) (Evidence, error) {
 		return e, fmt.Errorf("verified environment lock does not match selected manifest environment")
 	}
 	argv := []string{filepath.Join(r.Environment.Run.CachePath, "bin", "python"), "-E", "-s"}
+	launcher := "python"
+	if r.Profile == "distributed" && r.Command == "train" {
+		launcher = "torchrun"
+		argv = append(argv, "-m", "torch.distributed.run", "--max-restarts=0", fmt.Sprintf("--nproc-per-node=%d", r.World.ProcessesPerNode))
+		if r.World.Nodes == 1 {
+			argv = append(argv, "--standalone")
+		} else {
+			argv = append(argv, fmt.Sprintf("--nnodes=%d", r.World.Nodes), fmt.Sprintf("--node-rank=%d", r.World.NodeRank), "--master-addr="+r.World.MasterAddress, fmt.Sprintf("--master-port=%d", r.World.MasterPort))
+		}
+	}
 	if m.Entrypoint.Module != "" {
 		argv = append(argv, "-m", m.Entrypoint.Module)
 	} else {
@@ -120,12 +141,19 @@ func Prepare(r Request) (Evidence, error) {
 	argv = append(argv, command)
 	argv = append(argv, r.Args...)
 	environment := []string{"WALDO_PROTOCOL=1", "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "HOME=" + r.Scratch}
+	if launcher == "torchrun" {
+		settings, err := training.NCCLEnvironment(r.World.Nodes, net.JoinHostPort(r.World.MasterAddress, strconv.Itoa(r.World.MasterPort)), r.NCCLInterface, r.NCCLHCA)
+		if err != nil {
+			return e, err
+		}
+		environment = append(environment, settings...)
+	}
 	for _, name := range []string{"CUDA_VISIBLE_DEVICES", "CUBLAS_WORKSPACE_CONFIG"} {
 		if value, ok := os.LookupEnv(name); ok {
 			environment = append(environment, name+"="+value)
 		}
 	}
-	return Evidence{Profile: r.Profile, Launcher: "python", World: r.World, Directory: r.Source.Directory, Argv: argv, Environment: environment}, nil
+	return Evidence{Profile: r.Profile, Launcher: launcher, World: r.World, Directory: r.Source.Directory, Argv: argv, Environment: environment}, nil
 }
 
 // Process owns a single node's process group. Consume Stdout concurrently with

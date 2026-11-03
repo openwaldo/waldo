@@ -126,7 +126,8 @@ func TestRefusalsAndCommandRoles(t *testing.T) {
 		}
 	}
 	r.Profile = "distributed"
-	if _, err := Prepare(r); err == nil || !strings.Contains(err.Error(), "not implemented") {
+	r.World = World{Nodes: 2, ProcessesPerNode: 2, WorldSize: 3}
+	if _, err := Prepare(r); err == nil {
 		t.Fatal(err)
 	}
 	r.Profile = "single-process"
@@ -295,5 +296,57 @@ func TestCUBLASDeterminismEvidence(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("determinism environment omitted from recorded allowlist")
+	}
+}
+
+func TestDistributedCommands(t *testing.T) {
+	for _, module := range []bool{true, false} {
+		for _, nodes := range []int{1, 2} {
+			r := fixture(t, "")
+			r.Command, r.Profile = "train", "distributed"
+			r.World = World{Nodes: nodes, NodeRank: nodes - 1, ProcessesPerNode: 2, WorldSize: 2 * nodes}
+			if nodes > 1 {
+				r.World.MasterAddress = "192.0.2.1"
+				r.World.MasterPort = 29500
+			}
+			r.NCCLInterface, r.NCCLHCA = "eth0", "mlx5_0"
+			t.Setenv("NCCL_DEBUG", "must-not-leak")
+			t.Setenv("RANK", "99")
+			if !module {
+				r.Source.Manifest.Entrypoint = application.Entrypoint{Script: "app.py"}
+			}
+			e, err := Prepare(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []string{filepath.Join(r.Environment.Run.CachePath, "bin", "python"), "-E", "-s", "-m", "torch.distributed.run", "--max-restarts=0", "--nproc-per-node=2"}
+			if nodes == 1 {
+				want = append(want, "--standalone")
+			} else {
+				want = append(want, "--nnodes=2", "--node-rank=1", "--master-addr=192.0.2.1", "--master-port=29500")
+			}
+			if module {
+				want = append(want, "-m", "app")
+			} else {
+				want = append(want, "app.py")
+			}
+			want = append(want, "train")
+			if !reflect.DeepEqual(e.Argv, want) || e.Launcher != "torchrun" {
+				t.Fatalf("%+v", e)
+			}
+			env := strings.Join(e.Environment, "\n")
+			if !strings.Contains(env, "NCCL_SOCKET_IFNAME=eth0") || !strings.Contains(env, "NCCL_IB_HCA=mlx5_0") || strings.Contains(env, "must-not-leak") || strings.Contains(env, "RANK=99") {
+				t.Fatal(env)
+			}
+			r.Command = "probe"
+			probe, err := Prepare(r)
+			if err != nil || probe.Launcher != "python" {
+				t.Fatalf("%+v %v", probe, err)
+			}
+			r.Source.Manifest.LaunchProfiles = []string{"single-process"}
+			if _, err = Prepare(r); err == nil {
+				t.Fatal("accepted undeclared distributed profile")
+			}
+		}
 	}
 }

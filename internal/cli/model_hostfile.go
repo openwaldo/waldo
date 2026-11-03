@@ -671,9 +671,13 @@ func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWor
 		host: host, rank: rank, stdin: stdin, command: command,
 		ready: make(chan hostfileStageReady, 1), done: make(chan struct{}),
 	}
-	go session.copyWorkerStdout(worker, stdout)
-	go session.copyWorkerOutput(host, stderr)
+	var readers sync.WaitGroup
+	readers.Add(2)
+	go func() { defer readers.Done(); session.copyWorkerStdout(worker, stdout); close(worker.ready) }()
+	go func() { defer readers.Done(); session.copyWorkerOutput(host, stderr) }()
 	go func() {
+		// StdoutPipe and StderrPipe must be drained before Wait closes them.
+		readers.Wait()
 		worker.err = command.Wait()
 		close(worker.done)
 		if worker.err != nil && session.ctx.Err() == nil {
@@ -732,12 +736,20 @@ func (session *hostfileSession) copyWorkerOutput(host string, source io.Reader) 
 }
 
 func (session *hostfileSession) copyWorkerStdout(worker *hostfileWorker, source io.Reader) {
+	ctx := session.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	scanner := bufio.NewScanner(source)
 	for scanner.Scan() {
 		line := scanner.Text()
 		var ready hostfileStageReady
 		if json.Unmarshal([]byte(line), &ready) == nil && ready.Kind == hostfileStageReadyKind {
-			worker.ready <- ready
+			select {
+			case worker.ready <- ready:
+			case <-ctx.Done():
+				return
+			}
 			continue
 		}
 		session.writeWorkerLine(worker.host, line)
@@ -790,20 +802,18 @@ func (session *hostfileSession) publish(plan model.MultiNodePlan) error {
 	for _, worker := range session.workers {
 		timer := time.NewTimer(hostfileStageReadyTimeout)
 		select {
-		case ready := <-worker.ready:
+		case ready, ok := <-worker.ready:
 			if !timer.Stop() {
 				<-timer.C
+			}
+			if !ok {
+				_ = rendezvousListener.Close()
+				return fmt.Errorf("host %s closed output before acknowledging stage %d/%d", worker.host, plan.StageOrdinal, plan.StageCount)
 			}
 			if ready.Schema != 1 || ready.RunID != plan.RunID || ready.Stage != plan.Stage || ready.StageOrdinal != plan.StageOrdinal || ready.StageCount != plan.StageCount {
 				_ = rendezvousListener.Close()
 				return fmt.Errorf("host %s acknowledged unexpected stage plan: schema %d, run %q, stage %q (%d/%d); expected schema 1, run %q, stage %q (%d/%d)", worker.host, ready.Schema, ready.RunID, ready.Stage, ready.StageOrdinal, ready.StageCount, plan.RunID, plan.Stage, plan.StageOrdinal, plan.StageCount)
 			}
-		case <-worker.done:
-			if !timer.Stop() {
-				<-timer.C
-			}
-			_ = rendezvousListener.Close()
-			return fmt.Errorf("host %s exited before acknowledging stage %d/%d: %v", worker.host, plan.StageOrdinal, plan.StageCount, worker.err)
 		case <-session.ctx.Done():
 			if !timer.Stop() {
 				<-timer.C
