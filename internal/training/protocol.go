@@ -212,9 +212,7 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 	if overflow {
 		return fmt.Errorf("prepared sequence target overflows int64")
 	}
-	var tokens []int
-	var masks []bool
-	var corpora []string
+	packer := sequencePacker{length: sequenceLength, eos: begin.Tokenizer.EOSID}
 	ordinal := int64(0)
 	cacheWriter, err := newPreparedCacheWriter(begin.PreparedCacheDirectory, begin.PreparedIdentity, begin.PreparedBOMSHA256, begin.DataNodeRank, worldSize, GPUsPerNode, globalMicroBatch, begin.PreparedCacheMaxBytes)
 	if err != nil {
@@ -263,25 +261,7 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 			default:
 			}
 		}
-		if len(record.LossMask) != len(record.Tokens)+1 {
-			return fmt.Errorf("prepared record %s loss mask does not include its EOS target", record.ID)
-		}
-		tokens = append(tokens, record.Tokens...)
-		tokens = append(tokens, begin.Tokenizer.EOSID)
-		masks = append(masks, record.LossMask...)
-		for range record.LossMask {
-			corpora = append(corpora, record.Corpus)
-		}
-		window := sequenceLength + 1
-		for len(tokens) >= window {
-			if err := emitSequence(tokens[:window], masks[1:window], corpora[1:window]); err != nil {
-				return err
-			}
-			tokens = tokens[sequenceLength:]
-			masks = masks[sequenceLength:]
-			corpora = corpora[sequenceLength:]
-		}
-		return nil
+		return packer.Add(record, emitSequence)
 	})
 	if err != nil && !errors.Is(err, errWorkerReachedTarget) {
 		return err
@@ -292,10 +272,8 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 	if errors.Is(err, errWorkerReachedTarget) {
 		return nil
 	}
-	if len(tokens) > 1 {
-		if err := emitSequence(tokens, masks[1:], corpora[1:]); err != nil && !errors.Is(err, errWorkerReachedTarget) {
-			return err
-		}
+	if err := packer.Finish(emitSequence); err != nil && !errors.Is(err, errWorkerReachedTarget) {
+		return err
 	}
 	// Epoch-derived plans round a partial final global batch up to one
 	// optimizer step. The distributed worker pads the unused slots with

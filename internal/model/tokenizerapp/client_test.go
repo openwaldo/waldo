@@ -232,3 +232,33 @@ func TestInvalidProbe(t *testing.T) {
 		})
 	}
 }
+
+func TestCodecFeedsPreparedSequenceSource(t *testing.T) {
+	code, err := os.ReadFile("testdata/tokenizer.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	c, err := Open(ctx, fixture(t, string(code)), map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	records, err := training.NewTokenizedRecordSource(fixtureRecords{{ID: "one", Corpus: "books", Text: "abcdefg"}}, c, "causal-language-modeling", training.ConversationTransform{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := training.NewPreparedSequenceSource(records, training.ExternalDataParameters{Steps: 2, GlobalBatchSequences: 1, SequenceLength: 3}, c.Spec(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []training.PreparedSequence
+	if err = source(ctx, func(s training.PreparedSequence) error { got = append(got, s); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	want := []training.PreparedSequence{{Ordinal: 1, Tokens: []int{103, 104, 105, 106}, LossMask: []bool{true, true, true}, Consumption: map[string]int64{"books": 3}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v", got)
+	}
+}
