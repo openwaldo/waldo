@@ -20,6 +20,15 @@ p.add_argument('--binary', required=True)
 p.add_argument('--work', required=True)
 p.add_argument('--application-cache', required=True)
 p.add_argument('--python', default='/usr/bin/python3')
+p.add_argument('--compose', default='examples/trainers/qwen3-hf/compose.tiny.yaml',
+               help='external compose, relative to the repository or absolute')
+p.add_argument('--trainer-environment', default='',
+               help='rewrite the trainer environment (for example cuda) in a copy of the compose')
+p.add_argument('--data', action='append', default=[], metavar='KEY=VALUE',
+               help='override a stage data key (for example steps=10) in a copy of the compose')
+p.add_argument('--records', type=int, default=20, help='fixture corpus record count')
+p.add_argument('--stop', default='checkpoint', choices=['checkpoint', 'none'],
+               help='none skips the interrupted/resumed pair and trains one run (large compose)')
 a = p.parse_args()
 work = Path(a.work).resolve()
 work.mkdir(parents=True, exist_ok=False)
@@ -40,7 +49,7 @@ def run(*args):
 
 raw = work/'input'/'raw'
 raw.mkdir(parents=True)
-rows = ''.join(json.dumps({'text': (f'Book {i}. The quick brown fox reads a book about science and history. '*30)})+'\n' for i in range(20)).encode()
+rows = ''.join(json.dumps({'text': (f'Book {i}. The quick brown fox reads a book about science and history. '*30)})+'\n' for i in range(a.records)).encode()
 (raw/'records.jsonl').write_bytes(rows)
 sha = hashlib.sha256(rows).hexdigest()
 tree = hashlib.sha256(f'{sha}\t{len(rows)}\trecords.jsonl\n'.encode()).hexdigest()
@@ -74,8 +83,45 @@ subprocess.run(['git','-C',str(work/'index'),'push','-u','origin','HEAD'],
 provider = {'kind':'waldo-disclosure-provider','schema':1,'provider':{'name':'CLI smoke','address':'Test fixture','contact':'test@example.invalid'},'code_of_practice_status':'not-assessed','copyright_policy_url':'https://example.invalid/copyright'}
 (work/'provider.json').write_text(json.dumps(provider))
 run('config','set','disclosure.provider',str(work/'provider.json'))
-compose = str(repo/'examples/trainers/qwen3-hf/compose.tiny.yaml')
-print('Training uninterrupted CPU control',flush=True)
+compose = str((repo/a.compose).resolve())
+if a.trainer_environment:
+    text = Path(compose).read_text()
+    assert text.count('  environment: cpu\n') == 1 or text.count('  environment: cuda\n') == 1
+    text = text.replace('  environment: cpu\n', f'  environment: {a.trainer_environment}\n', 1).replace('  environment: cuda\n', f'  environment: {a.trainer_environment}\n', 1)
+    compose = str(work/'compose.yaml')
+    Path(compose).write_text(text)
+if a.data:
+    import re
+    text = Path(compose).read_text()
+    for item in a.data:
+        key, value = item.split('=', 1)
+        text, n = re.subn(rf'(?m)^(      {re.escape(key)}: ).*$', rf'\g<1>{value}', text)
+        assert n == 1, key
+    compose = str(work/'compose.yaml')
+    Path(compose).write_text(text)
+if a.stop == 'none':
+    # Single budget-capped run: record wall time and peak GPU memory.
+    import threading, time
+    peak = [0]; done = threading.Event()
+    def sample():
+        while not done.is_set():
+            # GB10 has unified memory and nvidia-smi reports N/A, so sample host memory in use.
+            info = {l.split(':')[0]: int(l.split()[1]) for l in open('/proc/meminfo')}
+            peak[0] = max(peak[0], (info['MemTotal'] - info['MemAvailable']) // 1024)
+            done.wait(1)
+    threading.Thread(target=sample, daemon=True).start()
+    info0 = {l.split(':')[0]: int(l.split()[1]) for l in open('/proc/meminfo')}
+    base = [(info0['MemTotal'] - info0['MemAvailable']) // 1024]
+    started = time.monotonic()
+    run('--json','model','train','single',compose)
+    elapsed = time.monotonic() - started
+    done.set()
+    record = json.loads((work/'models/single/runs/pretrain/RUN.json').read_text())
+    assert record['state'] == 'complete'
+    print(json.dumps({'wall_seconds': round(elapsed, 1), 'peak_host_memory_in_use_mib_sampled': peak[0], 'baseline_host_memory_in_use_mib': base[0], 'complete': record['complete']}), flush=True)
+    print('PASS: single budget-capped run', flush=True)
+    raise SystemExit(0)
+print('Training uninterrupted control',flush=True)
 run('--json','model','train','control',compose)
 print('Interrupting CPU run after first durable checkpoint',flush=True)
 process = subprocess.Popen([binary,'--json','model','train','resumed',compose],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
@@ -120,7 +166,7 @@ for r in bom['runs']:
     for artifact in [r['bom'],*r['artifacts']]:
         data=(export/artifact['path']).read_bytes()
         assert len(data)==artifact['bytes'] and hashlib.sha256(data).hexdigest()==artifact['sha256']
-print('PASS: CPU CLI train, checkpoint interruption, same-run resume, byte-identical weights, completed no-op, and export',flush=True)
+print('PASS: CLI train, checkpoint interruption, same-run resume, byte-identical weights, completed no-op, and export',flush=True)
 # Exercise the configured signer subprocess contract without requiring external
 # credentials. These mock bundles are test evidence, NOT valid signatures.
 mockbin=work/'mockbin'
