@@ -76,7 +76,7 @@ schema: 2
 trainer:
   source: &application          # YAML anchors and aliases are expanded on load
     repository: https://github.com/kyleishie/waldo.git
-    commit: a1011336c464cc3d951f3b694cf3f96f639aee77   # full commit SHA
+    commit: 66fdb61901243ec0311930ab9bf3a12a3dd3a9bc   # full commit SHA
     path: examples/trainers/qwen3-hf                   # contains waldo-trainer.yaml
   environment: cpu              # a named environment from the manifest
   determinism: required

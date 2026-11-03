@@ -933,8 +933,11 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 		return fmt.Errorf("--plan-wait %q must be a positive duration such as 30m", planWaitValue)
 	}
 	var capabilities training.TorchTitanHost
+	var externalEvidence *externalHostPreflight
 	if raw := stringOption(commandContext, "external-compose-json"); raw != "" {
-		capabilities, err = externalHostCapabilities(commandContext.Execution, raw, stringOption(commandContext, "application-python"))
+		result, probeErr := externalNodePreflight(commandContext.Execution, raw, stringOption(commandContext, "application-python"), stringOption(commandContext, "scratch"), cluster)
+		capabilities, err = result.TorchTitanHost, probeErr
+		externalEvidence = &result
 	} else {
 		capabilities, err = training.InspectTorchTitanHost(commandContext.Execution)
 	}
@@ -947,6 +950,9 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 	if boolOption(commandContext, "check") {
 		if err := checkTrainingRendezvous(commandContext.Execution, cluster.Rendezvous); err != nil {
 			return fmt.Errorf("secondary training preflight: %w", err)
+		}
+		if externalEvidence != nil {
+			return writeJSON(stdout, externalEvidence)
 		}
 		return writeJSON(stdout, capabilities)
 	}

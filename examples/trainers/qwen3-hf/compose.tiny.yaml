@@ -3,7 +3,7 @@ schema: 2
 trainer:
   source: &application
     repository: https://github.com/kyleishie/waldo.git
-    commit: a1011336c464cc3d951f3b694cf3f96f639aee77
+    commit: 66fdb61901243ec0311930ab9bf3a12a3dd3a9bc
     path: examples/trainers/qwen3-hf
   environment: cpu
   determinism: required

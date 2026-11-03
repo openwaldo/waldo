@@ -7,9 +7,10 @@ IDs, loss masks, evaluation records and exact optimizer-step budgets.
 
 `waldo model train <name> compose.tiny.yaml` executes this example (see
 `docs/TESTING.md`, "External trainer end-to-end"); `compose.yaml` selects
-the `cuda` environment and the ~281M model. `distributed` is an interface declaration
-only: this implementation explicitly rejects multi-process/multi-device
-training. Restrict CUDA visibility to one device on multi-GPU hosts.
+the `cuda` environment and the ~281M model. The `distributed` profile uses DDP
+and Unix sockets for node-local stream fanout. Select it with
+`--launch-profile distributed --processes-per-node 2`, or a hostfile. Restrict
+CUDA visibility to one device when using the single-process profile.
 
 ## Recipe and execution
 
@@ -60,7 +61,9 @@ spellings or receives inserted BOS/EOS tokens.
 All manifests require Python **3.12.3**. The host interpreter needs pip and venv
 for WALDO's managed environment creation. The `cpu` lock includes cross-platform
 wheel alternatives; the CPU qualification below was run on Linux aarch64.
-`cuda` pins Linux aarch64 CUDA 13.0 wheels for the GB10. `tokenizer` contains the
+`cuda` pins Linux aarch64 CUDA 13.0 wheels for the GB10; `cuda-amd64` pins
+x86_64 CUDA 13.0 wheels. Both are also available to the tokenizer when sharing
+the trainer environment is useful. `tokenizer` contains the
 codec without PyTorch. WALDO installs hash-verified wheels and revalidates the
 read-only environment inventory. The locks are authoritative; `requirements.in`
 files are only regeneration inputs. The exact uv commands are in lock headers.
@@ -129,3 +132,15 @@ loss 9.024673461914062. These are FP32 fixture checks, not model-quality,
 cross-device byte equality, other-precision or distributed qualifications.
 Torch 2.9 emits a compute-capability range warning for GB10 (12.1); the actual
 CUDA runs above completed successfully.
+
+
+## Two-GPU qualification
+
+The CLI lifecycle was exercised on two RTX 4060 Ti 16 GB GPUs on Linux x86_64,
+with Python 3.12.3 and the `cuda-amd64` lock: uninterrupted training, interruption
+after a verified checkpoint, same-run resume, byte-identical published weights,
+completed no-ops, and verified export passed. Reproduce it with the opt-in
+`testing/e2e/model-external-distributed.sh` described in `docs/TESTING.md`.
+This does not claim cross-world-size determinism or physical multi-node
+qualification. Hostfile preflight retains the native requirement for matching
+runtime and accelerator topology on every node.

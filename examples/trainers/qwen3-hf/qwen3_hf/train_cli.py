@@ -343,9 +343,9 @@ class Events(TrainerCallback):
 
 def train(begin):
     world = begin["world"]["world_size"]
-    if world == 1 and torch.cuda.device_count() > 1:
+    if "RANK" not in os.environ and world == 1 and torch.cuda.device_count() > 1:
         raise ValueError("single-process requires one visible CUDA device")
-    if world > 1:
+    if "RANK" in os.environ:
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
         torch.distributed.init_process_group("nccl")
         if torch.distributed.get_world_size() != world:

@@ -21,6 +21,8 @@ import (
 	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/model/applaunch"
+	"github.com/openwaldo/waldo/internal/model/application"
+	"github.com/openwaldo/waldo/internal/model/pythonenv"
 	"github.com/openwaldo/waldo/internal/training"
 )
 
@@ -72,8 +74,10 @@ func runExternalComposeTrainingCluster(command Context, name string, c model.Ext
 	world := applaunch.World{Nodes: 1, ProcessesPerNode: processes, WorldSize: processes}
 	var publish func(model.ExternalNodePlan) error
 	var hosts []string
+	var nodeLaunches map[string][]applaunch.Evidence
 	if session != nil {
 		hosts = append([]string(nil), session.hostfile.Hosts...)
+		nodeLaunches = session.externalLaunches
 		profile = "distributed"
 		world.Nodes = cluster.Nodes
 		world.WorldSize = cluster.WorldSize
@@ -111,7 +115,7 @@ func runExternalComposeTrainingCluster(command Context, name string, c model.Ext
 			world = launch.World
 		}
 	}
-	result, err := builder.ComposeExternal(command.Execution, name, c, model.ExternalOptions{Hosts: hosts, Publish: publish, Profile: profile, World: world, NCCLInterface: configuration.Model.NCCLInterface, NCCLHCA: configuration.Model.NCCLHCA, Cache: applicationCache, Python: os.Getenv("WALDO_APPLICATION_PYTHON"), Prepare: func(ctx context.Context, s model.ExternalStage) (corpus.BOM, []training.Input, error) {
+	result, err := builder.ComposeExternal(command.Execution, name, c, model.ExternalOptions{NodeLaunches: nodeLaunches, Hosts: hosts, Publish: publish, Profile: profile, World: world, NCCLInterface: configuration.Model.NCCLInterface, NCCLHCA: configuration.Model.NCCLHCA, Cache: applicationCache, Python: os.Getenv("WALDO_APPLICATION_PYTHON"), Prepare: func(ctx context.Context, s model.ExternalStage) (corpus.BOM, []training.Input, error) {
 		stage := s.DataStage()
 		planned, err := planModelStage(command, stage, targets[s.Name], cache, stderr)
 		if err != nil {
@@ -202,35 +206,91 @@ func runExternalModelExport(command Context, root string, parsed modelExportOpti
 
 // externalHostCapabilities verifies application pins before probing the shared
 // NCCL/interface/memlock host contract in the managed trainer environment.
-func externalHostCapabilities(ctx context.Context, raw string, bootstrap ...string) (training.TorchTitanHost, error) {
-	var c model.ExternalCompose
-	if err := json.Unmarshal([]byte(raw), &c); err != nil {
-		return training.TorchTitanHost{}, err
+type externalHostSetup struct {
+	compose     model.ExternalCompose
+	source      application.ResolvedSource
+	environment pythonenv.Result
+	host        training.TorchTitanHost
+}
+
+type externalHostPreflight struct {
+	training.TorchTitanHost
+	Launches map[string]applaunch.Evidence `json:"external_launches,omitempty"`
+}
+
+func prepareExternalHost(ctx context.Context, raw, bootstrap string) (externalHostSetup, error) {
+	var result externalHostSetup
+	if err := json.Unmarshal([]byte(raw), &result.compose); err != nil {
+		return result, err
 	}
 	cache := os.Getenv("WALDO_APPLICATION_CACHE")
 	if cache == "" {
-		root, err := os.UserCacheDir()
+		root, err := configuredModelRoot()
 		if err != nil {
-			return training.TorchTitanHost{}, err
+			return result, err
 		}
-		cache = filepath.Join(root, "waldo", "applications")
+		cache = filepath.Join(root, ".applications")
 	}
-	python := os.Getenv("WALDO_APPLICATION_PYTHON")
-	if len(bootstrap) > 0 && bootstrap[0] != "" {
+	if bootstrap == "" {
+		bootstrap = os.Getenv("WALDO_APPLICATION_PYTHON")
+	}
+	if bootstrap == "" {
+		bootstrap = "python3"
+	}
+	sources, err := result.compose.ResolveSources(ctx, filepath.Join(cache, "sources"))
+	if err != nil {
+		return result, err
+	}
+	result.source = sources.Trainer
+	result.environment, err = sources.Trainer.EnsureEnvironment(ctx, result.compose.Trainer.Environment, bootstrap, filepath.Join(cache, "environments"))
+	if err != nil {
+		return result, err
+	}
+	result.host, err = training.InspectExternalDistributedHost(ctx, filepath.Join(result.environment.Run.CachePath, "bin", "python"))
+	return result, err
+}
+
+func externalHostCapabilities(ctx context.Context, raw string, bootstrap ...string) (training.TorchTitanHost, error) {
+	python := ""
+	if len(bootstrap) > 0 {
 		python = bootstrap[0]
 	}
-	if python == "" {
-		python = "python3"
-	}
-	sources, err := c.ResolveSources(ctx, filepath.Join(cache, "sources"))
+	setup, err := prepareExternalHost(ctx, raw, python)
+	return setup.host, err
+}
+
+func externalNodePreflight(ctx context.Context, raw, python, scratch string, cluster training.Cluster) (externalHostPreflight, error) {
+	var result externalHostPreflight
+	setup, err := prepareExternalHost(ctx, raw, python)
 	if err != nil {
-		return training.TorchTitanHost{}, err
+		return result, err
 	}
-	environment, err := sources.Trainer.EnsureEnvironment(ctx, c.Trainer.Environment, python, filepath.Join(cache, "environments"))
+	result.TorchTitanHost = setup.host
+	result.Launches = map[string]applaunch.Evidence{}
+	host, port, err := net.SplitHostPort(cluster.Rendezvous)
 	if err != nil {
-		return training.TorchTitanHost{}, err
+		return result, err
 	}
-	return training.InspectExternalDistributedHost(ctx, filepath.Join(environment.Run.CachePath, "bin", "python"))
+	number, err := strconv.Atoi(port)
+	if err != nil {
+		return result, err
+	}
+	world := applaunch.World{Nodes: cluster.Nodes, NodeRank: cluster.NodeRank, ProcessesPerNode: len(setup.host.Accelerators), WorldSize: cluster.Nodes * len(setup.host.Accelerators), MasterAddress: host, MasterPort: number}
+	if !filepath.IsAbs(scratch) {
+		return result, fmt.Errorf("external preflight requires absolute coordinator scratch")
+	}
+	for _, stage := range setup.compose.Stages {
+		stageScratch := filepath.Join(scratch, stage.Name)
+		if err = os.MkdirAll(stageScratch, 0700); err != nil {
+			return result, err
+		}
+		evidence, err := applaunch.Prepare(applaunch.Request{Source: setup.source, Environment: setup.environment, Scratch: stageScratch, Command: "train", Profile: "distributed", World: world, NCCLInterface: cluster.Interface, NCCLHCA: cluster.HCA})
+		if err != nil {
+			return result, err
+		}
+		result.Launches[stage.Name] = evidence
+	}
+	return result, nil
 }
 
 func runExternalSecondaryPlan(command Context, cluster training.Cluster, plan model.MultiNodePlan, cache *lookaside.Cache, scratch string, stdout, stderr io.Writer) error {
@@ -243,7 +303,11 @@ func runExternalSecondaryPlan(command Context, cluster training.Cluster, plan mo
 	}
 	applicationCache := os.Getenv("WALDO_APPLICATION_CACHE")
 	if applicationCache == "" {
-		applicationCache = filepath.Join(cache.Root(), "external-applications")
+		root, err := configuredModelRoot()
+		if err != nil {
+			return err
+		}
+		applicationCache = filepath.Join(root, ".applications")
 	}
 	options := model.ExternalOptions{PreparedCacheMaxBytes: cache.MaxBytes(), Cache: applicationCache, Python: p.Python, World: world, NCCLInterface: cluster.Interface, NCCLHCA: cluster.HCA, Prepare: model.ExternalCorpusProvider(p.BOM.CorpusBOM, verifiedTrainingInputs(materialized, p.BOM.CorpusBOM))}
 	return model.RunExternalSecondary(command.Execution, p, options, scratch, func() error {

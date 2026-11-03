@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openwaldo/waldo/internal/model/applaunch"
 	"github.com/openwaldo/waldo/internal/model/application"
 	"github.com/openwaldo/waldo/internal/training"
 )
@@ -325,5 +326,28 @@ func TestCheckpointSchemaFixture(t *testing.T) {
 		if e = strict(incomplete, &m); e == nil {
 			t.Fatalf("accepted missing %s", field)
 		}
+	}
+}
+
+func TestDistributedCheckpointPinsIgnoreOnlyNodeLocalFacts(t *testing.T) {
+	b := Begin{World: applaunch.World{Nodes: 2, ProcessesPerNode: 1, WorldSize: 2}, Initialization: &training.WorkerInitialization{Path: "/primary/weights", Artifact: training.Artifact{SHA256: strings.Repeat("a", 64)}}}
+	original := beginDigest(b)
+	b.World.NodeRank = 1
+	b.Initialization.Path = "/secondary/weights"
+	if beginDigest(b) != original {
+		t.Fatal("node-local facts changed distributed checkpoint pins")
+	}
+	b.Initialization.Artifact.SHA256 = strings.Repeat("b", 64)
+	if beginDigest(b) == original {
+		t.Fatal("initialization identity omitted")
+	}
+	b.World = applaunch.World{Nodes: 1, ProcessesPerNode: 1, WorldSize: 1}
+	original = beginDigest(b)
+	b.Initialization.Path = "/changed"
+	if beginDigest(b) == original {
+		t.Fatal("changed existing single-process hash contract")
+	}
+	if sameCheckpointWorld(applaunch.World{Nodes: 2, ProcessesPerNode: 1, WorldSize: 2}, applaunch.World{Nodes: 1, ProcessesPerNode: 2, WorldSize: 2}) {
+		t.Fatal("accepted changed topology")
 	}
 }

@@ -155,7 +155,7 @@ func TestExternalIdentitySensitivity(t *testing.T) {
 	}
 }
 func TestExternalRunRejectsIdentityChanges(t *testing.T) {
-	for _, mode := range []string{"recipe", "parameters-hash", "execution", "batch", "corpus", "probe", "identity"} {
+	for _, mode := range []string{"recipe", "parameters-hash", "execution", "batch", "corpus", "probe", "identity", "data-plane"} {
 		t.Run(mode, func(t *testing.T) {
 			p, schemas, r := externalBOMFixture(t)
 			dir := filepath.Join(t.TempDir(), "model")
@@ -163,6 +163,8 @@ func TestExternalRunRejectsIdentityChanges(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch mode {
+			case "data-plane":
+				r.DataPlane = "rank-zero-broadcast"
 			case "recipe":
 				r.Resolved.Parameters["rate"] = 0.2
 			case "parameters-hash":

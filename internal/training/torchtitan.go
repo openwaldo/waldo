@@ -628,17 +628,17 @@ func CheckSecondaryTorchTitan(ctx context.Context, cluster Cluster) error {
 // InspectTorchTitanHost probes the runtime and every visible accelerator on a
 // prospective TorchTitan node without resolving a model architecture.
 func InspectTorchTitanHost(ctx context.Context) (TorchTitanHost, error) {
-	return inspectDistributedHost(ctx, pythonCandidates(), probeTorchTitan)
+	return inspectDistributedHost(ctx, pythonCandidates(), probeTorchTitan, false)
 }
 
 // InspectExternalDistributedHost shares cluster and accelerator preflight with the native path.
 func InspectExternalDistributedHost(ctx context.Context, python string) (TorchTitanHost, error) {
 	return inspectDistributedHost(ctx, []string{python}, func(ctx context.Context, python string) (torchTitanProbe, error) {
 		return probeDistributedRuntime(ctx, python, true)
-	})
+	}, true)
 }
 
-func inspectDistributedHost(ctx context.Context, candidates []string, probe func(context.Context, string) (torchTitanProbe, error)) (TorchTitanHost, error) {
+func inspectDistributedHost(ctx context.Context, candidates []string, probe func(context.Context, string) (torchTitanProbe, error), external bool) (TorchTitanHost, error) {
 	if runtime.GOOS != "linux" {
 		return TorchTitanHost{}, fmt.Errorf("TorchTitan training requires Linux; this host is %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
@@ -647,6 +647,9 @@ func inspectDistributedHost(ctx context.Context, candidates []string, probe func
 		detail := strings.Join(failures, "; ")
 		if detail != "" {
 			detail = ": " + detail
+		}
+		if external {
+			return TorchTitanHost{}, fmt.Errorf("no usable external distributed runtime found%s; verify the selected trainer environment and CUDA visibility", detail)
 		}
 		return TorchTitanHost{}, fmt.Errorf("no usable TorchTitan runtime found%s\n%s", detail, torchTitanInstallGuidance())
 	}

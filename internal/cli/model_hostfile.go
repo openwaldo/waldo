@@ -27,6 +27,7 @@ import (
 	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/model/applaunch"
 	"github.com/openwaldo/waldo/internal/training"
 	"golang.org/x/term"
 )
@@ -325,6 +326,7 @@ type hostfileStageReady struct {
 }
 
 type hostfileSession struct {
+	externalLaunches     map[string][]applaunch.Evidence
 	externalCompose      string
 	ctx                  context.Context
 	cancel               context.CancelFunc
@@ -385,6 +387,7 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 	var local training.TorchTitanHost
 	if len(external) > 0 && external[0] != "" {
 		session.externalCompose = external[0]
+		session.externalLaunches = map[string][]applaunch.Evidence{}
 		local, err = externalHostCapabilities(sessionContext, external[0])
 	} else {
 		local, err = inspectHostfileTorchTitan(sessionContext)
@@ -421,6 +424,9 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 		}
 		if err := compareTorchTitanHosts(local, remote); err != nil {
 			session.abort()
+			if session.externalCompose != "" {
+				return nil, fmt.Errorf("host %s external trainer preflight: %w; every node must have matching runtime and accelerator topology", host, err)
+			}
 			return nil, torchTitanHostMismatchError(host, err)
 		}
 		if err := training.ValidateTorchTitanHostConfiguration(remote, cluster); err != nil {
@@ -621,11 +627,27 @@ func (session *hostfileSession) probeHost(host string, rank int) (training.Torch
 	if err := command.Run(); err != nil {
 		return training.TorchTitanHost{}, fmt.Errorf("host %s is not ready for TorchTitan%s\ncorrect the reported condition on host %s, then retry the training command: %w", host, commandOutput(stderr.String()), host, err)
 	}
-	var capabilities training.TorchTitanHost
-	if err := json.Unmarshal([]byte(stdout.String()), &capabilities); err != nil {
+	var result externalHostPreflight
+	if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
 		return training.TorchTitanHost{}, fmt.Errorf("decode TorchTitan preflight from %s: %w%s", host, err, commandOutput(stdout.String()))
 	}
-	return capabilities, nil
+	if session.externalCompose != "" {
+		var compose model.ExternalCompose
+		if err := json.Unmarshal([]byte(session.externalCompose), &compose); err != nil {
+			return training.TorchTitanHost{}, err
+		}
+		if len(result.Launches) != len(compose.Stages) {
+			return training.TorchTitanHost{}, fmt.Errorf("host %s omitted external launch evidence", host)
+		}
+		for _, stage := range compose.Stages {
+			evidence, ok := result.Launches[stage.Name]
+			if !ok || evidence.Profile != "distributed" || evidence.Launcher != "torchrun" || evidence.World.NodeRank != rank || evidence.World.Nodes != session.cluster.Nodes {
+				return training.TorchTitanHost{}, fmt.Errorf("host %s returned inconsistent external launch evidence for %s", host, stage.Name)
+			}
+			session.externalLaunches[stage.Name] = append(session.externalLaunches[stage.Name], evidence)
+		}
+	}
+	return result.TorchTitanHost, nil
 }
 
 func torchTitanHostSummary(host training.TorchTitanHost) string {
@@ -641,6 +663,9 @@ func torchTitanHostSummary(host training.TorchTitanHost) string {
 		interconnect = "one local GPU"
 	case "":
 		interconnect = "unknown local interconnect"
+	}
+	if host.TorchTitanVersion == "external" {
+		return fmt.Sprintf("%d GPUs (%s), Python %s, PyTorch %s (external trainer)", len(host.Accelerators), interconnect, host.PythonVersion, host.TorchVersion)
 	}
 	return fmt.Sprintf("%d GPUs (%s), Python %s, PyTorch %s, TorchTitan %s", len(host.Accelerators), interconnect, host.PythonVersion, host.TorchVersion, host.TorchTitanVersion)
 }
@@ -674,10 +699,13 @@ func (session *hostfileSession) workerArguments(rank int, check bool) []string {
 		}
 		arguments = append(arguments, "--external-compose-json", session.externalCompose, "--application-python", python)
 	}
+	scratch := fmt.Sprintf("%s/runs/%s/node-%d", session.remoteRoot, session.cluster.RendezvousID, rank)
 	if check {
+		if session.externalCompose != "" {
+			arguments = append(arguments, "--scratch", scratch)
+		}
 		return append(arguments, "--check")
 	}
-	scratch := fmt.Sprintf("%s/runs/%s/node-%d", session.remoteRoot, session.cluster.RendezvousID, rank)
 	arguments = append(arguments,
 		"--plan-stdin", "--scratch", scratch,
 		"--cache-root", session.cacheRoot,

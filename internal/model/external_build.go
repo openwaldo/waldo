@@ -20,6 +20,7 @@ import (
 // ExternalOptions contains machine-local policy and resolved corpus inputs.
 // Applications receive only prepared tokens, never these input paths.
 type ExternalOptions struct {
+	NodeLaunches          map[string][]applaunch.Evidence
 	PreparedCacheMaxBytes int64
 	Hosts                 []string
 	Publish               func(ExternalNodePlan) error
@@ -33,11 +34,12 @@ type ExternalOptions struct {
 }
 
 type ExternalAttempt struct {
-	Started  string             `json:"started"`
-	Finished string             `json:"finished,omitempty"`
-	Error    string             `json:"error,omitempty"`
-	Launch   applaunch.Evidence `json:"launch"`
-	Probe    trainerapp.Probe   `json:"probe"`
+	NodeLaunches []applaunch.Evidence `json:"node_launches,omitempty"`
+	Started      string               `json:"started"`
+	Finished     string               `json:"finished,omitempty"`
+	Error        string               `json:"error,omitempty"`
+	Launch       applaunch.Evidence   `json:"launch"`
+	Probe        trainerapp.Probe     `json:"probe"`
 }
 
 type ExternalRunRecord struct {
@@ -327,6 +329,18 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 	if err != nil {
 		return zero, err
 	}
+	if o.Profile == "distributed" {
+		host, err := training.InspectExternalDistributedHost(ctx, filepath.Join(trainerEnv.Run.CachePath, "bin", "python"))
+		if err != nil {
+			return zero, err
+		}
+		if o.World.ProcessesPerNode > len(host.Accelerators) {
+			return zero, fmt.Errorf("distributed process count exceeds visible GPUs")
+		}
+		if err = training.ValidateTorchTitanHostConfiguration(host, training.Cluster{Nodes: o.World.Nodes, Interface: o.NCCLInterface, HCA: o.NCCLHCA}); err != nil {
+			return zero, err
+		}
+	}
 	tokenEnv, err := sources.Tokenizer.EnsureEnvironment(ctx, c.Tokenizer.Environment, o.Python, filepath.Join(cache, "environments"))
 	if err != nil {
 		return zero, err
@@ -464,7 +478,7 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 		if err != nil {
 			return zero, err
 		}
-		bom := ExternalRunBOM{Hosts: o.Hosts, DataPlane: training.DataPlaneNodeLocal, Initialization: initialization, Kind: "openwaldo-bom", Schema: 2, Subject: "training-run", ID: s.Name, ModelID: id, Stage: s.Name, Identity: plan.Identity, CorpusBOM: p.bom, Resolved: p.resolved, EvaluationSet: p.partition.Evaluation, TrainerHost: trainerEnv.Run, TokenizerHost: tokenEnv.Run, Probe: current.Probe(), Launches: append(current.Evidence(), evidence, tokenEvidence)}
+		bom := ExternalRunBOM{Hosts: o.Hosts, DataPlane: training.DataPlaneNodeLocal, Initialization: initialization, Kind: "openwaldo-bom", Schema: 2, Subject: "training-run", ID: s.Name, ModelID: id, Stage: s.Name, Identity: plan.Identity, CorpusBOM: p.bom, Resolved: p.resolved, EvaluationSet: p.partition.Evaluation, TrainerHost: trainerEnv.Run, TokenizerHost: tokenEnv.Run, Probe: current.Probe(), Launches: append(append(current.Evidence(), evidence, tokenEvidence), o.NodeLaunches[s.Name]...)}
 		record := ExternalRunRecord{Kind: "waldo-model-run", Schema: 2, ID: s.Name, ModelID: id, Stage: s.Name, State: RunPlanned, Initialization: initialization}
 		recordPath := filepath.Join(runDir, "RUN.json")
 		if err = readJSON(recordPath, &record); err == nil {
@@ -538,7 +552,7 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 				return zero, err
 			}
 			started := b.clock()()
-			record.Attempts = append(record.Attempts, ExternalAttempt{Started: formatTime(started), Launch: evidence, Probe: current.Probe()})
+			record.Attempts = append(record.Attempts, ExternalAttempt{NodeLaunches: o.NodeLaunches[s.Name], Started: formatTime(started), Launch: evidence, Probe: current.Probe()})
 			if err = writeJSONAtomic(recordPath, record); err != nil {
 				return zero, err
 			}
