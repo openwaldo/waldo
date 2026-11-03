@@ -142,3 +142,73 @@ func NewPreparedSequenceSource(records RecordSource, data ExternalDataParameters
 		return nil
 	}, nil
 }
+
+// CachedPreparedSequenceSource shares the native compact, hash-verified cache.
+// A fresh attempt writes the whole stream as it is consumed. Prefix replay is
+// retained when an interrupted producer never completed the cache.
+func CachedPreparedSequenceSource(records RecordSource, data ExternalDataParameters, tokenizer TokenizerSpec, resumeStep int64, directory, identity, bomSHA256 string, maxBytes int64) (func(context.Context, func(PreparedSequence) error) error, error) {
+	suffix, err := NewPreparedSequenceSource(records, data, tokenizer, resumeStep)
+	if err != nil {
+		return nil, err
+	}
+	if directory == "" || identity == "" {
+		return suffix, nil
+	}
+	full, err := NewPreparedSequenceSource(records, data, tokenizer, 0)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, consume func(PreparedSequence) error) error {
+		if consume == nil {
+			return fmt.Errorf("prepared sequence consumer is required")
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if resumeStep == data.Steps {
+			return nil
+		}
+		start := resumeStep * data.GlobalBatchSequences
+		replayed, err := replayPreparedSequences(directory, identity, bomSHA256, 0, 1, 1, data.GlobalBatchSequences, maxBytes, start, externalPreparedEncoder{ctx, consume})
+		if err != nil || replayed {
+			return err
+		}
+		writer, err := newPreparedCacheWriter(directory, identity, bomSHA256, 0, 1, 1, data.GlobalBatchSequences, maxBytes)
+		if err != nil {
+			return err
+		}
+		defer writer.Abort()
+		err = full(ctx, func(s PreparedSequence) error {
+			if err := writer.Append(s); err != nil {
+				return err
+			}
+			if s.Ordinal >= start {
+				return consume(s)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		return writer.Commit(data.Steps * data.GlobalBatchSequences)
+	}, nil
+}
+
+type externalPreparedEncoder struct {
+	ctx     context.Context
+	consume func(PreparedSequence) error
+}
+
+func (e externalPreparedEncoder) Encode(value any) error {
+	if err := e.ctx.Err(); err != nil {
+		return err
+	}
+	frame, ok := value.(WorkerInputFrame)
+	if !ok {
+		return fmt.Errorf("invalid prepared cache frame")
+	}
+	if frame.Sequence != nil {
+		return e.consume(*frame.Sequence)
+	}
+	return nil
+}

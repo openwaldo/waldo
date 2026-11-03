@@ -5,8 +5,11 @@ package training
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -166,5 +169,53 @@ func TestExternalPreparedSourceUsesPartitionedParquet(t *testing.T) {
 	}
 	if got := collect(1); !reflect.DeepEqual(got, full[1:]) {
 		t.Fatalf("resumed Parquet stream differs: %#v", got)
+	}
+}
+
+func TestExternalPreparedCacheResumeAndCorruption(t *testing.T) {
+	records := staticRecordSource{{Corpus: "books", Tokens: []int{10, 11, 12, 13, 14, 15, 16, 17}, LossMask: []bool{true, true, true, true, true, true, true, true, true}}}
+	data := ExternalDataParameters{Steps: 2, GlobalBatchSequences: 2, SequenceLength: 2}
+	spec := TokenizerSpec{VocabularySize: 30, EOSID: 2}
+	dir := t.TempDir()
+	source, err := CachedPreparedSequenceSource(records, data, spec, 0, dir, "identity", strings.Repeat("a", 64), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var full []PreparedSequence
+	if err = source(t.Context(), func(s PreparedSequence) error { full = append(full, s); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	source, err = CachedPreparedSequenceSource(refusingRecordSource{}, data, spec, 1, dir, "identity", strings.Repeat("a", 64), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var suffix []PreparedSequence
+	if err = source(t.Context(), func(s PreparedSequence) error { suffix = append(suffix, s); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(suffix, full[2:]) {
+		t.Fatalf("cached suffix differs: %#v", suffix)
+	}
+	wrong, err := CachedPreparedSequenceSource(records, data, spec, 1, dir, "identity", strings.Repeat("b", 64), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = wrong(t.Context(), func(PreparedSequence) error { return nil }); err == nil {
+		t.Fatal("cache accepted changed run BOM")
+	}
+	var manifest preparedCacheManifest
+	path := filepath.Join(dir, "identity", "node-0")
+	raw, err := os.ReadFile(filepath.Join(path, "MANIFEST.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(path, manifest.Chunks[0].Path), []byte("corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = source(t.Context(), func(PreparedSequence) error { return nil }); err == nil {
+		t.Fatal("corrupt cache accepted")
 	}
 }
