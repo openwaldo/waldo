@@ -55,6 +55,8 @@ type ExternalPlan struct {
 // ExternalRunBOM embeds the same immutable identity and separates actual
 // execution parameters, launch allowlists and host observations from it.
 type ExternalRunBOM struct {
+	Hosts          []string                       `json:"hosts,omitempty"`
+	DataPlane      string                         `json:"data_plane,omitempty"`
 	Initialization *training.WorkerInitialization `json:"initialization,omitempty"`
 	Kind           string                         `json:"kind"`
 	Schema         int                            `json:"schema"`
@@ -358,6 +360,9 @@ func WriteExternalRunBOM(directory, path string, run ExternalRunBOM) (string, er
 		return "", fmt.Errorf("run resolved values or launch evidence missing/inconsistent")
 	}
 	b := run.Resolved.Batch
+	if (run.DataPlane != "" && run.DataPlane != training.DataPlaneNodeLocal) || (b.WorldSize > 1 && run.DataPlane != training.DataPlaneNodeLocal) {
+		return "", fmt.Errorf("external distributed data plane must be node-local-cache")
+	}
 	if b.MicroBatchSequences <= 0 || b.AccumulationSteps <= 0 || b.WorldSize <= 0 || stage.Data.GlobalBatchSequences%b.WorldSize != 0 || stage.Data.GlobalBatchSequences/b.WorldSize%b.AccumulationSteps != 0 || stage.Data.GlobalBatchSequences/b.WorldSize/b.AccumulationSteps != b.MicroBatchSequences {
 		return "", fmt.Errorf("run batch topology differs from data plan")
 	}

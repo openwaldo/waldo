@@ -49,9 +49,6 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 		return err
 	}
 	backend := config.EffectiveModelBackend(configuration)
-	if backend != training.BackendAuto && backend != training.BackendTorchTitan {
-		return fmt.Errorf("--hostfile requires TorchTitan, but model.backend=%s; set model.backend=auto or torchtitan", backend)
-	}
 	var hostfile trainingHostfile
 	if path != "" {
 		hostfile, err = loadTrainingHostfile(path)
@@ -61,11 +58,35 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 	if err != nil {
 		return err
 	}
-	if complete, err := runCompletedComposeNoop(commandContext, args, stdout, stderr); err != nil {
+	externalJSON := ""
+	composePath, err := trainingComposeInput(args[1:])
+	if err != nil {
 		return err
-	} else if complete {
-		fmt.Fprintln(stderr, "multi-host            complete; no training stages required")
-		return nil
+	}
+	if composePath != "" {
+		document, _, err := model.LoadComposeDocument(composePath)
+		if err != nil {
+			return err
+		}
+		if document.External != nil {
+			raw, err := json.Marshal(document.External)
+			if err != nil {
+				return err
+			}
+			externalJSON = string(raw)
+		}
+	}
+	if externalJSON == "" {
+		if backend != training.BackendAuto && backend != training.BackendTorchTitan {
+			return fmt.Errorf("--hostfile requires TorchTitan, but model.backend=%s; set model.backend=auto or torchtitan", backend)
+		}
+
+		if complete, err := runCompletedComposeNoop(commandContext, args, stdout, stderr); err != nil {
+			return err
+		} else if complete {
+			fmt.Fprintln(stderr, "multi-host            complete; no training stages required")
+			return nil
+		}
 	}
 	if hostfile.Wrapper == "" {
 		hostfile.Wrapper, err = loadFuzzballSSHWrapper()
@@ -108,7 +129,7 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 	if err := cache.EnsureScratch(); err != nil {
 		return fmt.Errorf("prepare multi-host node-local cache: %w", err)
 	}
-	session, err := startHostfileSession(commandContext.Execution, hostfile, cluster, cache, stderr)
+	session, err := startHostfileSession(commandContext.Execution, hostfile, cluster, cache, stderr, externalJSON)
 	if err != nil {
 		return err
 	}
@@ -119,7 +140,16 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 		StageOrdinal: 1, StageCount: 1, PrepareResume: session.prepareResume, Publish: session.publish,
 		Cleanup: func() {},
 	}
-	trainErr := runModelTrainWithCluster(commandContext, args, cluster, handoff, stdout, stderr)
+	var trainErr error
+	if externalJSON != "" {
+		var c model.ExternalCompose
+		if err = json.Unmarshal([]byte(externalJSON), &c); err != nil {
+			return session.finish(err)
+		}
+		trainErr = runExternalComposeTrainingCluster(commandContext, args[0], c, cluster, session, stdout, stderr)
+	} else {
+		trainErr = runModelTrainWithCluster(commandContext, args, cluster, handoff, stdout, stderr)
+	}
 	finishErr := session.finish(trainErr)
 	if finishErr == nil && !session.workersStarted {
 		fmt.Fprintln(stderr, "multi-host            complete; no training stages required")
@@ -295,6 +325,7 @@ type hostfileStageReady struct {
 }
 
 type hostfileSession struct {
+	externalCompose      string
 	ctx                  context.Context
 	cancel               context.CancelFunc
 	hostfile             trainingHostfile
@@ -324,7 +355,7 @@ const hostfileWorkerExitGrace = 10 * time.Second
 
 var hostfileStageReadyTimeout = 24 * time.Hour
 
-func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluster training.Cluster, cache *lookaside.Cache, output io.Writer) (*hostfileSession, error) {
+func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluster training.Cluster, cache *lookaside.Cache, output io.Writer, external ...string) (*hostfileSession, error) {
 	if cache == nil {
 		return nil, fmt.Errorf("multi-host launch requires a node-local cache configuration")
 	}
@@ -351,7 +382,13 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 		cacheRetainCompleted: cache.RetainCompleted(), cacheMirrors: cache.Mirrors(),
 		output: output, outputTerminal: terminalWriter(output),
 	}
-	local, err := inspectHostfileTorchTitan(sessionContext)
+	var local training.TorchTitanHost
+	if len(external) > 0 && external[0] != "" {
+		session.externalCompose = external[0]
+		local, err = externalHostCapabilities(sessionContext, external[0])
+	} else {
+		local, err = inspectHostfileTorchTitan(sessionContext)
+	}
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("rank 0 TorchTitan preflight: %w", err)
@@ -630,6 +667,13 @@ func (session *hostfileSession) workerArguments(rank int, check bool) []string {
 		"--nccl-interface", session.cluster.Interface,
 		"--nccl-hca", session.cluster.HCA,
 	}
+	if session.externalCompose != "" {
+		python := os.Getenv("WALDO_APPLICATION_PYTHON")
+		if python == "" {
+			python = "python3"
+		}
+		arguments = append(arguments, "--external-compose-json", session.externalCompose, "--application-python", python)
+	}
 	if check {
 		return append(arguments, "--check")
 	}
@@ -784,6 +828,9 @@ func (session *hostfileSession) publish(plan model.MultiNodePlan) error {
 	session.publishMu.Lock()
 	defer session.publishMu.Unlock()
 	if err := session.startWorkers(); err != nil {
+		return err
+	}
+	if err := session.prepareExternalFiles(&plan); err != nil {
 		return err
 	}
 	if err := session.prepareInitialization(&plan); err != nil {
@@ -1038,4 +1085,65 @@ func commandOutput(value string) string {
 		return ""
 	}
 	return ": " + value
+}
+
+func (session *hostfileSession) prepareExternalFiles(plan *model.MultiNodePlan) error {
+	if plan.External == nil {
+		return nil
+	}
+	p := plan.External
+	if p.Checkpoint != nil {
+		var artifacts []training.Artifact
+		var sources, targets []string
+		targetRoot := filepath.Join(session.remoteRoot, "external-checkpoints", plan.RunID)
+		sourceRoot := p.CheckpointDirectory
+		err := filepath.WalkDir(filepath.Join(sourceRoot, filepath.Dir(p.Checkpoint.Path)), func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("checkpoint staging requires regular files")
+			}
+			relative, err := filepath.Rel(sourceRoot, path)
+			if err != nil {
+				return err
+			}
+			hash, err := fileSHA256(path)
+			if err != nil {
+				return err
+			}
+			artifacts = append(artifacts, training.Artifact{Path: relative, SHA256: hash, Bytes: info.Size()})
+			sources = append(sources, path)
+			targets = append(targets, filepath.Join(targetRoot, relative))
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		for _, host := range session.secondaryHosts() {
+			if err = session.stageResume(host, artifacts, sources, targets); err != nil {
+				return err
+			}
+		}
+		p.CheckpointDirectory = targetRoot
+	}
+	if p.Begin.Initialization != nil {
+		init := *p.Begin.Initialization
+		target := filepath.Join(session.remoteRoot, "external-initialization", plan.RunID, filepath.Base(init.Path))
+		for _, host := range session.secondaryHosts() {
+			if err := session.stageResume(host, []training.Artifact{init.Artifact}, []string{init.Path}, []string{target}); err != nil {
+				return err
+			}
+		}
+		init.Path = target
+		p.Begin.Initialization = &init
+	}
+	return nil
 }

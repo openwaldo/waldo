@@ -19,7 +19,16 @@ from transformers import enable_full_determinism, set_seed
 from transformers.trainer_callback import PrinterCallback
 from . import schemas
 from .tokenizer_cli import ASSETS
-from .wire import read, frame
+from .wire import read, frame as wire_frame
+
+LOCAL_STREAM = None
+
+def frame(kind, **fields):
+    if int(os.environ.get("RANK", "0")) == 0:
+        wire_frame(kind, **fields)
+
+def protocol_read():
+    return LOCAL_STREAM.read() if LOCAL_STREAM else read()
 
 
 def devices():
@@ -85,6 +94,8 @@ class TokenStream(torch.utils.data.IterableDataset):
         self.evaluations = []
         self.pending = None
         self.ended = False
+        self.distributed = begin["world"]["world_size"] > 1
+        self.rank = int(os.environ.get("RANK", "0"))
         self.ordinal = (begin["resume"]["step"] if begin.get("resume") else 0) * begin["data"]["global_batch_sequences"]
         while True:
             value = self.next_frame()
@@ -94,12 +105,15 @@ class TokenStream(torch.utils.data.IterableDataset):
             self.evaluations.append(value["record"])
 
     def next_frame(self):
-        value = read()
+        value = protocol_read()
         if value.get("protocol") != 1:
             raise ValueError("unsupported protocol")
         return value
 
     def __iter__(self):
+        if self.distributed:
+            yield from self.distributed_records()
+            return
         while not self.ended:
             value = self.pending or self.next_frame()
             self.pending = None
@@ -118,7 +132,42 @@ class TokenStream(torch.utils.data.IterableDataset):
                 raise ValueError("wrong packed sequence length")
             yield encoded(record)
 
+    def distributed_records(self):
+        batch = []
+        world = self.begin["world"]["world_size"]
+        micro = self.begin["batch"]["micro_batch_sequences"]
+        while not self.ended:
+            value = self.pending or self.next_frame()
+            self.pending = None
+            if value["kind"] == "end":
+                if batch or self.ordinal != self.begin["data"]["steps"] * self.begin["data"]["global_batch_sequences"]:
+                    raise ValueError("incomplete distributed stream")
+                self.ended = True
+                return
+            if value["kind"] == "micro_batch_end":
+                if value["ordinal"] != self.ordinal + micro * world or len(batch) != micro:
+                    raise ValueError("invalid global micro-batch boundary")
+                self.ordinal = value["ordinal"]
+                # Every local reader reaches the boundary before any rank enters
+                # model collectives; otherwise the leader can strand a sibling.
+                yield from batch
+                batch = []
+                continue
+            if value["kind"] != "record":
+                raise ValueError("expected distributed record or boundary")
+            record = value["record"]
+            if not self.ordinal <= record["ordinal"] < self.ordinal + micro * world:
+                raise ValueError("record outside micro-batch")
+            if record["ordinal"] % world == self.rank:
+                if record["ordinal"] != self.ordinal + len(batch)*world + self.rank:
+                    raise ValueError("invalid rank sequence ordinal")
+                batch.append(encoded(record))
+
     def finish(self):
+        if self.distributed:
+            for _ in self:
+                raise ValueError("extra records after budget")
+            return
         if self.ordinal != self.begin["data"]["steps"] * self.begin["data"]["global_batch_sequences"]:
             raise ValueError("training did not consume the exact sequence budget")
         if not self.ended:
@@ -171,13 +220,29 @@ class WaldoTrainer(Trainer):
         # Trainer supplies the number of supervised labels across ALL accumulated
         # micro-batches. labels[:, 0] is always -100, matching the causal shift.
         denominator = num_items_in_batch if num_items_in_batch is not None else labels[:, 1:].ne(-100).sum()
+        distributed = torch.distributed.is_initialized()
+        if distributed:
+            denominator = torch.as_tensor(denominator, device=outputs.logits.device).clone()
+            torch.distributed.all_reduce(denominator)
         loss = torch.nn.functional.cross_entropy(
             outputs.logits[:, :-1].float().reshape(-1, outputs.logits.shape[-1]),
             labels[:, 1:].reshape(-1), ignore_index=-100, reduction="sum",
             label_smoothing=self.args.label_smoothing_factor) / denominator
         if not torch.isfinite(loss):
             raise FloatingPointError("non-finite training loss")
-        self.step_loss += loss.detach().item()
+        if distributed:
+            observed_loss = loss.detach().clone()
+            torch.distributed.all_reduce(observed_loss)
+            self.step_loss += observed_loss.item()
+            loss = loss * torch.distributed.get_world_size()
+            all_counts = [None] * torch.distributed.get_world_size()
+            torch.distributed.all_gather_object(all_counts, counts)
+            counts = {}
+            for rank_counts in all_counts:
+                for corpus, count in rank_counts.items():
+                    counts[corpus] = counts.get(corpus, 0) + count
+        else:
+            self.step_loss += loss.detach().item()
         for corpus, count in counts.items():
             self.history["consumption"][corpus] = self.history["consumption"].get(corpus, 0) + count
         return (loss, outputs) if return_outputs else loss
@@ -188,10 +253,18 @@ class WaldoTrainer(Trainer):
                      cpu=torch.get_rng_state())
         if torch.cuda.is_available():
             state["cuda"] = torch.cuda.get_rng_state_all()
-        torch.save(state, Path(output_dir) / "rng_state.pth")
+        if torch.distributed.is_initialized():
+            states = [None] * torch.distributed.get_world_size()
+            torch.distributed.all_gather_object(states, state)
+            if torch.distributed.get_rank() == 0:
+                torch.save(states, Path(output_dir) / "rng_state.pth")
+        else:
+            torch.save(state, Path(output_dir) / "rng_state.pth")
 
     def _load_rng_state(self, checkpoint):
         state = torch.load(Path(checkpoint) / "rng_state.pth", map_location="cpu", weights_only=True)
+        if torch.distributed.is_initialized():
+            state = state[torch.distributed.get_rank()]
         random.setstate(state["python"])
         ns = state["numpy"]
         np.random.set_state((ns[0], np.array(ns[1], dtype=np.uint32), *ns[2:]))
@@ -242,13 +315,16 @@ class Events(TrainerCallback):
             self.pending_evaluation = metric
             if h["selected"] is None or metric["loss"] < h["selected"]["value"]:
                 h["selected"] = dict(step=step, tokens=tokens, metric="heldout_loss", value=metric["loss"])
-                model.save_pretrained(self.best_path, safe_serialization=True)
+                if args.process_index == 0:
+                    model.save_pretrained(self.best_path, safe_serialization=True)
             control.should_save = True
         if step == data["steps"]:
             control.should_save = True
         return control
 
     def on_save(self, args, state, control, **kwargs):
+        if args.process_index != 0:
+            return
         root = Path(args.output_dir)
         checkpoint = root / f"checkpoint-{state.global_step}"
         h = self.trainer.history
@@ -266,12 +342,18 @@ class Events(TrainerCallback):
 
 
 def train(begin):
-    if begin["world"]["world_size"] != 1 or torch.cuda.device_count() > 1:
-        raise ValueError("distributed training is declared for future launch integration; select one device")
+    world = begin["world"]["world_size"]
+    if world == 1 and torch.cuda.device_count() > 1:
+        raise ValueError("single-process requires one visible CUDA device")
+    if world > 1:
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        torch.distributed.init_process_group("nccl")
+        if torch.distributed.get_world_size() != world:
+            raise ValueError("launcher world differs from begin")
     params = begin["parameters"]
     schemas.validate(params, schemas.PARAMETERS)
     data = begin["data"]
-    if params["per_device_train_batch_size"] * params["gradient_accumulation_steps"] != data["global_batch_sequences"]:
+    if params["per_device_train_batch_size"] * params["gradient_accumulation_steps"] * world != data["global_batch_sequences"]:
         raise ValueError("resolved batch does not match WALDO global batch")
     torch.set_num_threads(1)
     if begin["determinism"] == "required":
@@ -306,7 +388,7 @@ def train(begin):
         history = json.loads((resume_dir / "waldo-history.json").read_text())
         if history["consumption"] != begin["resume"]["checkpoint_manifest"]["consumption"]:
             raise ValueError("checkpoint consumption mismatch")
-        if history["selected"]:
+        if history["selected"] and int(os.environ.get("RANK", "0")) == 0:
             best_path.mkdir(exist_ok=True)
             shutil.copyfile(resume_dir / "best.safetensors", best_path / "model.safetensors")
     dataset = TokenStream(begin)
@@ -329,6 +411,9 @@ def train(begin):
         # Third-party print output must never contaminate protocol stdout.
         trainer.train(resume_from_checkpoint=str(resume_dir) if resume_dir else None)
     dataset.finish()
+    if world > 1 and torch.distributed.get_rank() != 0:
+        torch.distributed.barrier()
+        return
     tokens = sum(history["consumption"].values())
     selected = history["selected"] or dict(step=data["steps"], tokens=tokens, metric="terminal", value=0.0)
     if history["selected"]:
@@ -347,11 +432,17 @@ def train(begin):
     if dataset.evaluations:
         result["artifact_evaluation"] = evaluate(published, dataset.evaluations, selected["step"], selected["tokens"])
     frame("complete", complete=result)
+    if world > 1:
+        torch.distributed.barrier()
 
 
 def main():
-    request = read()
+    global LOCAL_STREAM
     command = sys.argv[1]
+    if command == "train" and int(os.environ.get("WORLD_SIZE", "1")) > 1:
+        from .distributed import LocalStream
+        LOCAL_STREAM = LocalStream()
+    request = protocol_read()
     if request.get("protocol") != 1 or request.get("kind") != ("begin" if command == "train" else command):
         raise ValueError("unexpected protocol command")
     if command == "probe":
@@ -379,3 +470,8 @@ if __name__ == "__main__":
         traceback.print_exc(file=sys.stderr)
         frame("error", error=str(error), error_class="numerical-integrity" if isinstance(error, FloatingPointError) else "configuration")
         sys.exit(1)
+    finally:
+        if LOCAL_STREAM:
+            LOCAL_STREAM.close()
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()

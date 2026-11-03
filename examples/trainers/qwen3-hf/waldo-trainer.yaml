@@ -10,3 +10,4 @@ artifact_profile: hf-causal-lm
 environments:
   cpu: {kind: python-lock, lock: env/cpu/pylock.toml, python: 3.12.3}
   cuda: {kind: python-lock, lock: env/cuda/pylock.toml, python: 3.12.3}
+  cuda-amd64: {kind: python-lock, lock: env/cuda-amd64/pylock.toml, python: 3.12.3}

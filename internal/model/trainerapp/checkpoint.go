@@ -60,6 +60,12 @@ func (i CheckpointIdentity) validate() error {
 }
 func beginDigest(b Begin) string {
 	b.Paths = Paths{}
+	b.World.NodeRank = 0
+	if b.World.WorldSize > 1 && b.Initialization != nil {
+		initialization := *b.Initialization
+		initialization.Path = ""
+		b.Initialization = &initialization
+	}
 	b.Resume = nil
 	return digest(b)
 }
@@ -226,7 +232,7 @@ func LoadCheckpoint(b Begin, ref CheckpointReference) (*Resume, error) {
 	if err := strict(raw, &m); err != nil {
 		return nil, err
 	}
-	if m.Kind != "waldo-trainer-checkpoint" || m.Schema != 1 || m.Identity != b.CheckpointIdentity || m.BeginSHA256 != beginDigest(b) || m.ParametersSHA256 != b.ParametersSHA256 || m.World != b.World {
+	if m.Kind != "waldo-trainer-checkpoint" || m.Schema != 1 || m.Identity != b.CheckpointIdentity || m.BeginSHA256 != beginDigest(b) || m.ParametersSHA256 != b.ParametersSHA256 || !sameCheckpointWorld(m.World, b.World) {
 		return nil, fmt.Errorf("checkpoint run BOM, parameters or world mismatch")
 	}
 	if err := m.Identity.validate(); err != nil {
@@ -318,3 +324,5 @@ func (l *consumptionLedger) at(step int64) (map[string]int64, error) {
 func sameResume(a, b *Resume) bool {
 	return a.Step == b.Step && a.Tokens == b.Tokens && bytes.Equal(a.CheckpointManifest, b.CheckpointManifest) && digest(a.Paths) == digest(b.Paths)
 }
+
+func sameCheckpointWorld(a, b applaunch.World) bool { a.NodeRank = 0; b.NodeRank = 0; return a == b }

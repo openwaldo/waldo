@@ -277,3 +277,30 @@ func TestExternalLifecycleRejectsChangedResumeProbeSchemas(t *testing.T) {
 		t.Fatalf("changed schema accepted: %v", err)
 	}
 }
+
+func TestExternalSecondaryRejectsPinsBeforeReadiness(t *testing.T) {
+	for _, mismatch := range []string{"source", "environment"} {
+		t.Run(mismatch, func(t *testing.T) {
+			_, c, o := externalLifecycleFixture(t)
+			sources, err := c.ResolveSources(context.Background(), filepath.Join(o.Cache, "sources"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			env, err := sources.Trainer.EnsureEnvironment(context.Background(), c.Trainer.Environment, o.Python, filepath.Join(o.Cache, "environments"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := ExternalNodePlan{Compose: c, BOM: ExternalRunBOM{Identity: ExternalIdentity{Trainer: sources.Trainer, Environment: env.Identity}}}
+			if mismatch == "source" {
+				p.BOM.Identity.Trainer.Tree = strings.Repeat("a", 40)
+			} else {
+				p.BOM.Identity.Environment.LockSHA256 = strings.Repeat("a", 64)
+			}
+			ready := false
+			err = RunExternalSecondary(context.Background(), p, o, t.TempDir(), func() error { ready = true; return nil })
+			if err == nil || !strings.Contains(err.Error(), mismatch+" mismatch") || ready {
+				t.Fatalf("ready=%v err=%v", ready, err)
+			}
+		})
+	}
+}

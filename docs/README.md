@@ -31,7 +31,7 @@ Read these in order:
 - [Model compose](MODEL-COMPOSE.md): portable training-plan schema.
 - [External application loading](EXTERNAL-APPLICATIONS.md): PoC compose reader,
   pinned sources, manifests, probe schemas, managed Python environments and
-  single-process launch.
+  single-process and torchrun distributed launch.
 - [External trainer protocol](EXTERNAL-TRAINER-PROTOCOL.md): probe, resolve and
   token-only train frames, schema evidence and developer API.
 - [External checkpoints](EXTERNAL-CHECKPOINTS.md): verified resume bundles and

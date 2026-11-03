@@ -29,8 +29,8 @@ mask construction, exact step budgets and resume positioning. The trainer must
 never read an index or Parquet. The training API takes **already packed**
 `training.PreparedSequence` values from a cancellation-aware `SequenceSource`;
 it does not take raw text. Lifecycle integration must connect WALDO's prepared
-stream, not delegate packing to the trainer. Single-process launch is currently
-implemented; distributed launch and node-local boundaries remain WALDO-54 work.
+stream, not delegate packing to the trainer. Distributed launch uses node-local sequence ownership and explicit global
+micro-batch boundaries; see [Writing external trainers](WRITING-EXTERNAL-TRAINERS.md#distributed-trainers).
 
 ## Probe
 

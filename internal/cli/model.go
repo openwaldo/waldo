@@ -932,7 +932,12 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 	if planWait <= 0 {
 		return fmt.Errorf("--plan-wait %q must be a positive duration such as 30m", planWaitValue)
 	}
-	capabilities, err := training.InspectTorchTitanHost(commandContext.Execution)
+	var capabilities training.TorchTitanHost
+	if raw := stringOption(commandContext, "external-compose-json"); raw != "" {
+		capabilities, err = externalHostCapabilities(commandContext.Execution, raw, stringOption(commandContext, "application-python"))
+	} else {
+		capabilities, err = training.InspectTorchTitanHost(commandContext.Execution)
+	}
 	if err != nil {
 		return fmt.Errorf("secondary training preflight: %w", err)
 	}
@@ -1088,6 +1093,16 @@ func runSecondaryStreamPlansWithRunner(commandContext Context, cluster training.
 		stageScratch := filepath.Join(scratch, plan.RunID)
 		if err := os.MkdirAll(stageScratch, 0o700); err != nil {
 			return err
+		}
+		if plan.External != nil {
+			if err := runExternalSecondaryPlan(commandContext, cluster, plan, cache, stageScratch, stdout, stderr); err != nil {
+				return err
+			}
+			lastRunID = plan.RunID
+			if plan.StageOrdinal == plan.StageCount {
+				return nil
+			}
+			continue
 		}
 		var request training.Request
 		var err error

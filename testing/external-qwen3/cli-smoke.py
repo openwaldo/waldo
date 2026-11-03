@@ -26,6 +26,10 @@ p.add_argument('--trainer-environment', default='',
                help='rewrite the trainer environment (for example cuda) in a copy of the compose')
 p.add_argument('--data', action='append', default=[], metavar='KEY=VALUE',
                help='override a stage data key (for example steps=10) in a copy of the compose')
+p.add_argument('--processes-per-node', type=int, default=1)
+p.add_argument('--source-repository', default='')
+p.add_argument('--source-commit', default='')
+p.add_argument('--tokenizer-environment', default='')
 p.add_argument('--records', type=int, default=20, help='fixture corpus record count')
 p.add_argument('--stop', default='checkpoint', choices=['checkpoint', 'none'],
                help='none skips the interrupted/resumed pair and trains one run (large compose)')
@@ -38,7 +42,14 @@ env = dict(os.environ, WALDO_CONFIG=str(work/'config.json'),
            WALDO_APPLICATION_CACHE=str(Path(a.application_cache).resolve()),
            WALDO_APPLICATION_PYTHON=a.python)
 
+def training_args(args):
+    args = list(args)
+    if 'train' in args and a.processes_per_node > 1:
+        args += ['--launch-profile', 'distributed', '--processes-per-node', str(a.processes_per_node)]
+    return args
+
 def run(*args):
+    args = training_args(args)
     result = subprocess.run([binary, *args], env=env, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     with (work/'commands.log').open('a') as log:
@@ -90,6 +101,17 @@ if a.trainer_environment:
     text = text.replace('  environment: cpu\n', f'  environment: {a.trainer_environment}\n', 1).replace('  environment: cuda\n', f'  environment: {a.trainer_environment}\n', 1)
     compose = str(work/'compose.yaml')
     Path(compose).write_text(text)
+if a.source_repository or a.source_commit or a.tokenizer_environment:
+    import re
+    text = Path(compose).read_text()
+    if a.source_repository:
+        text = re.sub(r'(?m)^(    repository: ).*$', lambda m: m[1] + a.source_repository, text)
+    if a.source_commit:
+        text = re.sub(r'(?m)^(    commit: ).*$', lambda m: m[1] + a.source_commit, text)
+    if a.tokenizer_environment:
+        text = text.replace('  environment: tokenizer\n', '  environment: '+a.tokenizer_environment+'\n')
+    compose = str(work/'compose.yaml')
+    Path(compose).write_text(text)
 if a.data:
     import re
     text = Path(compose).read_text()
@@ -123,8 +145,8 @@ if a.stop == 'none':
     raise SystemExit(0)
 print('Training uninterrupted control',flush=True)
 run('--json','model','train','control',compose)
-print('Interrupting CPU run after first durable checkpoint',flush=True)
-process = subprocess.Popen([binary,'--json','model','train','resumed',compose],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+print('Interrupting run after first durable checkpoint',flush=True)
+process = subprocess.Popen([binary,*training_args(['--json','model','train','resumed',compose])],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
 interrupted = False
 with (work/'interrupted.log').open('w') as log:
     for line in process.stderr:

@@ -11,7 +11,7 @@ ADR [0084](adr/0084-external-trainers.md) for the design.
 
 - `waldo-trainer.yaml`: `kind`, `schema`, `name`, `protocol: 1`, `entrypoint`
   (`module` or `script`), `commands` (`probe`, `resolve`, `train`),
-  `launch_profiles` (`single-process`; `distributed` is interface only),
+  `launch_profiles` (`single-process` or `distributed`),
   `objectives`, `artifact_profile` (for example `hf-causal-lm`), `schemas`
   (JSON Schema for `architecture` and trainer `parameters`) and named
   `environments` (`kind: python-lock` with a hash-pinned lock file).
@@ -52,3 +52,29 @@ WALDO verifies the result before publishing it; see
 uninterrupted one and checks decomposition across micro-batch sizes; the
 reference harness is `testing/external-qwen3`. For a full CLI run use the
 [external trainer end-to-end test](TESTING.md#external-trainer-end-to-end).
+
+## Distributed trainers
+
+Declare `distributed` in both the manifest and probe. Probe and resolve still
+run as one Python process; train runs through the pinned environment's
+`python -E -s -m torch.distributed.run`. Single-node launches use `--standalone`;
+multi-node launches pin node count, rank, master address and port with restarts
+disabled. Resolve must preserve the recipe across world shapes and return a
+batch decomposition satisfying micro-batch × accumulation × world = global
+batch.
+
+Only local rank zero reads stdin. Its coordinator sends `begin`, evaluation
+records, its node's sequence records, `micro_batch_end` frames, and `end`.
+A boundary carries `ordinal`, the exclusive end of the global micro-batch.
+Sequence `ordinal % world_size` determines the owning global rank. Consume the
+whole local micro-batch before entering collectives; a leader entering a
+collective before forwarding a sibling's records can deadlock the job. The
+Qwen3 reference uses Unix sockets for local fanout. No training sequences cross
+nodes. Each node tokenizes the same canonical input independently.
+
+Only global rank zero emits protocol events/completion and publishes files.
+Aggregate loss denominators and corpus consumption across all ranks, preserve
+each rank's RNG state in private checkpoint state, and restore the verified
+bundle on every node. Do not average per-rank mean losses when supervised-token
+counts differ. The Qwen3 reference supports DDP with the `cuda-amd64` lock for
+x86_64 and `cuda` for aarch64.

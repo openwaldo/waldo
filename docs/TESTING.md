@@ -152,3 +152,22 @@ venvs; they require no package-index access or GPUs. The standard Python suite
 includes these tests and fails (rather than skips) when tooling is missing.
 The Go `pythonenv` integration test exercises the embedded helper through its
 public API. On Debian test images install `python3-pip` and `python3-venv`.
+
+### External two-GPU lifecycle
+
+The opt-in `testing/e2e/model-external-distributed.sh` requires Linux and two
+NVIDIA GPUs. Set `WALDO_E2E_EXTERNAL_DISTRIBUTED=1`, `WALDO_BIN`,
+`WALDO_APPLICATION_PYTHON` (Python 3.12.3), `WALDO_APPLICATION_CACHE`, and
+`WALDO_E2E_WORK` (a new directory). It uses the current committed trainer source,
+a platform-specific CUDA lock, and the real CLI. It trains an uninterrupted
+control, interrupts after a durable checkpoint, resumes with two ranks, compares
+published weights, checks completed no-ops, and verifies export provenance.
+A disabled opt-in is a skip, never GPU qualification. The test retains its work
+and cache for inspection; the caller owns their cleanup.
+
+Unit coverage includes torchrun module/script commands, single/multi-node world
+shapes, environment isolation, undeclared-profile refusal, source/environment
+mismatches before secondary readiness, sequence ownership, micro-batch boundaries
+and resumed sequence positions. The existing hostfile transport tests exercise
+SSH staging and stage readiness; they do not constitute a physical multi-node
+GPU qualification.

@@ -114,8 +114,7 @@ relative `lock` and an exact `python` version (`3.x.y`). Environment creation
 and lock verification use the explicit API below.
 
 Trainer launch profiles are `single-process` and `distributed`; this reader
-only checks declarations. The launcher implements `single-process` and rejects
-`distributed` with an explicit not-implemented error. Objectives are restricted to
+only checks declarations. The launcher implements `single-process` and torchrun `distributed` execution. Objectives are restricted to
 `causal-language-modeling` and `assistant-response-modeling`. Artifact profiles
 are declared here; output verification is a later lifecycle responsibility.
 Manifests are strict: in particular, `schemas` is an unknown field.
@@ -246,9 +245,10 @@ the supplied arguments. No shell is involved. The working directory is the
 read-only selected application directory. Its complete environment is
 `WALDO_PROTOCOL=1`, `PATH=/usr/bin:/bin`, `LANG=C.UTF-8`, `LC_ALL=C.UTF-8`,
 `HOME=<scratch>`, plus `CUDA_VISIBLE_DEVICES` and `CUBLAS_WORKSPACE_CONFIG` only when present in WALDO's
-environment (including an explicitly empty value). No other host variables
-are inherited. `Process.Evidence()` returns the exact argv, directory,
-environment values, launcher, profile and world facts for the future run BOM
+environment (including an explicitly empty value). Distributed train launches
+add the NCCL settings resolved from `model.nccl.*`; torchrun supplies rank and
+rendezvous variables to its workers. No arbitrary host variables are inherited. `Process.Evidence()` returns the exact argv, directory,
+environment values, launcher, profile and world facts for the run BOM
 builder; these are run evidence, never model identity. This is process isolation
 from accidental host configuration, not an OS security sandbox.
 

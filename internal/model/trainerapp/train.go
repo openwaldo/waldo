@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"path/filepath"
 	"slices"
@@ -210,6 +211,14 @@ func (c *Client) Train(ctx context.Context, b Begin, evaluations []EvaluationRec
 	}()
 	defer func() { cancel(); p.Stdin.Close(); p.Stdout.Close(); p.Wait(); <-done }()
 	s := scanner(p.Stdout)
+	if b.World.NodeRank > 0 {
+		// Secondary nodes have no protocol authority. Drain their output and
+		// report only transport/exit status, as the native join path does.
+		_, drainErr := io.Copy(io.Discard, p.Stdout)
+		sent := <-done
+		done <- sent
+		return result, errors.Join(drainErr, sent.err, p.Wait())
+	}
 	terminal := false
 	step, tokens := int64(0), int64(0)
 	if b.Resume != nil {
@@ -481,10 +490,21 @@ func send(ctx context.Context, p *applaunch.Process, b Begin, evaluations []Eval
 			}
 			stepCounts = map[string]int64{}
 		}
-		if err = write(p.Stdin, inputFrame{Kind: "record", Protocol: Protocol, Record: r}); err != nil {
-			return err
+		distributed := b.World.WorldSize > 1
+		rank := ordinal % int64(b.World.WorldSize)
+		if !distributed || rank/int64(b.World.ProcessesPerNode) == int64(b.World.NodeRank) {
+			if err = write(p.Stdin, inputFrame{Kind: "record", Protocol: Protocol, Record: r}); err != nil {
+				return err
+			}
 		}
 		ordinal++
+		if distributed && ordinal%(b.Batch.MicroBatchSequences*int64(b.World.WorldSize)) == 0 {
+			return write(p.Stdin, struct {
+				Kind     string `json:"kind"`
+				Protocol int    `json:"protocol"`
+				Ordinal  int64  `json:"ordinal"`
+			}{"micro_batch_end", Protocol, ordinal})
+		}
 		return nil
 	})
 	if err != nil {

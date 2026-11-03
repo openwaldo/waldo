@@ -20,9 +20,16 @@ import (
 // ExternalOptions contains machine-local policy and resolved corpus inputs.
 // Applications receive only prepared tokens, never these input paths.
 type ExternalOptions struct {
-	Cache   string
-	Python  string
-	Prepare func(context.Context, ExternalStage) (corpus.BOM, []training.Input, error)
+	PreparedCacheMaxBytes int64
+	Hosts                 []string
+	Publish               func(ExternalNodePlan) error
+	World                 applaunch.World
+	Profile               string
+	NCCLInterface         string
+	NCCLHCA               string
+	Cache                 string
+	Python                string
+	Prepare               func(context.Context, ExternalStage) (corpus.BOM, []training.Input, error)
 }
 
 type ExternalAttempt struct {
@@ -335,8 +342,11 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 		return zero, err
 	}
 	defer codec.Close()
-	world := applaunch.World{Nodes: 1, ProcessesPerNode: 1, WorldSize: 1}
-	trainerRequest := applaunch.Request{Source: sources.Trainer, Environment: trainerEnv, Scratch: scratch, World: world, Command: "train"}
+	world := o.World
+	if world == (applaunch.World{}) {
+		world = applaunch.World{Nodes: 1, ProcessesPerNode: 1, WorldSize: 1}
+	}
+	trainerRequest := applaunch.Request{Source: sources.Trainer, Environment: trainerEnv, Scratch: scratch, World: world, Profile: o.Profile, NCCLInterface: o.NCCLInterface, NCCLHCA: o.NCCLHCA, Command: "train"}
 	var objectives []string
 	for _, s := range c.Stages {
 		objectives = append(objectives, s.Objective)
@@ -454,7 +464,7 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 		if err != nil {
 			return zero, err
 		}
-		bom := ExternalRunBOM{Initialization: initialization, Kind: "openwaldo-bom", Schema: 2, Subject: "training-run", ID: s.Name, ModelID: id, Stage: s.Name, Identity: plan.Identity, CorpusBOM: p.bom, Resolved: p.resolved, EvaluationSet: p.partition.Evaluation, TrainerHost: trainerEnv.Run, TokenizerHost: tokenEnv.Run, Probe: current.Probe(), Launches: append(current.Evidence(), evidence, tokenEvidence)}
+		bom := ExternalRunBOM{Hosts: o.Hosts, DataPlane: training.DataPlaneNodeLocal, Initialization: initialization, Kind: "openwaldo-bom", Schema: 2, Subject: "training-run", ID: s.Name, ModelID: id, Stage: s.Name, Identity: plan.Identity, CorpusBOM: p.bom, Resolved: p.resolved, EvaluationSet: p.partition.Evaluation, TrainerHost: trainerEnv.Run, TokenizerHost: tokenEnv.Run, Probe: current.Probe(), Launches: append(current.Evidence(), evidence, tokenEvidence)}
 		record := ExternalRunRecord{Kind: "waldo-model-run", Schema: 2, ID: s.Name, ModelID: id, Stage: s.Name, State: RunPlanned, Initialization: initialization}
 		recordPath := filepath.Join(runDir, "RUN.json")
 		if err = readJSON(recordPath, &record); err == nil {
@@ -469,8 +479,11 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 				return zero, err
 			}
 			// Host probe values may vary; the resolved execution and evaluation pins may not.
-			if !sameExternalJSON(saved.Identity, plan.Identity) || !sameExternalJSON(saved.Resolved, p.resolved) || !sameExternalJSON(saved.EvaluationSet, p.partition.Evaluation) || !sameExternalJSON(saved.Initialization, initialization) || !sameExternalJSON(record.Initialization, initialization) {
+			if !sameExternalJSON(saved.Hosts, o.Hosts) || saved.Resolved.Batch.WorldSize != int64(world.WorldSize) || !sameExternalJSON(saved.Identity, plan.Identity) || !sameExternalJSON(saved.Resolved, p.resolved) || !sameExternalJSON(saved.EvaluationSet, p.partition.Evaluation) || !sameExternalJSON(saved.Initialization, initialization) || !sameExternalJSON(record.Initialization, initialization) {
 				return zero, fmt.Errorf("external resume execution or evaluation pins changed")
+			}
+			if len(record.Attempts) > 0 && (record.Attempts[0].Launch.World != world || record.Attempts[0].Launch.Profile != evidence.Profile) {
+				return zero, fmt.Errorf("external resume topology/profile changed")
 			}
 			bom = saved
 		} else if os.IsNotExist(err) {
@@ -528,6 +541,16 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 			record.Attempts = append(record.Attempts, ExternalAttempt{Started: formatTime(started), Launch: evidence, Probe: current.Probe()})
 			if err = writeJSONAtomic(recordPath, record); err != nil {
 				return zero, err
+			}
+			if o.Publish != nil {
+				nodePlan := ExternalNodePlan{Compose: c, Stage: s, BOM: bom, Begin: begin, CheckpointIdentity: begin.CheckpointIdentity, CheckpointDirectory: begin.CheckpointDirectory, Python: o.Python}
+				if len(record.Checkpoints) > 0 {
+					ref := record.Checkpoints[len(record.Checkpoints)-1]
+					nodePlan.Checkpoint = &ref
+				}
+				if err = o.Publish(nodePlan); err != nil {
+					return zero, err
+				}
 			}
 			complete, trainErr := current.Train(ctx, begin, p.evaluations, source, func(event trainerapp.Event) error {
 				if event.DurableCheckpoint != nil {

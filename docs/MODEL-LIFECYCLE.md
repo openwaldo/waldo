@@ -5,7 +5,8 @@ of explicit training runs. On Apple Silicon, WALDO automatically discovers a
 Metal-capable Python installation of MLX and performs real decoder training.
 It never silently substitutes simulation for training.
 
-All durable formats in this document use schema 1.
+Native durable formats use schema 1. External model and run records use
+schema 2 (ADR 0087).
 
 ## Machine configuration
 
@@ -799,3 +800,27 @@ separate adapter owns native architecture construction, distributed topology,
 training, and distributed checkpoints. The prepared-data boundary, native
 artifact sets, reference B200 host, and acceptance gates are defined in the
 [Foundation, post-training, and sparse-MoE plan](FOUNDATION-MOE-PLAN.md).
+
+### External distributed execution
+
+External schema-2 composes can select torchrun with
+`--launch-profile distributed --processes-per-node 2`. The trainer must declare
+the profile in its manifest and probe. A hostfile or Fuzzball host list selects
+one coordinator per node using the existing binary staging, rendezvous,
+interface/HCA and memlock checks. External preflight uses the pinned trainer's
+Python environment; it does not require TorchTitan. Nodes must provide the
+pinned bootstrap interpreter and access to the application repository and
+lookaside. Hostfile deployments require matching interpreter paths.
+
+Each coordinator verifies the trainer/tokenizer sources and environments,
+materializes the resolved corpus BOM in its local cache, and prepares the
+canonical stream. It sends only sequences assigned to its node's ranks. Global
+rank zero alone publishes observations and files. The run BOM records hosts,
+world shape, launch arguments, allowlisted NCCL settings and `node-local-cache`;
+these facts do not enter portable model identity. External trainers do not
+support the built-in `rank-zero-broadcast` compatibility data plane.
+
+Repeat the original command to resume from the newest verified checkpoint.
+`model continue` restores a single-node external run's recorded process count;
+for a multi-node run it requires repeating the original hostfile command.
+Topology and resolved execution parameters cannot change during resume.
