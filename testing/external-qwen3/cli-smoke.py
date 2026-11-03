@@ -60,6 +60,17 @@ run('index','ingest',str(work/'input'),str(work/'index'/'books'))
 contributions = list((work/'staging').glob('*/contribution'))
 assert len(contributions)==1
 shutil.copytree(contributions[0],work/'index',dirs_exist_ok=True)
+# Isolate corpus provenance from commits in a parent WALDO checkout.
+subprocess.run(['git','init',str(work/'index')],check=True,capture_output=True)
+subprocess.run(['git','-C',str(work/'index'),'add','.'],check=True)
+subprocess.run(['git','-C',str(work/'index'),'-c','user.name=CLI smoke',
+                '-c','user.email=smoke@example.invalid','commit','-s','-m',
+                'Pin disposable corpus fixture'],check=True,capture_output=True)
+subprocess.run(['git','init','--bare',str(work/'index-origin.git')],check=True,capture_output=True)
+subprocess.run(['git','-C',str(work/'index'),'remote','add','origin',
+                str(work/'index-origin.git')],check=True)
+subprocess.run(['git','-C',str(work/'index'),'push','-u','origin','HEAD'],
+               check=True,capture_output=True)
 provider = {'kind':'waldo-disclosure-provider','schema':1,'provider':{'name':'CLI smoke','address':'Test fixture','contact':'test@example.invalid'},'code_of_practice_status':'not-assessed','copyright_policy_url':'https://example.invalid/copyright'}
 (work/'provider.json').write_text(json.dumps(provider))
 run('config','set','disclosure.provider',str(work/'provider.json'))
@@ -95,6 +106,8 @@ for artifact in record['complete']['artifacts']:
         assert (work/'models/resumed'/relative).read_bytes()==(work/'models/control'/relative).read_bytes()
 # Completed re-invocation must not add another attempt.
 run('--json','model','train','resumed',compose)
+assert len(json.loads(record_path.read_text())['attempts'])==2
+run('--json','model','continue','resumed')
 assert len(json.loads(record_path.read_text())['attempts'])==2
 print('Exporting verified HF package',flush=True)
 run('--json','model','export','resumed',str(work/'export'),'--format','huggingface','--allow-incomplete')
