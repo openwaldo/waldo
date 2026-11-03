@@ -83,3 +83,4 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0084: External trainers](0084-external-trainers.md)
 - [0085: Commit and authenticate external checkpoint bundles in WALDO](0085-external-checkpoint-bundles.md)
 - [0086: Verify external publications and persist external BOM records](0086-external-output-and-bom-records.md)
+- [0087: Integrate external applications through a separate lifecycle record](0087-external-training-lifecycle.md)

@@ -443,6 +443,9 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 		if err != nil {
 			return zero, err
 		}
+		if current.SchemaHashes()["architecture"] != plan.Identity.ArchitectureSchemaSHA256 || current.SchemaHashes()["parameters"] != plan.Identity.ParametersSchemaSHA256 {
+			return zero, fmt.Errorf("trainer probe schemas changed from immutable plan")
+		}
 		evidence, err := applaunch.Prepare(request)
 		if err != nil {
 			return zero, err

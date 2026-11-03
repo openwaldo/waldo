@@ -256,3 +256,24 @@ func TestExternalLifecycleFiniteEpochBudget(t *testing.T) {
 		t.Fatal("invalid epoch budget created a model")
 	}
 }
+
+func TestExternalLifecycleRejectsChangedResumeProbeSchemas(t *testing.T) {
+	b, c, o := externalLifecycleFixture(t, func(code string) string {
+		code = strings.Replace(code, "    if MODE == 'version':", "    if os.path.exists(os.path.join(os.environ['HOME'], 'changed-schema')): result['schemas']['architecture']['title'] = 'changed'\n    if MODE == 'version':", 1)
+		return strings.Replace(code, "    begin = request['begin']", "    begin = request['begin']\n    open(os.path.join(begin['paths']['scratch'], 'changed-schema'), 'w').close()", 1)
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	b.Progress = func(p Progress) {
+		if p.Training != nil && p.Training.Kind == "checkpoint" {
+			cancel()
+		}
+	}
+	if _, err := b.ComposeExternal(ctx, "schema", c, o); err == nil {
+		t.Fatal("interruption succeeded")
+	}
+	b.Progress = nil
+	if _, err := b.ComposeExternal(t.Context(), "schema", c, o); err == nil || !strings.Contains(err.Error(), "probe schemas changed") {
+		t.Fatalf("changed schema accepted: %v", err)
+	}
+}

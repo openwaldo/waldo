@@ -137,10 +137,6 @@ func runModelEUGPAIBOM(context Context, options modelBOMOptions, stdout, stderr 
 	if err != nil {
 		return err
 	}
-	inspection, err := model.Inspect(root, options.Model)
-	if err != nil {
-		return err
-	}
 	var provider *disclosure.ProviderProfile
 	providerPath := options.Provider
 	if providerPath == "" {
@@ -153,10 +149,29 @@ func runModelEUGPAIBOM(context Context, options modelBOMOptions, stdout, stderr 
 		}
 		provider = &profile
 	}
-	report, err := disclosure.BuildEUGPAIReport(inspection, provider, disclosure.ReleaseFromModel(inspection), time.Now())
-	if err != nil {
+	var report disclosure.EUGPAIReport
+	if external, err := model.IsExternalModel(root, options.Model); err != nil {
 		return err
+	} else if external {
+		i, err := model.InspectExternal(root, options.Model)
+		if err != nil {
+			return err
+		}
+		report, err = disclosure.BuildExternalEUGPAIReport(i, provider, time.Now())
+		if err != nil {
+			return err
+		}
+	} else {
+		i, err := model.Inspect(root, options.Model)
+		if err != nil {
+			return err
+		}
+		report, err = disclosure.BuildEUGPAIReport(i, provider, disclosure.ReleaseFromModel(i), time.Now())
+		if err != nil {
+			return err
+		}
 	}
+
 	blocking := report.BlockingGaps()
 	if err := requireCompleteDisclosure(report, options.AllowIncomplete, stderr); err != nil {
 		return err

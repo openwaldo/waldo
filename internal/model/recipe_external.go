@@ -204,14 +204,7 @@ type ResolvedExternalData = training.ExternalDataParameters
 // ResolveData reuses WALDO's existing data rules without exporting native
 // optimizer defaults as external trainer parameters.
 func (s ExternalStage) ResolveData() (ResolvedExternalData, error) {
-	d := s.Data
-	p := training.Parameters{Profile: d.Profile, Tokens: d.Tokens, Epochs: d.Epochs, Steps: d.Steps,
-		BatchSize: d.GlobalBatchSequences, SequenceLength: d.SequenceLength, Seed: d.Seed,
-		LearningRate: 1, CheckpointEvery: d.CheckpointEvery, EvaluateEvery: d.EvaluateEvery,
-		ShuffleBufferRecords: d.ShuffleBufferRecords, ShuffleBufferBytes: d.ShuffleBufferBytes,
-		EvaluationFraction: d.EvaluationFraction, EvaluationSelection: d.EvaluationSelection,
-		EvaluationMaxRecords: d.EvaluationMaxRecords, EvaluationMaxBytes: d.EvaluationMaxBytes}
-	resolved, err := (Stage{Corpora: s.Corpora, Parameters: p}).ResolvePlanningParameters()
+	resolved, err := s.DataStage().ResolvePlanningParameters()
 	if err != nil {
 		return ResolvedExternalData{}, err
 	}
