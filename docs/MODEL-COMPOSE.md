@@ -825,7 +825,8 @@ WALDO fails before training when a compose has:
 - an unsupported architecture, tokenizer contract, dtype, or objective;
 - zero architecture dimensions or incompatible attention-head divisibility;
 - dropout outside `0..<1` or a sequence longer than the architecture context;
-- no stages, duplicate stage names, no corpus selection, or duplicate corpora;
+- no stages (unless `base.merge` makes the merged model the destination),
+  duplicate stage names, no corpus selection, or duplicate corpora;
 - invalid parameter ranges or an overflowing planned token capacity;
 - corpus weights outside `causal-pretrain-weighted`, missing weighted-profile
   weights, or weights for unselected corpora;
