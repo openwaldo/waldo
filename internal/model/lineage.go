@@ -29,8 +29,8 @@ func (node LineageNode) validate() error {
 			return fmt.Errorf("run BOM %q is not a SHA-256", run)
 		}
 	}
-	if node.OriginSHA256 != "" && !lineageDigest.MatchString(node.OriginSHA256) {
-		return fmt.Errorf("origin BOM %q is not a SHA-256", node.OriginSHA256)
+	if node.SourceSHA256 != "" && !lineageDigest.MatchString(node.SourceSHA256) {
+		return fmt.Errorf("source %q is not a SHA-256", node.SourceSHA256)
 	}
 	return nil
 }
@@ -113,8 +113,9 @@ func runLineage(inspection Inspection) ([]runNode, error) {
 	return nodes, nil
 }
 
-// originNode is a pulled origin's node: its weights descend from the release
-// they were normalized from, whose node the release recorded, if it did.
+// originNode is a pulled origin's node, a root naming the release its weights
+// were normalized from; they descend from the node that release recorded, if
+// it did.
 func originNode(origin OriginBOM) (LineageNode, error) {
 	weights := ""
 	for _, artifact := range origin.Artifacts {
@@ -125,11 +126,19 @@ func originNode(origin OriginBOM) (LineageNode, error) {
 	if weights == "" {
 		return LineageNode{}, fmt.Errorf("model origin has no weights artifact")
 	}
-	digest, err := hashJSON(origin)
+	// The release is its repository, resolved revision, license, and files,
+	// not the revision as the pull named it or the mirror that served it.
+	digest, err := hashJSON(struct {
+		Provider   string           `json:"provider"`
+		Repository string           `json:"repository"`
+		Revision   string           `json:"revision"`
+		License    string           `json:"license,omitempty"`
+		Artifacts  []OriginArtifact `json:"artifacts"`
+	}{origin.Source.Provider, origin.Source.Repository, origin.Source.Revision, origin.Source.License, origin.SourceArtifacts})
 	if err != nil {
 		return LineageNode{}, err
 	}
-	node := LineageNode{WeightsSHA256: weights, OriginSHA256: digest}
+	node := LineageNode{WeightsSHA256: weights, SourceSHA256: digest}
 	if origin.Lineage != nil {
 		link, err := linkTo(*origin.Lineage)
 		if err != nil {

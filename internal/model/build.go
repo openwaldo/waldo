@@ -1341,7 +1341,7 @@ func pendingComposeMatchesRequest(root string, pending composeTransaction, reque
 	if err != nil {
 		return false, err
 	}
-	return reflect.DeepEqual(pending.Compose, asStored(pending.Compose, normalized)), nil
+	return reflect.DeepEqual(pending.Compose, normalized), nil
 }
 
 // asStored is requested as a compose stored before base pins recorded

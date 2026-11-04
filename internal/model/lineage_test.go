@@ -313,8 +313,8 @@ func TestComposeRefusesAWrongLineagePin(t *testing.T) {
 	}
 }
 
-// A fine-tune interrupted before lineage was recorded resumes with the same
-// command; its parent pin stays as it was written.
+// A fine-tune compose interrupted before lineage was recorded, whose kept
+// transaction has no lineage pin, resumes with the same command.
 func TestComposeResumesATransactionFromBeforeLineage(t *testing.T) {
 	root := t.TempDir()
 	builder := realWeightsBuilder(root)
@@ -378,17 +378,18 @@ func TestPullRefusesALineageItsReadersCouldSeeDifferently(t *testing.T) {
 	}
 }
 
-// A pulled root names the origin record it came from, so the same weights
-// from two sources are two roots, and the chain reaches the source.
-func TestPulledRootsNameTheirOrigin(t *testing.T) {
+// A pulled root names the release it came from: the same weights from another
+// repository or revision are another root, while the same release is one root
+// however the pull was written or which mirror served it.
+func TestPulledRootsNameTheirRelease(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	root := t.TempDir()
 	files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
-	var nodes []LineageNode
-	for _, revision := range []string{strings.Repeat("a", 40), strings.Repeat("b", 40)} {
+	main, other := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	pullRoot := func(name, endpoint, source, revision string) LineageNode {
+		t.Helper()
 		client := &http.Client{Transport: huggingFaceTransport(t, files, revision)}
-		name := "pulled-" + revision[:1]
-		if _, err := (Puller{Root: root, Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), name, "huggingface://org/tiny"); err != nil {
+		if _, err := (Puller{Root: root, Endpoint: endpoint, Client: client}).Pull(t.Context(), name, source); err != nil {
 			t.Fatal(err)
 		}
 		pulled, err := Inspect(root, name)
@@ -399,12 +400,20 @@ func TestPulledRootsNameTheirOrigin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if node.OriginSHA256 != pulled.Model.OriginBOMSHA256 {
-			t.Fatalf("revision %s: node origin %s, model origin %s", revision, node.OriginSHA256, pulled.Model.OriginBOMSHA256)
-		}
-		nodes = append(nodes, node)
+		return node
 	}
-	if nodes[0].WeightsSHA256 != nodes[1].WeightsSHA256 || lineageHash(t, nodes[0]) == lineageHash(t, nodes[1]) {
-		t.Fatalf("same weights from two sources: %+v and %+v", nodes[0], nodes[1])
+	byBranch := pullRoot("by-branch", "https://hub.test", "huggingface://org/tiny", main)
+	byCommit := pullRoot("by-commit", "https://hub.test", "huggingface://org/tiny@"+main, main)
+	byMirror := pullRoot("by-mirror", "https://mirror.test", "huggingface://org/tiny", main)
+	if byBranch.SourceSHA256 == "" || !reflect.DeepEqual(byBranch, byCommit) || !reflect.DeepEqual(byBranch, byMirror) {
+		t.Fatalf("one release, several roots: %+v, %+v, %+v", byBranch, byCommit, byMirror)
+	}
+	for name, node := range map[string]LineageNode{
+		"another revision":   pullRoot("revision", "https://hub.test", "huggingface://org/tiny", other),
+		"another repository": pullRoot("repository", "https://hub.test", "huggingface://org/bad", main),
+	} {
+		if node.WeightsSHA256 != byBranch.WeightsSHA256 || node.SourceSHA256 == byBranch.SourceSHA256 {
+			t.Fatalf("%s: same weights should be another root: %+v and %+v", name, node, byBranch)
+		}
 	}
 }
