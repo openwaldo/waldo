@@ -23,6 +23,11 @@ import (
 
 func externalExportFixture(t *testing.T) model.ExternalInspection {
 	t.Helper()
+	return externalExportFixtureAt(t, "runs/train/artifacts/model.safetensors")
+}
+
+func externalExportFixtureAt(t *testing.T, artifactPath string) model.ExternalInspection {
+	t.Helper()
 	hash := func(v any) string {
 		raw, err := json.Marshal(v)
 		if err != nil {
@@ -53,7 +58,6 @@ func externalExportFixture(t *testing.T) model.ExternalInspection {
 	payload := make([]byte, 8+len(header)+4)
 	binary.LittleEndian.PutUint64(payload, uint64(len(header)))
 	copy(payload[8:], header)
-	artifactPath := "runs/train/artifacts/model.safetensors"
 	if err = os.MkdirAll(filepath.Dir(filepath.Join(directory, artifactPath)), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -132,5 +136,25 @@ func TestExternalExportRejectsCorruptionAndSigningFailure(t *testing.T) {
 	}
 	if _, err := os.Stat(destination); !os.IsNotExist(err) {
 		t.Fatal("corrupt export published")
+	}
+}
+
+func TestExternalExportRejectsUnsafeLayout(t *testing.T) {
+	inspection := externalExportFixture(t)
+	if _, err := ExportExternal(t.Context(), inspection, filepath.Join(inspection.Path, "export"), Options{}); err == nil {
+		t.Fatal("export inside the model accepted")
+	}
+	if _, err := os.Stat(filepath.Join(inspection.Path, "export")); !os.IsNotExist(err) {
+		t.Fatal("export written inside the model")
+	}
+	for _, path := range []string{"runs/train/artifacts/PLAN.json", "runs/train/artifacts/runs/x.safetensors", "other/model.safetensors"} {
+		inspection := externalExportFixtureAt(t, path)
+		destination := filepath.Join(t.TempDir(), "export")
+		if _, err := ExportExternal(t.Context(), inspection, destination, Options{}); err == nil {
+			t.Fatalf("artifact %s exported", path)
+		}
+		if _, err := os.Stat(destination); !os.IsNotExist(err) {
+			t.Fatalf("artifact %s published", path)
+		}
 	}
 }

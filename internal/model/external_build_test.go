@@ -304,3 +304,63 @@ func TestExternalSecondaryRejectsPinsBeforeReadiness(t *testing.T) {
 		})
 	}
 }
+
+// ComposeExternal builds the plan identity from the compose; WALDO-owned data
+// and determinism changes must fork it, so reusing a model name is refused
+// before any run state changes.
+func TestExternalComposeIdentityTracksDeterminismAndData(t *testing.T) {
+	b, c, o := externalLifecycleFixture(t)
+	if _, err := b.ComposeExternal(t.Context(), "model", c, o); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*ExternalCompose){
+		"determinism": func(c *ExternalCompose) { c.Trainer.Determinism = "best-effort" },
+		"data seed":   func(c *ExternalCompose) { c.Stages[0].Data.Seed = 43 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := c
+			changed.Stages = append([]ExternalStage(nil), c.Stages...)
+			mutate(&changed)
+			if _, err := b.ComposeExternal(t.Context(), "model", changed, o); err == nil || !strings.Contains(err.Error(), "differs from immutable plan") {
+				t.Fatalf("changed identity input accepted: %v", err)
+			}
+		})
+	}
+}
+
+// RUN-BOM.json is the pinned run identity; a modified copy must not be resumed
+// and republished.
+func TestExternalLifecycleRejectsTamperedRunBOMOnResume(t *testing.T) {
+	b, c, o := externalLifecycleFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	b.Progress = func(p Progress) {
+		if p.Training != nil && p.Training.Kind == "checkpoint" {
+			cancel()
+		}
+	}
+	if _, err := b.ComposeExternal(ctx, "tampered", c, o); err == nil {
+		t.Fatal("interruption succeeded")
+	}
+	inspection, err := InspectExternal(b.Root, "tampered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(inspection.Path, "runs/train/RUN-BOM.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drop launch evidence without re-encoding the pinned fields.
+	tampered := strings.Replace(string(raw), `"launches": [`, `"launches": [], "x": [`, 1)
+	if tampered == string(raw) {
+		t.Fatal("fixture has no launches")
+	}
+	if err = os.WriteFile(path, []byte(tampered), 0600); err != nil {
+		t.Fatal(err)
+	}
+	b.Progress = nil
+	if _, err = b.ComposeExternal(t.Context(), "tampered", c, o); err == nil || !strings.Contains(err.Error(), "identity digest mismatch") {
+		t.Fatalf("tampered run BOM resumed: %v", err)
+	}
+}

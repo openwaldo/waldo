@@ -219,3 +219,38 @@ func TestExternalPreparedCacheResumeAndCorruption(t *testing.T) {
 		t.Fatal("corrupt cache accepted")
 	}
 }
+
+// An interrupted producer may leave no committed cache; resume then replays the
+// deterministic prefix and must emit exactly the suffix. A terminal resume must
+// not open the records at all.
+func TestExternalPreparedCacheMissResume(t *testing.T) {
+	records := staticRecordSource{{Corpus: "books", Tokens: []int{10, 11, 12, 13, 14, 15, 16, 17}, LossMask: []bool{true, true, true, true, true, true, true, true, true}}}
+	data := ExternalDataParameters{Steps: 2, GlobalBatchSequences: 2, SequenceLength: 2}
+	spec := TokenizerSpec{VocabularySize: 30, EOSID: 2}
+	plain, err := NewPreparedSequenceSource(records, data, spec, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var full []PreparedSequence
+	if err = plain(t.Context(), func(s PreparedSequence) error { full = append(full, s); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	source, err := CachedPreparedSequenceSource(records, data, spec, 1, t.TempDir(), "identity", strings.Repeat("a", 64), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var suffix []PreparedSequence
+	if err = source(t.Context(), func(s PreparedSequence) error { suffix = append(suffix, s); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(suffix, full[2:]) {
+		t.Fatalf("cache-miss resume emitted %#v", suffix)
+	}
+	terminal, err := CachedPreparedSequenceSource(refusingRecordSource{}, data, spec, 2, t.TempDir(), "identity", strings.Repeat("a", 64), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = terminal(t.Context(), func(PreparedSequence) error { return errors.New("unexpected callback") }); err != nil {
+		t.Fatal(err)
+	}
+}

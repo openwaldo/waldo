@@ -16,7 +16,7 @@ import (
 )
 
 func TestCheckpointValidation(t *testing.T) {
-	for _, mode := range []string{"valid", "file", "manifest", "run", "trainer", "tokenizer", "environment", "world", "execution", "evaluation", "stage", "unverified", "symlink", "missing", "consumption", "position"} {
+	for _, mode := range []string{"valid", "file", "manifest", "run", "trainer", "tokenizer", "environment", "world", "execution", "evaluation", "stage", "unverified", "symlink", "missing", "consumption", "underconsumption", "position"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, req := setup(t, "ok")
 			c, err := Open(ctx, req, nil)
@@ -75,7 +75,7 @@ func TestCheckpointValidation(t *testing.T) {
 				err = os.Symlink(outside, file)
 			case "missing":
 				err = os.Remove(file)
-			case "consumption", "position":
+			case "consumption", "underconsumption", "position":
 				raw, e := os.ReadFile(path)
 				if e != nil {
 					t.Fatal(e)
@@ -84,9 +84,12 @@ func TestCheckpointValidation(t *testing.T) {
 				if e = json.Unmarshal(raw, &m); e != nil {
 					t.Fatal(e)
 				}
-				if mode == "consumption" {
+				switch mode {
+				case "consumption":
 					m.Consumption["books"]++
-				} else {
+				case "underconsumption":
+					m.Consumption["books"]--
+				default:
 					m.Step = b.Data.Steps + 1
 				}
 				raw, e = json.Marshal(m)
@@ -349,5 +352,49 @@ func TestDistributedCheckpointPinsIgnoreOnlyNodeLocalFacts(t *testing.T) {
 	}
 	if sameCheckpointWorld(applaunch.World{Nodes: 2, ProcessesPerNode: 1, WorldSize: 2}, applaunch.World{Nodes: 1, ProcessesPerNode: 2, WorldSize: 2}) {
 		t.Fatal("accepted changed topology")
+	}
+}
+
+// Resume fields are exported, so Train must reject a Resume altered after
+// LoadCheckpoint (position or file paths) before launching the trainer.
+func TestResumeAlteredAfterLoadRejected(t *testing.T) {
+	for _, mode := range []string{"step", "tokens", "paths"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, req := setup(t, "ok")
+			c, err := Open(ctx, req, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := begin(t, c)
+			var ref CheckpointReference
+			if _, err = c.Train(ctx, b, evals(), source, func(e Event) error {
+				if e.DurableCheckpoint != nil {
+					ref = *e.DurableCheckpoint
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if b.Resume, err = LoadCheckpoint(b, ref); err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "step":
+				b.Resume.Step = 0
+			case "tokens":
+				b.Resume.Tokens = 0
+			case "paths":
+				outside := filepath.Join(t.TempDir(), "model.safetensors")
+				if err = os.WriteFile(outside, []byte("unverified"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				b.Resume.Paths["model.safetensors"] = outside
+			}
+			evidence := len(c.Evidence())
+			_, err = c.Train(ctx, b, evals(), func(context.Context, func(training.PreparedSequence) error) error { return nil }, nil)
+			if err == nil || !strings.Contains(err.Error(), "resume differs") || len(c.Evidence()) != evidence {
+				t.Fatalf("altered resume accepted or launched: %v", err)
+			}
+		})
 	}
 }

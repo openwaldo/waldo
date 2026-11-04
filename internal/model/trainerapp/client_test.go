@@ -279,3 +279,39 @@ func TestInvalidInput(t *testing.T) {
 		})
 	}
 }
+
+// Every streamed sequence must match the data plan exactly, and the stream must
+// cover the whole step budget, independent of what the trainer reports.
+func TestSequencePlanEnforcedBySender(t *testing.T) {
+	for mode, want := range map[string]string{"length": "length exceeds or differs", "consumption": "consumption differs from supervised", "short": "exact step budget"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, req := setup(t, "ok")
+			c, err := Open(ctx, req, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			src := func(ctx context.Context, f func(training.PreparedSequence) error) error {
+				for i := int64(0); i < 2; i++ {
+					r := training.PreparedSequence{Ordinal: i, Tokens: []int{1, 2, 3}, LossMask: []bool{true, true}, Consumption: map[string]int64{"books": 2}}
+					switch mode {
+					case "length":
+						r.Tokens, r.LossMask = []int{1, 2, 3, 4}, []bool{true, true, false}
+					case "consumption":
+						r.Consumption = map[string]int64{"books": 1}
+					case "short":
+						if i == 1 {
+							return nil
+						}
+					}
+					if err := f(r); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if _, err = c.Train(ctx, begin(t, c), evals(), src, nil); err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("expected %q, got %v", want, err)
+			}
+		})
+	}
+}
