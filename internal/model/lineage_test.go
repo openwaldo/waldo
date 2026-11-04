@@ -364,15 +364,30 @@ func TestPullRefusesALineageItsReadersCouldSeeDifferently(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	node := `{"weights_sha256":"` + strings.Repeat("a", 64) + `"}`
 	for name, bom := range map[string]string{
-		"case variant":    `{"kind":"openwaldo-bom","subject":"model-release","lineage":` + node + `,"LINEAGE":{"weights_sha256":"` + strings.Repeat("c", 64) + `"}}`,
-		"node key case":   `{"kind":"openwaldo-bom","subject":"model-release","lineage":{"WEIGHTS_SHA256":"` + strings.Repeat("a", 64) + `"}}`,
-		"node extra":      `{"kind":"openwaldo-bom","subject":"model-release","lineage":{"weights_sha256":"` + strings.Repeat("a", 64) + `","note":"x"}}`,
-		"node duplicates": `{"kind":"openwaldo-bom","subject":"model-release","lineage":{"weights_sha256":"` + strings.Repeat("a", 64) + `","weights_sha256":"` + strings.Repeat("c", 64) + `"}}`,
+		"case variant":    `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":` + node + `,"LINEAGE":{"weights_sha256":"` + strings.Repeat("c", 64) + `"}}`,
+		"node key case":   `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":{"WEIGHTS_SHA256":"` + strings.Repeat("a", 64) + `"}}`,
+		"node extra":      `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":{"weights_sha256":"` + strings.Repeat("a", 64) + `","note":"x"}}`,
+		"node duplicates": `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":{"weights_sha256":"` + strings.Repeat("a", 64) + `","weights_sha256":"` + strings.Repeat("c", 64) + `"}}`,
 	} {
 		files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
 		files["BOM.json"] = []byte(bom)
 		client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
 		if _, err := (Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "tiny", "huggingface://org/tiny"); err == nil || !strings.Contains(err.Error(), "lineage") {
+			t.Fatalf("%s: pull error = %v", name, err)
+		}
+	}
+}
+
+// Lineage is read with schema 1's meaning, so a release BOM without that
+// schema is refused rather than read as if it had it.
+func TestPullRefusesReleaseLineageOfAnotherSchema(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	node := `{"weights_sha256":"` + strings.Repeat("a", 64) + `"}`
+	for name, schema := range map[string]string{"missing": ``, "future": `"schema":2,`, "string": `"schema":"1",`} {
+		files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
+		files["BOM.json"] = []byte(`{"kind":"openwaldo-bom",` + schema + `"subject":"model-release","lineage":` + node + `}`)
+		client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
+		if _, err := (Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "tiny", "huggingface://org/tiny"); err == nil || !strings.Contains(err.Error(), "unsupported schema") {
 			t.Fatalf("%s: pull error = %v", name, err)
 		}
 	}

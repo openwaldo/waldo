@@ -694,6 +694,11 @@ func releaseLineage(path string) (*LineageNode, error) {
 	if raw == nil || string(raw) == "null" {
 		return nil, nil
 	}
+	// Lineage is read with schema 1's meaning, so only a schema-1 release may carry it.
+	var schema int
+	if json.Unmarshal(release["schema"], &schema) != nil || schema != 1 {
+		return nil, fmt.Errorf("release BOM.json lineage: unsupported schema %s", release["schema"])
+	}
 	var lineage LineageNode
 	if err := json.Unmarshal(raw, &lineage); err != nil {
 		return nil, fmt.Errorf("release BOM.json lineage: %w", err)
