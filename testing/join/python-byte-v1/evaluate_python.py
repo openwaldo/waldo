@@ -15,6 +15,10 @@ threshold. Records are JSON lines with "id", "prompt", and "response" (the refer
 Output is stdout and stderr, so logged warnings count. Structure is what the reference has of a
 def main(), an if __name__ == "__main__" guard calling it, and logging calls; the answer needs the same.
 
+Two diagnostics print beside pass_rate and don't change it: values copied, the request's words and
+numbers that the reference uses in its literals and the answer also contains; and program shape,
+whether the answer is the reference's program with its literal values blanked.
+
 This runs code a model wrote. Each program runs with python3 -I in an empty scratch directory, with
 a timeout, no input, and the evaluator's environment stripped to PATH; that limits accidents, not
 malice. Use it for runs whose models you would run anyway, as join's gates do on contributors'
@@ -83,6 +87,37 @@ def structure(source):
     return found
 
 
+def literals(source):
+    """The words and numbers inside a program's string and number literals, lowercased."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (str, int, float)) and not isinstance(node.value, bool):
+            found.update(word.lower() for word in re.findall(r"\w+", str(node.value)))
+    return found - {"__main__"}
+
+
+def copied(prompt, reference, written):
+    """The request's values the reference uses, and how many of them the answer contains."""
+    wanted = literals(reference) & {word.lower() for word in re.findall(r"\w+", prompt)}
+    return len(wanted & literals(written)), len(wanted)
+
+
+def shape(source):
+    """A program's syntax tree with every literal value blanked, or None if it doesn't parse."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant):
+            node.value = None
+    return ast.dump(tree, annotate_fields=False)
+
+
 def run(source, timeout=10):
     """A program's stdout and stderr, or None if it failed or ran too long."""
     with tempfile.TemporaryDirectory() as scratch:
@@ -124,7 +159,7 @@ def main():
     if args.limit and args.limit < len(records):
         # Evenly spaced over the id-sorted records, so every task family is sampled.
         records = [records[index * len(records) // args.limit] for index in range(args.limit)]
-    passed, scored = 0, 0
+    passed, scored, shaped, values, wanted = 0, 0, 0, 0, 0
     for record in records:
         reference = program(record["response"])
         expected = run(reference)
@@ -135,10 +170,14 @@ def main():
         written = program(answer(args.model, record["prompt"]))
         ok = run(written) == expected and structure(reference) <= structure(written)
         passed, scored = passed + ok, scored + 1
-        print(f"{'pass' if ok else 'FAIL'}  {record['id']}", flush=True)
+        same = shape(written) is not None and shape(written) == shape(reference)
+        got, want = copied(record["prompt"], reference, written)
+        shaped, values, wanted = shaped + same, values + got, wanted + want
+        print(f"{'pass' if ok else 'FAIL'}  {record['id']}  shape {'ok' if same else 'differs'}, values {got}/{want}", flush=True)
         if args.show:
             print(f"  > {record['prompt']}\n" + "".join(f"    {line}\n" for line in written.splitlines()), flush=True)
     rate = passed / scored if scored else 0.0
+    print(f"program shape matched {shaped}/{scored}; request values copied {values}/{wanted}")
     print(f"{passed}/{scored} programs matched ({len(records) - scored} unscorable): pass_rate {rate:.4f}")
     document = {"kind": "openwaldo-evaluation-results", "schema": 1,
                 "evaluation_bom_sha256": hashlib.sha256(compact(bom_text).encode()).hexdigest(),

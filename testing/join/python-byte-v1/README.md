@@ -26,8 +26,20 @@ earlier models) should stay low: the training data doesn't teach them.
 
 ## Launch
 
-The plan goes into the runs repository as `runs/python-byte-v1/` (this directory's `run.yaml`,
-`eval.bom.json`, `eval.jsonl` and `evaluate_python.py`). It runs on `join-local` stacked on the
-lineage (#41) and merge (#42) PRs; record the commit of the `waldo` binary used here before round 0.
+The plan is this directory's `run.yaml`, `eval.bom.json`, `eval.jsonl` and `evaluate_python.py`,
+committed to the local runs repository as `runs/python-byte-v1/`. It runs on `join-local` stacked on
+the lineage (#41) and merge (#42) PRs: the `waldo` binary was built from `ef3318c`. Three identities
+share one M2 Max, each throttled to 0.10, with a 20-minute cooldown between rounds (lid open):
+
+    cd ~/.waldo/join/local/seed
+    caffeinate -s env ROUNDS=21 RUNS_REPO=$HOME/.waldo/join/local/runs.git \
+      JOIN_IDENTITY_PREFIX=mdagosta-bot- IDENTITIES=3 JOIN_THROTTLE=0.10 \
+      JOIN_EMAIL=346140425+mdagosta-bot@users.noreply.github.com \
+      ~/src/openwaldo/waldo-waldito/testing/join/run-identities.sh runs/python-byte-v1
+
+21 rounds is the most the plan can take: the bootstrap, 12 pretraining rounds, 4 post-training rounds
+and the gate's 4 extra rounds; the run stops early when the gate passes. `measure.sh` then scores the
+final merge on the demo and the full held-out set. Besides pass_rate, the evaluator prints how often
+the answer had the reference's program shape and how many of the request's values it copied.
 
 Results: TBD.
