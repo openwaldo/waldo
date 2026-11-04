@@ -19,8 +19,7 @@ import (
 	"github.com/openwaldo/waldo/internal/model"
 )
 
-// A model a later WALDO wrote, with a field this one doesn't know, is skipped
-// with a warning; the rest of the store still lists.
+// A model a later WALDO wrote is skipped with a warning; the rest of the store still lists.
 func TestModelListSkipsModelsItCannotRead(t *testing.T) {
 	models := filepath.Join(t.TempDir(), "models")
 	architecture := model.Architecture{Family: "decoder-transformer", ContextTokens: 128, VocabularySize: 256, HiddenSize: 64, IntermediateSize: 192, Layers: 2, AttentionHeads: 4, KeyValueHeads: 2, TieEmbeddings: true, ParameterDType: "float32", Tokenizer: model.Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
@@ -29,8 +28,7 @@ func TestModelListSkipsModelsItCannotRead(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// A later WALDO adds a field to the plan and hashes the plan with it; this
-	// one drops the field it doesn't know, so the plan's hash no longer matches.
+	// A later WALDO hashes its plan with a field this one drops, so the hash no longer matches.
 	future := filepath.Join(models, "future")
 	plan := rewriteJSON(t, filepath.Join(future, "PLAN.json"), func(fields map[string]any) {
 		fields["field_from_a_later_waldo"] = true

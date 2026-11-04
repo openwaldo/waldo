@@ -218,18 +218,18 @@ func TestLineageLeavesRecordsAsEarlierVersionsReadThem(t *testing.T) {
 	}
 	pullRelease(t, root, "pulled", LineageNode{WeightsSHA256: strings.Repeat("a", 64)})
 	for _, model := range []string{"child", "pulled"} {
-		paths, err := filepath.Glob(filepath.Join(root, model, "*.json"))
+		err := filepath.WalkDir(filepath.Join(root, model), func(path string, entry os.DirEntry, err error) error {
+			if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".json") || strings.HasSuffix(path, LineageFile) || strings.HasSuffix(path, filepath.FromSlash(ReleaseBOMPath)) {
+				return err
+			}
+			data, err := os.ReadFile(path)
+			if err == nil && strings.Contains(string(data), "lineage") {
+				t.Errorf("%s records lineage", path)
+			}
+			return err
+		})
 		if err != nil {
 			t.Fatal(err)
-		}
-		for _, path := range paths {
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if filepath.Base(path) != LineageFile && strings.Contains(string(data), "lineage") {
-				t.Fatalf("%s records lineage", path)
-			}
 		}
 	}
 	if _, err := os.Stat(filepath.Join(root, "child", LineageFile)); err != nil {
@@ -397,61 +397,78 @@ func TestPulledLineageRefusesAnEditedReleaseBOM(t *testing.T) {
 	if _, err := ModelLineage(pulled, ""); err == nil || !strings.Contains(err.Error(), "release BOM.json") {
 		t.Fatalf("edited release BOM.json: %v", err)
 	}
-}
-
-// A release whose lineage is not a lineage node is refused, not pulled as if
-// it recorded none.
-func TestPullRefusesMalformedReleaseLineage(t *testing.T) {
-	isolateHuggingFaceToken(t)
-	for name, lineage := range map[string]string{"type": `{"weights_sha256":123}`, "parents": `{"weights_sha256":"` + strings.Repeat("a", 64) + `","parents":"oops"}`, "digest": `{"weights_sha256":"xyz"}`} {
-		files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
-		files["BOM.json"] = []byte(`{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":` + lineage + `}`)
-		client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
-		if _, err := (Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "tiny", "huggingface://org/tiny"); err == nil || !strings.Contains(err.Error(), "lineage") {
-			t.Fatalf("%s: pull error = %v", name, err)
-		}
+	stage := releaseStage("child")
+	if _, err := realWeightsBuilder(root).Compose(t.Context(), "child", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "pulled"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)}); err == nil || !strings.Contains(err.Error(), "release BOM.json") {
+		t.Fatalf("compose from an edited release BOM.json: %v", err)
 	}
 }
 
-// The pull reads the exact lineage key in WALDO's own form, so the recorded
-// node is the one any reader of the release's BOM.json sees.
-func TestPullRefusesALineageItsReadersCouldSeeDifferently(t *testing.T) {
+// Lineage another reader could read differently, or that WALDO cannot read
+// as schema 1, is left out of the pull with a note rather than recorded or
+// fatal, so the origin is a root.
+func TestPullLeavesOutLineageItCannotReadExactly(t *testing.T) {
 	isolateHuggingFaceToken(t)
-	node := `{"weights_sha256":"` + strings.Repeat("a", 64) + `"}`
+	a, c := strings.Repeat("a", 64), strings.Repeat("c", 64)
+	node := `{"weights_sha256":"` + a + `"}`
+	older := `{"weights_sha256":"` + c + `"}`
+	release := func(fields string) string {
+		return `{"kind":"openwaldo-bom","schema":1,"subject":"model-release",` + fields + `,"artifacts":ARTIFACTS}`
+	}
 	for name, bom := range map[string]string{
-		"case variant":    `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":` + node + `,"LINEAGE":{"weights_sha256":"` + strings.Repeat("c", 64) + `"}}`,
-		"node key case":   `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":{"WEIGHTS_SHA256":"` + strings.Repeat("a", 64) + `"}}`,
-		"node extra":      `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":{"weights_sha256":"` + strings.Repeat("a", 64) + `","note":"x"}}`,
-		"node duplicates": `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":{"weights_sha256":"` + strings.Repeat("a", 64) + `","weights_sha256":"` + strings.Repeat("c", 64) + `"}}`,
-		"repeated key":    `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":` + node + `,"lineage":{"weights_sha256":"` + strings.Repeat("c", 64) + `"}}`,
-		"trailing data":   `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":` + node + `} x`,
-		"kind case":       `{"Kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":` + node + `}`,
+		"node type":          release(`"lineage":{"weights_sha256":123}`),
+		"node parents":       release(`"lineage":{"weights_sha256":"` + a + `","parents":"oops"}`),
+		"node digest":        release(`"lineage":{"weights_sha256":"xyz"}`),
+		"node key case":      release(`"lineage":{"WEIGHTS_SHA256":"` + a + `"}`),
+		"node extra":         release(`"lineage":{"weights_sha256":"` + a + `","declared":true}`),
+		"node duplicates":    release(`"lineage":{"weights_sha256":"` + a + `","weights_sha256":"` + c + `"}`),
+		"null node":          release(`"lineage":null`),
+		"ancestors only":     release(`"lineage_ancestors":[` + older + `]`),
+		"stray ancestor":     release(`"lineage":` + node + `,"lineage_ancestors":[` + older + `]`),
+		"link weights":       release(`"lineage":{"weights_sha256":"` + a + `","parents":[{"weights_sha256":"` + strings.Repeat("9", 64) + `","lineage_sha256":"` + lineageHash(t, LineageNode{WeightsSHA256: c}) + `"}]},"lineage_ancestors":[` + older + `]`),
+		"case variant key":   release(`"lineage":` + node + `,"LINEAGE":` + older),
+		"repeated key":       release(`"lineage":` + node + `,"lineage":` + older),
+		"kind case":          `{"Kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":` + node + `,"artifacts":ARTIFACTS}`,
+		"trailing data":      release(`"lineage":`+node) + ` x`,
+		"escaped key, trail": release(`"\u006cineage":`+node) + ` x`,
+		"inventory key case": `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":` + node + `,"artifacts":[{"role":"weights","path":"model.safetensors","sha256":"` + strings.Repeat("0", 64) + `","bytes":1,"SHA256":"WEIGHTS"}]}`,
+		"schema missing":     `{"kind":"openwaldo-bom","subject":"model-release","lineage":` + node + `,"artifacts":ARTIFACTS}`,
+		"schema string":      `{"kind":"openwaldo-bom","schema":"1","subject":"model-release","lineage":` + node + `,"artifacts":ARTIFACTS}`,
+		"schema later":       `{"kind":"openwaldo-bom","schema":2,"subject":"model-release","lineage":{"weights_sha256":"a later form"},"artifacts":ARTIFACTS}`,
+		"third-party key":    `{"bomFormat":"CycloneDX","lineage":"fine-tuned from a base"}`,
+		"third-party array":  `[{"description":"data lineage"}]`,
+		"third-party text":   `lineage: see the model card`,
 	} {
 		files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
-		files["BOM.json"] = []byte(bom)
-		client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
-		if _, err := (Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "tiny", "huggingface://org/tiny"); err == nil || !strings.Contains(err.Error(), "lineage") {
-			t.Fatalf("%s: pull error = %v", name, err)
+		artifacts, err := json.Marshal(inventory(files))
+		if err != nil {
+			t.Fatal(err)
 		}
+		digest := sha256.Sum256(files["model.safetensors"])
+		bom = strings.NewReplacer("ARTIFACTS", string(artifacts), "WEIGHTS", hex.EncodeToString(digest[:])).Replace(bom)
+		files["BOM.json"] = []byte(bom)
+		assertPulledRoot(t, files, name)
 	}
 }
 
-// Lineage is read with schema 1's meaning: a release BOM without a schema is
-// refused, and one from a later schema is pulled with its lineage left out.
-func TestPullReadsReleaseLineageOnlyAsSchemaOne(t *testing.T) {
+// A release BOM.json saved with a UTF-8 byte-order mark keeps its lineage.
+func TestPullKeepsLineageAfterAByteOrderMark(t *testing.T) {
 	isolateHuggingFaceToken(t)
-	node := `{"weights_sha256":"` + strings.Repeat("a", 64) + `"}`
-	for name, schema := range map[string]string{"missing": ``, "string": `"schema":"1",`, "zero": `"schema":0,`} {
-		files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
-		files["BOM.json"] = []byte(`{"kind":"openwaldo-bom",` + schema + `"subject":"model-release","lineage":` + node + `}`)
-		client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
-		if _, err := (Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "tiny", "huggingface://org/tiny"); err == nil || !strings.Contains(err.Error(), "unsupported schema") {
-			t.Fatalf("%s: pull error = %v", name, err)
-		}
-	}
 	files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
-	files["BOM.json"] = []byte(`{"kind":"openwaldo-bom","schema":2,"subject":"model-release","lineage":{"weights_sha256":"a later form","method":"merge"}}`)
-	assertPulledRoot(t, files, "schema 2")
+	declared := LineageNode{WeightsSHA256: strings.Repeat("a", 64)}
+	bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": declared, "artifacts": inventory(files)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files["BOM.json"] = append([]byte("\xef\xbb\xbf"), bom...)
+	client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
+	pulled, err := (Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "tiny", "huggingface://org/tiny")
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin, err := ModelLineage(pulled, "")
+	if err != nil || !reflect.DeepEqual(origin.Parents, []LineageLink{{WeightsSHA256: declared.WeightsSHA256, LineageSHA256: lineageHash(t, declared)}}) {
+		t.Fatalf("origin %+v, err %v", origin, err)
+	}
 }
 
 // A release BOM.json whose artifacts do not list the pulled weights, such as
@@ -462,8 +479,13 @@ func TestPullLeavesOutLineageOfOtherWeights(t *testing.T) {
 	for name, artifacts := range map[string][]OriginArtifact{
 		"other weights": {{Role: "weights", Path: "model.safetensors", SHA256: strings.Repeat("0", 64), Bytes: 1}},
 		"no inventory":  nil,
+		"listed twice":  nil,
 	} {
 		files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
+		if name == "listed twice" {
+			stale := OriginArtifact{Role: "weights", Path: "model.safetensors", SHA256: strings.Repeat("0", 64), Bytes: 1}
+			artifacts = append([]OriginArtifact{stale}, inventory(files)...)
+		}
 		bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": node, "artifacts": artifacts})
 		if err != nil {
 			t.Fatal(err)

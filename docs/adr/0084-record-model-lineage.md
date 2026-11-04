@@ -23,11 +23,12 @@ behind it.
 
 Each complete real run of a model has its own node, computed from its records,
 whose parent is the node of the weights the run started from: an earlier run,
-the parent's, or the origin's. A pulled origin's node is a root: it also names
-the release, by the hash of its repository, resolved revision, license, and
-files, so the chain ends where the weights came from; the same release is one
-root however the pull was written or which mirror served it. A model's node is
-its newest run's, or its origin's if it has none.
+the parent's, or the origin's. A pulled origin's node names the release, by
+the hash of its repository, resolved revision, license, and files, so the same
+release is one node however the pull was written or which mirror served it. Its
+parent is the node the release declared, when the pull keeps that lineage;
+otherwise it is a root, where the chain ends. A model's node is its newest
+run's, or its origin's if it has none.
 
 Nodes live beside a model's records, never in them, so the records stay what
 earlier WALDO versions write and read:
@@ -42,8 +43,10 @@ earlier WALDO versions write and read:
   lineage from it only while that hash matches.
 - A derived release's `BOM.json` (Hugging Face, MLX, GGUF, Ollama) carries its
   weights' node as `lineage` and the nodes behind it as `lineage_ancestors`. A
-  pull refuses lineage other readers could read differently, and keeps it only
-  when the release's `artifacts` list the pulled weights files by hash and size.
+  pull keeps that lineage only when every reader reads it the same way and the
+  release's `artifacts` list the pulled weights files by hash and size;
+  otherwise it notes why and leaves it out. A release's `BOM.json` never fails a
+  pull.
 
 Nodes name weights by content hash and runs by run BOM hash, whatever produced
 them, so models trained by other means can join a chain later without changing

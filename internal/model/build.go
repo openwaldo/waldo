@@ -1220,9 +1220,7 @@ func resolveInitialization(inspection Inspection) (*training.Initialization, err
 	return nil, nil
 }
 
-// realRun reports whether the run at position completed with real weights,
-// judged by its pin, as the model BOM's current run is. A pending compose's
-// normalized inspection can hold fewer pins than runs.
+// realRun reports whether the run at position completed with real weights, judged by its pin.
 func realRun(inspection Inspection, position int) bool {
 	run := inspection.Runs[position]
 	return run.State == RunComplete && run.Observation != nil && position < len(inspection.Model.Runs) && !inspection.Model.Runs[position].Simulated
@@ -2076,15 +2074,20 @@ func (builder Builder) initializeFromOrigin(name string, compose Compose, base I
 		OriginArtifacts: append([]OriginArtifact(nil), base.Model.OriginArtifacts...),
 	}
 	destination := filepath.Join(builder.Root, name)
-	// The origin's kept release BOM.json goes with it.
+	// The origin's kept release BOM.json goes with it, checked against its pin.
+	release, err := keptReleaseBOM(base.Path, *base.Origin)
+	if err != nil {
+		return Inspection{}, err
+	}
 	if err := initializeModel(builder.Root, destination, plan, record, func(temporary string) error {
-		release := filepath.Join(base.Path, filepath.FromSlash(ReleaseBOMPath))
-		if _, err := os.Stat(release); os.IsNotExist(err) {
+		if release == nil {
 			return nil
-		} else if err != nil {
+		}
+		path := filepath.Join(temporary, filepath.FromSlash(ReleaseBOMPath))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
-		return copyArtifactFile(release, filepath.Join(temporary, filepath.FromSlash(ReleaseBOMPath)))
+		return os.WriteFile(path, release, 0o644)
 	}); err != nil {
 		return Inspection{}, err
 	}

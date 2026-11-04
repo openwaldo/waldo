@@ -208,13 +208,9 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 	if err != nil {
 		return Inspection{}, err
 	}
-	// Malformed release lineage refuses the pull; the BOM.json itself is kept.
+	// The release's BOM.json is kept; lineage it cannot keep is noted, never fatal.
 	if data, err := os.ReadFile(filepath.Join(sourceDirectory, "BOM.json")); err == nil {
-		_, _, note, err := releaseLineage(data, sourceArtifacts)
-		if err != nil {
-			return Inspection{}, err
-		}
-		if note != "" {
+		if _, _, note := releaseLineage(data, sourceArtifacts); note != "" {
 			puller.report(PullProgress{Phase: "lineage", Message: note})
 		}
 	} else if !os.IsNotExist(err) {

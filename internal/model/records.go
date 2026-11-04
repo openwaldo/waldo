@@ -77,19 +77,12 @@ type OriginBOM struct {
 	Artifacts          []OriginArtifact `json:"artifacts"`
 }
 
-// LineageNode names a model's weights and the weights they came from, each by
-// its weights hash and the hash of its own node. Like a git commit, a node
-// names only its direct parents, so it stays the same size however long the
-// history behind it; the history is the chain of nodes.
+// LineageNode names weights, their direct parents' nodes, and the runs that made them, like a git commit.
 type LineageNode struct {
 	WeightsSHA256 string        `json:"weights_sha256"`
 	Parents       []LineageLink `json:"parents,omitempty"`
-	// Runs pins the run BOMs of the training that produced these weights from
-	// their parents, so the chain reaches the data each step trained on.
-	Runs []string `json:"runs,omitempty"`
-	// SourceSHA256 names the release a pulled root's weights came from, so the
-	// chain reaches its repository, revision, license, and files.
-	SourceSHA256 string `json:"source_sha256,omitempty"`
+	Runs          []string      `json:"runs,omitempty"`          // run BOMs that trained these weights from their parents
+	SourceSHA256  string        `json:"source_sha256,omitempty"` // the release a pulled root came from
 }
 
 type LineageLink struct {

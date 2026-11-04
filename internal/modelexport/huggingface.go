@@ -54,23 +54,19 @@ type Calibration struct {
 }
 
 type releaseBOM struct {
-	Kind        string            `json:"kind"`
-	Schema      int               `json:"schema"`
-	Subject     string            `json:"subject"`
-	Format      string            `json:"format"`
-	ModelID     string            `json:"model_id"`
-	Name        string            `json:"name"`
-	Interaction model.Interaction `json:"interaction,omitzero"`
-	SourceType  string            `json:"source_type"`
-	SourceID    string            `json:"source_id"`
-	RunID       string            `json:"run_id,omitempty"`
-	SourceBOM   string            `json:"source_bom_sha256"`
-	// Lineage is the node of the managed weights this release was converted
-	// from, so a model pulled from it continues the chain it declares.
-	Lineage *model.LineageNode `json:"lineage,omitempty"`
-	// LineageAncestors is every node behind Lineage the model held, so the
-	// history travels with the release.
-	LineageAncestors []model.LineageNode  `json:"lineage_ancestors,omitempty"`
+	Kind             string               `json:"kind"`
+	Schema           int                  `json:"schema"`
+	Subject          string               `json:"subject"`
+	Format           string               `json:"format"`
+	ModelID          string               `json:"model_id"`
+	Name             string               `json:"name"`
+	Interaction      model.Interaction    `json:"interaction,omitzero"`
+	SourceType       string               `json:"source_type"`
+	SourceID         string               `json:"source_id"`
+	RunID            string               `json:"run_id,omitempty"`
+	SourceBOM        string               `json:"source_bom_sha256"`
+	Lineage          *model.LineageNode   `json:"lineage,omitempty"`           // the node of the weights this release was converted from
+	LineageAncestors []model.LineageNode  `json:"lineage_ancestors,omitempty"` // every node behind it the model held
 	Artifacts        []releaseArtifact    `json:"artifacts"`
 	Quantization     *releaseQuantization `json:"quantization,omitempty"`
 	Generated        string               `json:"generated"`
