@@ -149,10 +149,18 @@ func startingLineage(inspection Inspection) (*LineageLink, map[string]LineageNod
 		if err != nil {
 			return nil, nil, err
 		}
+		// Without the file, the pinned hash still names the parent's history; it just isn't held.
 		if record == nil {
-			return &LineageLink{WeightsSHA256: parent.Artifact.SHA256}, held, nil
+			return &LineageLink{WeightsSHA256: parent.Artifact.SHA256, LineageSHA256: parent.LineageSHA256}, held, nil
 		}
-		// The parent node is the parent run's, which the pin names by weights and run BOM.
+		// The parent node must be the one the pin names: by hash, or for a pin from before lineage, by weights and run.
+		digest, err := hashJSON(record.Parent)
+		if err != nil {
+			return nil, nil, err
+		}
+		if parent.LineageSHA256 != "" && digest != parent.LineageSHA256 {
+			return nil, nil, fmt.Errorf("%s parent node %s is not the one the parent pin names, %s", LineageFile, digest, parent.LineageSHA256)
+		}
 		if record.Parent.WeightsSHA256 != parent.Artifact.SHA256 || !reflect.DeepEqual(record.Parent.Runs, []string{parent.RunBOMSHA256}) {
 			return nil, nil, fmt.Errorf("%s names weights %s from runs %v, not the parent pin's %s from run %s", LineageFile, record.Parent.WeightsSHA256, record.Parent.Runs, parent.Artifact.SHA256, parent.RunBOMSHA256)
 		}
@@ -305,14 +313,18 @@ func chain(node LineageNode, held map[string]LineageNode) []LineageNode {
 	return reached
 }
 
-// parentLineage is the LINEAGE.json of a model trained from base's run runID.
-func parentLineage(base Inspection, runID, weights string) (*lineageRecord, error) {
+// parentLineage is the LINEAGE.json of a model trained from base's run runID, as parent pins it.
+func parentLineage(base Inspection, runID string, parent ModelParent) (*lineageRecord, error) {
 	node, ancestors, err := LineageHistory(base, runID)
 	if err != nil {
 		return nil, err
 	}
-	if node.WeightsSHA256 != weights {
-		return nil, fmt.Errorf("base model %q's lineage names weights %s, not its run's %s", base.Model.Name, node.WeightsSHA256, weights)
+	digest, err := hashJSON(node)
+	if err != nil {
+		return nil, err
+	}
+	if node.WeightsSHA256 != parent.Artifact.SHA256 || digest != parent.LineageSHA256 {
+		return nil, fmt.Errorf("base model %q's lineage %s is not the one pinned, %s", base.Model.Name, digest, parent.LineageSHA256)
 	}
 	return &lineageRecord{Kind: lineageKind, Schema: 1, Parent: node, Ancestors: ancestors}, nil
 }

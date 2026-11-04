@@ -30,14 +30,15 @@ parent is the node the release declared, when the pull keeps that lineage;
 otherwise it is a root, where the chain ends. A model's node is its newest
 run's, or its origin's if it has none.
 
-Nodes live beside a model's records, never in them, so the records stay what
-earlier WALDO versions write and read:
+A model's identity commits to its history, and the history itself travels in a
+small file beside the records, so the models that made it can be deleted:
 
-- A model composed from a parent's run writes `LINEAGE.json`
-  (`waldo-model-lineage`, schema 1): the parent run's node and every node behind
-  it the parent held. It is read with exact keys, and its parent node must
-  name the weights and run BOM the parent pin names and its ancestors must be
-  exactly the chain behind it; a file that does not is an error.
+- A fine-tune's parent pin records the hash of the node of the run it starts
+  from (`lineage_sha256`), which never changes as the parent trains on. The
+  model also writes `LINEAGE.json` (`waldo-model-lineage`, schema 1): that node
+  and every node behind it the parent held, read with exact keys. The parent
+  node must hash to the pinned value and the ancestors must be exactly the
+  chain behind it; a file that does not is an error.
 - A pull keeps the release's `BOM.json`, whose hash the origin already pins
   among its source files, as `origin/release/BOM.json`; a kept file that no
   longer has that hash is an error.
@@ -56,18 +57,22 @@ the node.
 
 - A model carries its whole known history in one small file, so deleting or
   never fetching the models that made it loses nothing, and a release ships its
-  history with it.
+  history with it. Without the file, the pinned hash still names the history;
+  it is only not held.
 - Hashes prove a history consistent, not true: anyone can write a consistent
   chain. Trust in what a node claims comes from signed records above it.
 - Fewer ancestors make a shorter history, not a different one: the chain ends at
-  the first node a model does not hold. A missing `LINEAGE.json` or kept
-  release file shortens a history the same way; an altered one is an error.
+  the first node a model does not hold, where the link still names its hash. A
+  missing kept release file shortens a pulled model's history the same way; an
+  altered `LINEAGE.json` or kept release file is an error.
 - Nodes make it possible to tell whether two models started from the same
   weights by walking parents, like `git merge-base`; nothing walks them yet.
-- Earlier WALDO versions read every model this one writes; they ignore
-  `LINEAGE.json` and the kept release file. Models made before lineage, or
-  composed by an earlier version, start their history at their parent's weights
-  hash or at their origin.
+- The upgrade is one-way for fine-tunes: earlier WALDO versions refuse a model
+  whose parent pin records `lineage_sha256`, and archived composes that pin it.
+  They still read pulled, untrained, and from-scratch models, and ignore
+  `LINEAGE.json` and the kept release file. Fine-tunes and interrupted composes
+  from before lineage keep matching; their history starts at their parent's
+  weights hash or at their origin.
 - Lineage from a later WALDO never blocks this one: a `LINEAGE.json` or release
   of a later schema is left out, giving a shorter history. A later WALDO that
   changes either bumps its schema.

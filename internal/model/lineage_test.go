@@ -205,42 +205,44 @@ func TestFineTuneKeepsItsHistoryWithoutItsParent(t *testing.T) {
 	}
 }
 
-// Lineage lives beside the records, which stay exactly as earlier WALDO
-// versions write and read them.
-func TestLineageLeavesRecordsAsEarlierVersionsReadThem(t *testing.T) {
+// A fine-tune's parent pin names its parent's lineage node, binding the history
+// in LINEAGE.json to the model's identity; a pulled model's records stay as they were.
+func TestFineTunePinsItsParentsLineage(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	root := t.TempDir()
 	builder := realWeightsBuilder(root)
 	trainTwice(t, builder)
 	stage := testStage("child")
-	if _, err := builder.Compose(t.Context(), "child", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+	child, err := builder.Compose(t.Context(), "child", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)})
+	if err != nil {
 		t.Fatal(err)
 	}
-	pullRelease(t, root, "pulled", LineageNode{WeightsSHA256: strings.Repeat("a", 64)})
-	for _, model := range []string{"child", "pulled"} {
-		err := filepath.WalkDir(filepath.Join(root, model), func(path string, entry os.DirEntry, err error) error {
-			if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".json") || strings.HasSuffix(path, LineageFile) || strings.HasSuffix(path, filepath.FromSlash(ReleaseBOMPath)) {
-				return err
-			}
-			data, err := os.ReadFile(path)
-			if err == nil && strings.Contains(string(data), "lineage") {
-				t.Errorf("%s records lineage", path)
-			}
-			return err
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
+	record, err := readLineageRecord(filepath.Join(root, "child", LineageFile))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "child", LineageFile)); err != nil {
-		t.Fatalf("child has no %s: %v", LineageFile, err)
+	if child.Model.Parent.LineageSHA256 == "" || child.Model.Parent.LineageSHA256 != lineageHash(t, record.Parent) {
+		t.Fatalf("parent pin %s does not name LINEAGE.json's parent %s", child.Model.Parent.LineageSHA256, lineageHash(t, record.Parent))
+	}
+	pullRelease(t, root, "pulled", LineageNode{WeightsSHA256: strings.Repeat("a", 64)})
+	err = filepath.WalkDir(filepath.Join(root, "pulled"), func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".json") || strings.HasSuffix(path, filepath.FromSlash(ReleaseBOMPath)) {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err == nil && strings.Contains(string(data), "lineage") {
+			t.Errorf("%s records lineage", path)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
-// A LINEAGE.json is refused unless its parent node names the weights the
-// parent pin names and its ancestors are exactly the chain behind it. Fewer
-// ancestors is a shorter history, not a different one; a model made before
-// lineage starts from its parent's weights alone.
+// A LINEAGE.json is refused unless its parent node is the one the parent pin
+// names and its ancestors are exactly the chain behind it. Without the file, or
+// with a later schema, the pinned hash still names the parent's history.
 func TestFineTuneLineageMustMatchItsParent(t *testing.T) {
 	root := t.TempDir()
 	builder := realWeightsBuilder(root)
@@ -262,6 +264,7 @@ func TestFineTuneLineageMustMatchItsParent(t *testing.T) {
 		"stray ancestor":   func(record *lineageRecord) { record.Ancestors = append(record.Ancestors, stray) },
 		"altered ancestor": func(record *lineageRecord) { record.Ancestors[0].Runs = []string{strings.Repeat("e", 64)} },
 		"link weights":     func(record *lineageRecord) { record.Parent.Parents[0].WeightsSHA256 = strings.Repeat("9", 64) },
+		"other ancestry":   func(record *lineageRecord) { record.Parent.Parents, record.Ancestors = nil, nil },
 		"another kind":     func(record *lineageRecord) { record.Kind = "waldo-model" },
 	} {
 		record := *original
@@ -287,7 +290,7 @@ func TestFineTuneLineageMustMatchItsParent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: child.Model.Parent.Artifact.SHA256}}) {
+		if !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: child.Model.Parent.Artifact.SHA256, LineageSHA256: child.Model.Parent.LineageSHA256}}) {
 			t.Fatalf("%s: starts from %+v", name, node.Parents)
 		}
 	}
@@ -393,8 +396,100 @@ func TestLineageFileMustReadAlike(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"kind":"waldo-model-lineage","schema":2,"history":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if node, err := ModelLineage(child, ""); err != nil || !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: child.Model.Parent.Artifact.SHA256}}) {
+	if node, err := ModelLineage(child, ""); err != nil || !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: child.Model.Parent.Artifact.SHA256, LineageSHA256: child.Model.Parent.LineageSHA256}}) {
 		t.Fatalf("later schema: %+v, %v", node.Parents, err)
+	}
+}
+
+// Only a trained base has a lineage node to pin; any other pin is refused, not recorded.
+func TestComposeRefusesLineagePinOnUntrainedBase(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullRelease(t, root, "pulled", LineageNode{})
+	stage := releaseStage("continue")
+	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "pulled", LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
+	if _, err := (Builder{Root: root, Resolver: training.FakeResolver()}).Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil || !strings.Contains(err.Error(), "cannot assert managed-model run pins") {
+		t.Fatalf("origin base with a lineage pin: %v", err)
+	}
+	source := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Source: "huggingface://org/tiny@" + strings.Repeat("a", 40), LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
+	if err := source.Validate(); err == nil || !strings.Contains(err.Error(), "base.source") {
+		t.Fatalf("source base with a lineage pin: %v", err)
+	}
+}
+
+// Parent pins recorded before lineage still match the same parent, so existing
+// fine-tunes keep accepting stages.
+func TestSameParentAcceptsPinsRecordedBeforeLineage(t *testing.T) {
+	pin := ModelParent{Model: "base", ModelID: "id", RunID: "run", RunBOMSHA256: "bom", Artifact: training.Artifact{Path: "base/model.safetensors", SHA256: "weights"}}
+	withLineage := pin
+	withLineage.LineageSHA256 = strings.Repeat("a", 64)
+	if !sameParent(&pin, &withLineage) || !sameParent(&withLineage, &withLineage) {
+		t.Fatal("matching parents rejected")
+	}
+	other := withLineage
+	other.LineageSHA256 = strings.Repeat("b", 64)
+	if sameParent(&withLineage, &other) {
+		t.Fatal("a recorded lineage must match exactly")
+	}
+	changed := pin
+	changed.RunID = "another"
+	if sameParent(&changed, &withLineage) || sameParent(nil, &withLineage) {
+		t.Fatal("a different parent matched")
+	}
+}
+
+// An asserted lineage pin must be the base run's own node.
+func TestComposeRefusesAWrongLineagePin(t *testing.T) {
+	builder := realWeightsBuilder(t.TempDir())
+	first := trainTwice(t, builder)
+	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first, LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{testStage("child")}}
+	if _, err := builder.ResolveCompose(t.Context(), compose, false); err == nil || !strings.Contains(err.Error(), "recorded ancestry") {
+		t.Fatalf("wrong lineage pin: %v", err)
+	}
+}
+
+// A fine-tune compose interrupted before lineage was recorded, whose kept
+// transaction has no lineage pin, resumes with the same command.
+func TestComposeResumesATransactionFromBeforeLineage(t *testing.T) {
+	root := t.TempDir()
+	builder := realWeightsBuilder(root)
+	first := trainTwice(t, builder)
+	stage := testStage("child")
+	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first}, Stages: []Stage{stage}}
+	interrupted := builder
+	interrupted.Resolver = training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backendFunc(func(context.Context, training.Request) (training.Observation, error) {
+			return training.Observation{}, context.Canceled
+		})), nil
+	})
+	if _, err := interrupted.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil {
+		t.Fatal("interrupted compose finished")
+	}
+	// Rewrite the kept transaction and compose as a WALDO without lineage wrote them.
+	paths, err := filepath.Glob(filepath.Join(root, ".waldo-compose", "*", "COMPOSE.json"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("pending transactions %v, %v", paths, err)
+	}
+	var transaction composeTransaction
+	if err := readJSON(paths[0], &transaction); err != nil {
+		t.Fatal(err)
+	}
+	transaction.Compose.Base.LineageSHA256 = ""
+	if err := writeJSONAtomic(paths[0], transaction); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(filepath.Join(root, "child", "COMPOSE.json"), transaction.Compose); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := builder.ResolveCompose(t.Context(), compose, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := builder.CheckComposeTarget("child", resolved); err != nil {
+		t.Fatalf("check before resuming: %v", err)
+	}
+	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+		t.Fatalf("resume: %v", err)
 	}
 }
 
