@@ -27,33 +27,54 @@ type Listing struct {
 	Updated    string `json:"updated"`
 }
 
+// List lists every model, failing on any it cannot read.
 func List(root string, patterns []string) ([]Listing, error) {
-	entries, err := os.ReadDir(root)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+	result, unreadable, err := ListReadable(root, patterns)
 	if err != nil {
 		return nil, err
 	}
+	for _, failure := range unreadable {
+		return nil, failure.Err
+	}
+	return result, nil
+}
+
+// Unreadable is a model List could not read, such as one a later WALDO wrote.
+type Unreadable struct {
+	Name string
+	Err  error
+}
+
+// ListReadable lists the models it can read and names the ones it cannot, so
+// one model a later WALDO wrote doesn't hide the rest.
+func ListReadable(root string, patterns []string) ([]Listing, []Unreadable, error) {
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
 	for _, pattern := range patterns {
 		if _, err := filepath.Match(pattern, ""); err != nil {
-			return nil, fmt.Errorf("invalid model pattern %q: %w", pattern, err)
+			return nil, nil, fmt.Errorf("invalid model pattern %q: %w", pattern, err)
 		}
 	}
 	result := make([]Listing, 0)
+	var unreadable []Unreadable
 	for _, entry := range entries {
 		if !entry.IsDir() || !validName.MatchString(entry.Name()) || !matchesAny(entry.Name(), patterns) {
 			continue
 		}
 		inspection, err := Inspect(root, entry.Name())
 		if err != nil {
-			return nil, err
+			unreadable = append(unreadable, Unreadable{Name: entry.Name(), Err: err})
+			continue
 		}
-		listing := listingFromInspection(inspection)
-		result = append(result, listing)
+		result = append(result, listingFromInspection(inspection))
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
-	return result, nil
+	return result, unreadable, nil
 }
 
 func listingFromInspection(inspection Inspection) Listing {

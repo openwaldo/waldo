@@ -52,6 +52,8 @@ the node.
   those records as invalid, so one such model stops their `model list`, and
   their compose loader refuses archived composes that pin `lineage_sha256`.
   Records written before lineage, and models that never gain it, still read.
+  From this version on, `model list` skips a model it cannot read with a
+  warning, so a model from a later WALDO doesn't hide the rest of the store.
 - A pulled release's node is what the release declared. WALDO records it as
   declared and cannot check it; verifying it against signed releases is future
   work.
