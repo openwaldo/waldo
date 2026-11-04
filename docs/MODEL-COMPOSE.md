@@ -314,7 +314,8 @@ Hugging Face token file. Verified direct origins are cached beneath
 `waldo model list`. The destination hard-links cached artifacts when possible
 and copies them otherwise. Its `ORIGIN-BOM.json` records the repository,
 requested and resolved revisions, declared license when available, source-file
-hashes, and normalized artifact hashes.
+hashes, normalized artifact hashes, and the lineage node a WALDO release
+declares, if any.
 
 Schema 1 currently accepts standard bias-free Llama Safetensors with
 `OpenWALDOTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors—the

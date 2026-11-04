@@ -302,3 +302,109 @@ func TestSameParentAcceptsPinsRecordedBeforeLineage(t *testing.T) {
 		t.Fatal("a different parent matched")
 	}
 }
+
+// An asserted lineage pin must be the base run's own node.
+func TestComposeRefusesAWrongLineagePin(t *testing.T) {
+	builder := realWeightsBuilder(t.TempDir())
+	first := trainTwice(t, builder)
+	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first, LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{testStage("child")}}
+	if _, err := builder.ResolveCompose(t.Context(), compose, false); err == nil || !strings.Contains(err.Error(), "recorded ancestry") {
+		t.Fatalf("wrong lineage pin: %v", err)
+	}
+}
+
+// A fine-tune interrupted before lineage was recorded resumes with the same
+// command; its parent pin stays as it was written.
+func TestComposeResumesATransactionFromBeforeLineage(t *testing.T) {
+	root := t.TempDir()
+	builder := realWeightsBuilder(root)
+	first := trainTwice(t, builder)
+	stage := testStage("child")
+	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first}, Stages: []Stage{stage}}
+	interrupted := builder
+	interrupted.Resolver = training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backendFunc(func(context.Context, training.Request) (training.Observation, error) {
+			return training.Observation{}, context.Canceled
+		})), nil
+	})
+	if _, err := interrupted.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil {
+		t.Fatal("interrupted compose finished")
+	}
+	// Rewrite the kept transaction and compose as a WALDO without lineage wrote them.
+	paths, err := filepath.Glob(filepath.Join(root, ".waldo-compose", "*", "COMPOSE.json"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("pending transactions %v, %v", paths, err)
+	}
+	var transaction composeTransaction
+	if err := readJSON(paths[0], &transaction); err != nil {
+		t.Fatal(err)
+	}
+	transaction.Compose.Base.LineageSHA256 = ""
+	if err := writeJSONAtomic(paths[0], transaction); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(filepath.Join(root, "child", "COMPOSE.json"), transaction.Compose); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := builder.ResolveCompose(t.Context(), compose, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := builder.CheckComposeTarget("child", resolved); err != nil {
+		t.Fatalf("check before resuming: %v", err)
+	}
+	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+}
+
+// The pull reads the exact lineage key in WALDO's own form, so the recorded
+// node is the one any reader of the release's BOM.json sees.
+func TestPullRefusesALineageItsReadersCouldSeeDifferently(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	node := `{"weights_sha256":"` + strings.Repeat("a", 64) + `"}`
+	for name, bom := range map[string]string{
+		"case variant":    `{"kind":"openwaldo-bom","subject":"model-release","lineage":` + node + `,"LINEAGE":{"weights_sha256":"` + strings.Repeat("c", 64) + `"}}`,
+		"node key case":   `{"kind":"openwaldo-bom","subject":"model-release","lineage":{"WEIGHTS_SHA256":"` + strings.Repeat("a", 64) + `"}}`,
+		"node extra":      `{"kind":"openwaldo-bom","subject":"model-release","lineage":{"weights_sha256":"` + strings.Repeat("a", 64) + `","note":"x"}}`,
+		"node duplicates": `{"kind":"openwaldo-bom","subject":"model-release","lineage":{"weights_sha256":"` + strings.Repeat("a", 64) + `","weights_sha256":"` + strings.Repeat("c", 64) + `"}}`,
+	} {
+		files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
+		files["BOM.json"] = []byte(bom)
+		client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
+		if _, err := (Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "tiny", "huggingface://org/tiny"); err == nil || !strings.Contains(err.Error(), "lineage") {
+			t.Fatalf("%s: pull error = %v", name, err)
+		}
+	}
+}
+
+// A pulled root names the origin record it came from, so the same weights
+// from two sources are two roots, and the chain reaches the source.
+func TestPulledRootsNameTheirOrigin(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
+	var nodes []LineageNode
+	for _, revision := range []string{strings.Repeat("a", 40), strings.Repeat("b", 40)} {
+		client := &http.Client{Transport: huggingFaceTransport(t, files, revision)}
+		name := "pulled-" + revision[:1]
+		if _, err := (Puller{Root: root, Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), name, "huggingface://org/tiny"); err != nil {
+			t.Fatal(err)
+		}
+		pulled, err := Inspect(root, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		node, err := ModelLineage(pulled, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if node.OriginSHA256 != pulled.Model.OriginBOMSHA256 {
+			t.Fatalf("revision %s: node origin %s, model origin %s", revision, node.OriginSHA256, pulled.Model.OriginBOMSHA256)
+		}
+		nodes = append(nodes, node)
+	}
+	if nodes[0].WeightsSHA256 != nodes[1].WeightsSHA256 || lineageHash(t, nodes[0]) == lineageHash(t, nodes[1]) {
+		t.Fatalf("same weights from two sources: %+v and %+v", nodes[0], nodes[1])
+	}
+}

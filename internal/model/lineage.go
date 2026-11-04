@@ -29,6 +29,9 @@ func (node LineageNode) validate() error {
 			return fmt.Errorf("run BOM %q is not a SHA-256", run)
 		}
 	}
+	if node.OriginSHA256 != "" && !lineageDigest.MatchString(node.OriginSHA256) {
+		return fmt.Errorf("origin BOM %q is not a SHA-256", node.OriginSHA256)
+	}
 	return nil
 }
 
@@ -122,7 +125,11 @@ func originNode(origin OriginBOM) (LineageNode, error) {
 	if weights == "" {
 		return LineageNode{}, fmt.Errorf("model origin has no weights artifact")
 	}
-	node := LineageNode{WeightsSHA256: weights}
+	digest, err := hashJSON(origin)
+	if err != nil {
+		return LineageNode{}, err
+	}
+	node := LineageNode{WeightsSHA256: weights, OriginSHA256: digest}
 	if origin.Lineage != nil {
 		link, err := linkTo(*origin.Lineage)
 		if err != nil {

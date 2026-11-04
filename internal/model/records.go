@@ -91,6 +91,9 @@ type LineageNode struct {
 	// Runs pins the run BOMs of the training that produced these weights from
 	// their parents, so the chain reaches the data each step trained on.
 	Runs []string `json:"runs,omitempty"`
+	// OriginSHA256 pins a pulled root's origin BOM, so the chain reaches the
+	// release, revision, and license its weights came from.
+	OriginSHA256 string `json:"origin_sha256,omitempty"`
 }
 
 type LineageLink struct {

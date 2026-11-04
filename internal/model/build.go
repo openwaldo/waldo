@@ -1333,6 +1333,7 @@ func (builder Builder) CheckComposeTarget(name string, compose Compose) error {
 }
 
 func pendingComposeMatchesRequest(root string, pending composeTransaction, requested Compose) (bool, error) {
+	requested = asStored(pending.Compose, requested)
 	if reflect.DeepEqual(pending.Compose, requested) {
 		return true, nil
 	}
@@ -1340,7 +1341,19 @@ func pendingComposeMatchesRequest(root string, pending composeTransaction, reque
 	if err != nil {
 		return false, err
 	}
-	return reflect.DeepEqual(pending.Compose, normalized), nil
+	return reflect.DeepEqual(pending.Compose, asStored(pending.Compose, normalized)), nil
+}
+
+// asStored is requested as a compose stored before base pins recorded
+// lineage would hold it, so work interrupted then still resumes, as
+// sameParent keeps such pins matching.
+func asStored(stored, requested Compose) Compose {
+	if stored.Base != nil && requested.Base != nil && stored.Base.LineageSHA256 == "" && requested.Base.LineageSHA256 != "" {
+		base := *requested.Base
+		base.LineageSHA256 = ""
+		requested.Base = &base
+	}
+	return requested
 }
 
 // NormalizePendingComposeRequest removes only corpora completed before the
@@ -1687,7 +1700,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 		if err := json.Unmarshal(data, &persisted); err != nil {
 			return Inspection{}, fmt.Errorf("read persisted compose for model %s: %w", destination, err)
 		}
-		if !reflect.DeepEqual(persisted, compose) && transaction.ModelID == "" {
+		if !reflect.DeepEqual(persisted, asStored(persisted, compose)) && transaction.ModelID == "" {
 			return Inspection{}, fmt.Errorf("composing model %s has a different persisted compose", destination)
 		}
 		if !reflect.DeepEqual(persisted, compose) {
@@ -1864,11 +1877,13 @@ func findComposeTransaction(root string, requested composeTransaction) (string, 
 		candidate.StartRun = 0
 		candidate.TargetModelID = ""
 		candidate.TargetSHA256 = ""
-		if reflect.DeepEqual(candidate, requested) {
+		request := requested
+		request.Compose = asStored(existing.Compose, requested.Compose)
+		if reflect.DeepEqual(candidate, request) {
 			return workspace, &existing, nil
 		}
-		if existing.Kind == requested.Kind && existing.Schema == requested.Schema && existing.Name == requested.Name {
-			if reflect.DeepEqual(candidate.Compose, requested.Compose) {
+		if existing.Kind == request.Kind && existing.Schema == request.Schema && existing.Name == request.Name {
+			if reflect.DeepEqual(candidate.Compose, request.Compose) {
 				// Reuse the transaction workspace and let validatePreparedResume
 				// compare the complete saved and prepared corpus BOMs. Their hashes
 				// can differ when non-training metadata (for example shard

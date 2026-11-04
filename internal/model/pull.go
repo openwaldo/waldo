@@ -6,6 +6,7 @@
 package model
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -674,20 +675,41 @@ func releaseLineage(path string) (*LineageNode, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	var release struct {
-		Kind    string          `json:"kind"`
-		Subject string          `json:"subject"`
-		Lineage json.RawMessage `json:"lineage"`
+	// Keys are read exactly, as other readers of BOM.json read them; Go's
+	// decoder alone would also match "LINEAGE".
+	var release map[string]json.RawMessage
+	if json.Unmarshal(data, &release) != nil {
+		return nil, nil
 	}
-	if json.Unmarshal(data, &release) != nil || release.Kind != "openwaldo-bom" || release.Subject != "model-release" || release.Lineage == nil || string(release.Lineage) == "null" {
+	var kind, subject string
+	if json.Unmarshal(release["kind"], &kind) != nil || json.Unmarshal(release["subject"], &subject) != nil || kind != "openwaldo-bom" || subject != "model-release" {
+		return nil, nil
+	}
+	for key := range release {
+		if key != "lineage" && strings.EqualFold(key, "lineage") {
+			return nil, fmt.Errorf("release BOM.json lineage: unexpected key %q", key)
+		}
+	}
+	raw := release["lineage"]
+	if raw == nil || string(raw) == "null" {
 		return nil, nil
 	}
 	var lineage LineageNode
-	if err := json.Unmarshal(release.Lineage, &lineage); err != nil {
+	if err := json.Unmarshal(raw, &lineage); err != nil {
 		return nil, fmt.Errorf("release BOM.json lineage: %w", err)
 	}
 	if err := lineage.validate(); err != nil {
 		return nil, fmt.Errorf("release BOM.json lineage: %w", err)
+	}
+	// The node must be exactly the one WALDO hashes, so the bytes a release
+	// publishes say what this pull records.
+	canonical, err := json.Marshal(lineage)
+	if err != nil {
+		return nil, err
+	}
+	var published bytes.Buffer
+	if err := json.Compact(&published, raw); err != nil || !bytes.Equal(published.Bytes(), canonical) {
+		return nil, fmt.Errorf("release BOM.json lineage is not a lineage node in WALDO's form")
 	}
 	return &lineage, nil
 }
