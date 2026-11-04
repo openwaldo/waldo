@@ -67,8 +67,8 @@ class RateWindow:
         return progress_estimate(step, target_steps, step - self.step, tokens - self.tokens, now - self.started)
 
 
-# WALDO_GPU_THROTTLE=0.25 caps training to ~25% of wall-clock time; GPU alternates between
-# full-speed and idle. Applies only to the MLX worker.
+# WALDO_GPU_THROTTLE=0.25 caps training and held-out scoring to ~25% of wall-clock time; the GPU
+# alternates between full speed and idle. Applies only to the MLX worker.
 def read_gpu_throttle():
     try:
         value = float(os.environ.get("WALDO_GPU_THROTTLE") or 1)
@@ -672,6 +672,7 @@ class Trainer:
         total_loss = 0.0
         total_tokens = 0.0
         for offset in range(0, len(self.evaluation_sequences), self.batch_size):
+            batch_started = time.perf_counter()
             batch = self.evaluation_sequences[offset : offset + self.batch_size]
             tokens = mx.array([item[0] for item in batch], dtype=mx.int32)
             mask = mx.array([item[1] for item in batch], dtype=mx.float32)
@@ -682,6 +683,8 @@ class Trainer:
             loss_sum = (losses * mask).sum()
             token_count = mask.sum()
             mx.eval(loss_sum, token_count)
+            if GPU_THROTTLE < 1:
+                time.sleep((time.perf_counter() - batch_started) * (1 / GPU_THROTTLE - 1))
             total_loss += float(loss_sum.item())
             total_tokens += float(token_count.item())
         self.model.train()
