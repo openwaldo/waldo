@@ -526,7 +526,7 @@ func validateEvaluationSet(runBOM RunBOM) error {
 		return nil
 	}
 	set := runBOM.EvaluationSet
-	if set == nil || set.Selection != policy.Selection || set.Seed != runBOM.Parameters.Seed || set.Records < 0 || set.Records > runBOM.CorpusBOM.Totals.Docs || set.TokenTargets < 0 || set.TextBytes < 0 {
+	if set == nil || set.Selection != policy.Selection || set.Seed != runBOM.Parameters.EvaluationSeed() || set.Records < 0 || set.Records > runBOM.CorpusBOM.Totals.Docs || set.TokenTargets < 0 || set.TextBytes < 0 {
 		return fmt.Errorf("evidence does not match the resolved evaluation policy or corpus")
 	}
 	decoded, err := hex.DecodeString(set.SHA256)

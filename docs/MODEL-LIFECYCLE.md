@@ -93,6 +93,10 @@ file. Source downloads live only in private staging and are removed after the
 managed artifact has been verified. `ORIGIN-BOM.json` retains the repository,
 requested reference, resolved commit, license when declared, and hashes of all
 acquired files; it does not retain a redundant copy of the source weights.
+A WALDO release's origin also keeps its lineage and training evidence
+([ADR 0084](adr/0084-record-model-lineage.md), [ADR 0090](adr/0090-publish-training-provenance-across-lineage.md)). Origins can
+also come from a local directory (provider `file`) or a merge (provider
+`merge`, under `<model.root>/.merges`; [ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)).
 `MODEL-BOM.json` selects the origin until a complete real training run produces
 new current weights.
 
@@ -100,7 +104,9 @@ Schema 1 initially accepts standard bias-free Llama weights with
 `OpenWALDOTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors. Pull
 also accepts the legacy `OpenWALDOByteTokenizer` class name used by older WALDO
 exports; both names identify the same byte tokenizer. That is the format
-produced by WALDO's Hugging Face export. Other tokenizers or architectural
+produced by WALDO's Hugging Face export, which also carries a trained
+`waldo/byte-bpe` tokenizer as `openwaldo_tokenizer.json`; pull restores it into
+the architecture. Other tokenizers or architectural
 variants fail before publication rather than being numerically converted or
 silently retokenized.
 
@@ -468,6 +474,11 @@ For `--hostfile` runs, WALDO performs this local completion check before
 probing or staging secondary hosts. A verified no-op therefore has no remote
 side effects.
 
+`--evaluate-only` scores the model's current weights on the held-out records
+the compose's first stage selects, and changes nothing. The same compose and
+seed select the same records on any machine, so verifiers can compare replicas
+([ADR 0088](adr/0088-score-weights-without-training.md)).
+
 Passing `--audit` audits every materialized stage before the transaction starts.
 Interactive terminals receive byte-level materialization progress; redirected
 logs receive one completion line for every shard. The optional audit is shown
@@ -517,7 +528,8 @@ attempt without one remains terminal and is restarted as a new run.
 - `PLAN.json` content-identifies the immutable architecture and local model
   name plus either an external origin BOM or a trained-parent pin. The parent
   pin names the model and run and hashes both the run BOM and copied weight
-  artifact. `MODEL.json` and `MODEL-BOM.json` repeat that lineage. Adding
+  artifact, and, for parents recorded since lineage nodes, the parent's
+  lineage node. `MODEL.json` and `MODEL-BOM.json` repeat that lineage. Adding
   training does not change model identity.
 - `RUN-BOM.json` embeds the hash-pinned corpus OpenWALDO BOM and pins
   architecture, backend, objective, parameters, and execution environment
@@ -698,9 +710,10 @@ waldo model gate conversation2 core-v1.bom.json core-v1.results.json core-v1.gat
 
 The evaluator-owned results file uses kind `openwaldo-evaluation-results`,
 schema 1, the evaluation BOM SHA-256, and a `results` array of metric/value
-pairs. The gate re-materializes every completed real training BOM, scans each
-corpus once for exact and fuzzy overlap, and fails promotion on contamination
-or threshold errors. Simulated runs can never pass this release gate.
+pairs. The gate scans every corpus in the model's training closure, inherited
+ones included, for exact and fuzzy overlap, and fails promotion on
+contamination or threshold errors. A model with incompletely recorded history
+cannot be gated, and simulated runs can never pass.
 
 Model composes never select MLX, PyTorch, TensorFlow, or TorchTitan. Before a
 run is written, the environment-aware resolver chooses an adapter and records

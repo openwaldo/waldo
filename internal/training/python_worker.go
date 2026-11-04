@@ -266,6 +266,7 @@ func workerBeginFromRequest(request Request) WorkerBegin {
 		ArchitectureSHA256: request.ArchitectureSHA256, Architecture: request.Architecture,
 		Parameters: request.Parameters, Parallelism: request.Parallelism,
 		EvaluationSet: request.EvaluationSet, Tokenizer: tokenizer, DataNodeRank: request.DataNodeRank,
+		EvaluateOnly:           request.EvaluateOnly,
 		PreparedCacheDirectory: request.PreparedCacheDirectory, PreparedCacheMaxBytes: request.PreparedCacheMaxBytes,
 		PreparedBOMSHA256: request.RunBOMSHA256,
 	}

@@ -37,6 +37,22 @@ type Compose struct {
 	Architecture Architecture `json:"architecture" yaml:"architecture"`
 	Interaction  Interaction  `json:"interaction,omitzero" yaml:"interaction,omitempty"`
 	Stages       []Stage      `json:"stages" yaml:"stages"`
+	// Join is read only by `waldo model join`, which runs this compose as a
+	// distributed run; every other command ignores it, and it is no part of the
+	// compose's identity.
+	Join *RawYAML `json:"-" yaml:"join,omitempty"`
+}
+
+// RawYAML keeps a block of a compose as written, for the command that reads it.
+type RawYAML struct{ Node yaml.Node }
+
+func (raw *RawYAML) UnmarshalYAML(node *yaml.Node) error {
+	raw.Node = *node
+	return nil
+}
+
+func (raw RawYAML) MarshalYAML() (any, error) {
+	return &raw.Node, nil
 }
 
 const InteractionUserAssistantV1 = "user-assistant-v1"
@@ -258,13 +274,17 @@ func validateCorpusSelectionYAML(node *yaml.Node) error {
 }
 
 func validateRecordFilterYAML(node *yaml.Node) error {
-	if err := knownYAMLFields(node, map[string]bool{"main_content": true, "exclude": true, "licenses": true, "languages": true, "sources": true, "metadata": true, "date": true}); err != nil {
+	if err := knownYAMLFields(node, map[string]bool{"main_content": true, "exclude": true, "licenses": true, "languages": true, "sources": true, "metadata": true, "date": true, "slice": true}); err != nil {
 		return err
 	}
 	for index := 0; index < len(node.Content); index += 2 {
 		key, value := node.Content[index].Value, node.Content[index+1]
 		if key == "main_content" {
 			continue
+		} else if key == "slice" {
+			if err := knownYAMLFields(value, map[string]bool{"index": true, "count": true}); err != nil {
+				return err
+			}
 		} else if key == "date" {
 			if err := knownYAMLFields(value, map[string]bool{"from": true, "to": true}); err != nil {
 				return err
@@ -414,9 +434,13 @@ func recordFilterPolicy(global *corpus.RecordFilter, selections []CorpusSelectio
 
 func resolveSelectedPath(declared string, paths []string) (string, error) {
 	var resolved string
+	// A corpus named by its path on disk resolves to its logical path in that index, which the path ends with.
+	explicit := filepath.IsAbs(declared) || strings.HasPrefix(declared, "./") || strings.HasPrefix(declared, "../") || strings.HasPrefix(declared, "~/")
+	cleaned := filepath.ToSlash(filepath.Clean(declared))
 	for _, actual := range paths {
 		logical := strings.TrimSuffix(strings.TrimSuffix(actual, ".yaml"), ".json")
-		if declared != actual && declared != logical {
+		onDisk := explicit && (strings.HasSuffix(cleaned, "/"+logical) || strings.HasSuffix(cleaned, "/"+actual))
+		if declared != actual && declared != logical && !onDisk {
 			continue
 		}
 		if resolved != "" {

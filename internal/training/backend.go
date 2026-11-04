@@ -273,6 +273,8 @@ type Parameters struct {
 	EvaluationSelection     string            `json:"evaluation_selection,omitempty" yaml:"evaluation_selection,omitempty"`
 	EvaluationMaxRecords    *int              `json:"evaluation_max_records,omitempty" yaml:"evaluation_max_records,omitempty"`
 	EvaluationMaxBytes      *int64            `json:"evaluation_max_bytes,omitempty" yaml:"evaluation_max_bytes,omitempty"`
+	EvaluationSeed          *uint64           `json:"evaluation_seed,omitempty" yaml:"evaluation_seed,omitempty"`
+	ArtifactSelection       string            `json:"artifact_selection,omitempty" yaml:"artifact_selection,omitempty"`
 }
 
 type ResolvedParameters struct {
@@ -297,6 +299,9 @@ type ResolvedParameters struct {
 	CheckpointEvery         int64             `json:"checkpoint_every"`
 	EvaluateEvery           int64             `json:"evaluate_every"`
 	PlannedTokenCapacity    int64             `json:"planned_token_capacity"`
+	// ArtifactSelection "final" publishes the run's last weights rather than
+	// its lowest held-out checkpoint; empty is the lowest held-out checkpoint.
+	ArtifactSelection string `json:"artifact_selection,omitempty"`
 }
 
 type Optimizer struct {
@@ -328,6 +333,9 @@ type EvaluationPolicy struct {
 	Fraction   float64 `json:"fraction"`
 	MaxRecords int     `json:"max_records"`
 	MaxBytes   int64   `json:"max_bytes"`
+	// Seed, when set, picks the held-out records instead of the training seed,
+	// so runs that shuffle differently can hold out the same records.
+	Seed *uint64 `json:"seed,omitempty"`
 }
 
 type EvaluationSet struct {
@@ -382,6 +390,9 @@ type Request struct {
 	PreparedCacheDirectory string
 	PreparedCacheMaxBytes  int64
 	Report                 func(Event)
+	// EvaluateOnly scores the initialization weights on the held-out
+	// records and returns without training or writing weights.
+	EvaluateOnly bool
 }
 
 // ResumePoint is the newest verified, fully committed checkpoint from an

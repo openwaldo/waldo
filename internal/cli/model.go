@@ -752,6 +752,12 @@ func runModelTrainWithCluster(context Context, args []string, cluster training.C
 	if err != nil {
 		return err
 	}
+	if boolOption(context, "evaluate-only") {
+		if composePath == "" {
+			return fmt.Errorf("--evaluate-only needs a compose file that selects the held-out records")
+		}
+		return runModelEvaluate(context, name, composePath, cluster, stdout, stderr)
+	}
 	if composePath != "" {
 		if context.Command != nil && context.Command.Flags().Changed("epochs") {
 			return fmt.Errorf("--epochs cannot be used with compose %q; set each stage budget in the compose file", composePath)
@@ -1701,6 +1707,14 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 		if position < len(inspection.Runs) && inspection.Runs[position].State == model.RunComplete {
 			trainingBOMs = append(trainingBOMs, runBOM.CorpusBOM)
 		}
+	}
+	// Attribution, and with it the distributable licence review, covers the whole lineage.
+	inherited, err := model.InheritedClosure(inspection)
+	if err != nil {
+		return err
+	}
+	for _, ancestor := range inherited.Corpora {
+		trainingBOMs = append(trainingBOMs, ancestor.CorpusBOM)
 	}
 	attribution, err := corpus.AttributionNotice(trainingBOMs)
 	if err != nil {

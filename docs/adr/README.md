@@ -82,3 +82,8 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0083: Infer from explicitly selected interrupted checkpoints](0083-interrupted-checkpoint-inference.md)
 - [0084: Record model lineage as content-addressed nodes](0084-record-model-lineage.md)
 - [0085: Merge models with a recorded common ancestor into a merged origin](0085-merge-models-with-a-common-ancestor.md)
+- [0086: Import exported WALDO packages from a local directory](0086-import-exported-packages-from-a-directory.md)
+- [0087: Select deterministic hashed slices of a corpus](0087-select-deterministic-corpus-slices.md)
+- [0088: Score current weights on a compose's held-out records without training](0088-score-weights-without-training.md)
+- [0089: Coordinate distributed training through signed records in a git repository](0089-distributed-training-through-signed-records.md)
+- [0090: Publish training provenance across a model's lineage](0090-publish-training-provenance-across-lineage.md)

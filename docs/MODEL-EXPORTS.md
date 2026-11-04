@@ -65,12 +65,13 @@ managed architecture enables parameter-free `qk_normalization`; those runtimes
 would otherwise accept the same tensor shapes while producing different
 logits. Use the native `waldo` package until an exact portable binding exists.
 
-All four derived formats currently require `byte@builtin-byte-schema-1` with
-vocabulary size 259. Hugging Face and MLX include that byte tokenizer and its
-special-token IDs, so exporting a subword model would produce a package whose
-tokenizer does not match its weights. Use the native `waldo` package for models
-with `r50k_base`, `cl100k_base`, or another tokenizer until a matching portable
-tokenizer package is available.
+Hugging Face and MLX export `byte@builtin-byte-schema-1` with vocabulary size
+259, or a trained `waldo/byte-bpe` tokenizer, whose artifact they carry as
+`openwaldo_tokenizer.json` for `tokenization_openwaldo.py` to encode exactly as
+WALDO does. GGUF requires the byte tokenizer. Exporting another subword model
+would produce a package whose tokenizer does not match its weights, so use the
+native `waldo` package for models with `r50k_base`, `cl100k_base`, or another
+tokenizer until a matching portable tokenizer package is available.
 
 ## Prerequisites and selection
 
@@ -153,12 +154,10 @@ after execution.
 ### `ATTRIBUTION.md`
 
 Every model export includes a deterministic training-data attribution notice.
-It is generated only from the immutable corpus BOMs of completed runs and
-lists their declared licenses, recorded preservation obligations, source URLs,
-versions or source digests, upstream license declarations, and license-evidence
-URLs. Export fails if any recorded training corpus no longer passes WALDO's
-distributable policy. Imported models with no WALDO training runs instead point
-the reader to their origin BOM.
+It is generated from the corpus BOMs of every completed run in the model's
+lineage, own and inherited ([ADR 0090](adr/0090-publish-training-provenance-across-lineage.md)),
+and lists their licenses, obligations, sources, and license evidence. Export
+fails if any of those corpora no longer passes WALDO's distributable policy.
 
 ### Managed `MODEL-BOM.json`
 
@@ -217,7 +216,8 @@ inventory. Its schema-1 shape is:
 ```
 
 `source_bom_sha256` connects the derived representation to the managed model
-BOM from which it was produced. Each artifact path is relative to the package
+BOM from which it was produced. `lineage` is the model's lineage node
+([ADR 0084](adr/0084-record-model-lineage.md)). Each artifact path is relative to the package
 root. This makes a release relocatable without embedding a machine-specific
 model directory. `lineage` is the lineage node of the managed weights this
 release was converted from ([ADR 0084](adr/0084-record-model-lineage.md)), so
@@ -235,19 +235,17 @@ entry in WALDO's form (other entries need only be objects without repeated keys 
 the pull still succeeds, notes why the lineage was left out, and the origin is a
 root.
 
-The derived package currently records the source model BOM by hash rather than
-embedding the full `MODEL-BOM.json` and run tree. The hash makes substitution
-detectable when the source BOM is retained or published, but it cannot recreate
-that missing document by itself. Keep or publish the native WALDO package when
-a self-contained, inspectable provenance archive is required. `EU-BOM.json`
-contains the regulatory projection of training evidence, but is not a
-replacement for the full technical run provenance.
+Packages also publish the training evidence behind their weights
+([ADR 0090](adr/0090-publish-training-provenance-across-lineage.md)): each run BOM as
+`provenance-<sha256>.json`, and `TRAINING-CLOSURE.json`, every corpus the
+lineage trained on. Join's merges add `JOIN-ROUND.json`, linking back to the
+run's signed records ([Model join](MODEL-JOIN.md)); pulls keep all three.
 
 ### `EU-BOM.json`
 
 `EU-BOM.json` is not a second weight inventory. It is the model-specific
 regulatory disclosure mapping assembled from provider configuration, model and
-run lineage, and the training corpus BOMs. It pins the supported Commission
+run lineage, and the training corpus BOMs, inherited ones included. It pins the supported Commission
 template and reports missing facts. WALDO does not claim that generating it
 alone establishes legal compliance, and official editable Word-template
 rendering remains separate work.
@@ -515,7 +513,7 @@ should use the JSON result rather than parse the human sentence.
 | Destination is inside the source model | Export beside or outside the managed model so source and release cannot overlap. |
 | No current weights | Download a supported open-weight origin or complete a real training run; simulated artifacts cannot become runtime releases. |
 | Artifact hash, size, or model pin mismatch | Treat the managed model as corrupted or inconsistent and audit it; WALDO will not convert unverified bytes. |
-| Derived export requires the schema-1 byte tokenizer | Use `--format waldo` for a model with a subword or other unsupported tokenizer. |
+| Derived export requires the schema-1 byte tokenizer or a trained byte-BPE tokenizer | Use `--format waldo` for a model with a tiktoken or other unsupported tokenizer. |
 | Unsupported GGUF tensor, tokenizer, or dtype | Use a supported schema-1 decoder model or add a reviewed format adapter rather than guessing metadata. |
 | `llama-quantize` or `llama-imatrix` is unavailable | Install llama.cpp and put the required executable in `PATH`; WALDO never silently substitutes a quantizer. |
 | Signing is configured but fails | Install/configure `cosign`, fix authentication or the configured key, and rerun. WALDO will not fall back to unsigned output. |

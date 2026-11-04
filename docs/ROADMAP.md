@@ -28,7 +28,8 @@ contain completed implementation history.
   [foundation and sparse-MoE plan](FOUNDATION-MOE-PLAN.md).
 - Preference-training objectives.
 - PyTorch generation.
-- Hugging Face publication.
+- Hugging Face publication from `waldo model export`; `waldo model join`
+  already uploads run records' weights to contributors' own namespaces.
 - Editable EU template rendering.
 - Implemented lookaside mirroring.
 

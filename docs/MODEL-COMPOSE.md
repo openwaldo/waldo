@@ -187,6 +187,7 @@ BOM.
 | `architecture` | normally | object | Defines immutable model structure and tokenizer identity. It may be omitted with `base.source`, in which case WALDO inherits the verified source architecture. |
 | `interaction` | no | object | Declares a versioned inference-time prompt contract. Omit it for raw causal continuation. |
 | `stages` | yes, unless `base.merge` creates the model | list | Ordered training stages. Stage names must be unique. |
+| `join` | no | object | Makes the compose a distributed run's file, read only by `waldo model join` ([Model join](MODEL-JOIN.md)); every other command ignores it, and it is no part of the compose's identity. |
 
 ### Interaction fields
 
@@ -245,7 +246,7 @@ to `waldo model train`. A compose supports four initialization modes:
 | no `base` | Newly initialized weights | `architecture` is required. |
 | `base.model` | Verified completed checkpoint from a named managed model, falling back to its origin when it has no completed run | `architecture` may be omitted and inherited; when present, it must exactly match. |
 | `base.source` | Verified origin weights acquired from an external source | `architecture` may be omitted and inherited; when present, it must exactly match. |
-| `base.merge` | The weighted mean of two or more managed models that share a recorded ancestor | Every parent must have the same architecture, which the compose inherits. |
+| `base.merge` | The (weighted) mean of two or more managed models that share a recorded ancestor | Every parent must have the same architecture, which the compose inherits. |
 
 `model`, `source`, and `merge` are mutually exclusive. A base initializes the destination
 model and is never mutated by its training. For a trained managed base, WALDO
@@ -299,8 +300,8 @@ such claims, or a parent is itself such a merge, the merged origin records
 `declared_ancestry: true`.
 Parents trained from random weights, or pulled from releases that record no
 lineage, cannot be merged, except copies of the same weights, which are their
-own common ancestor. Merges accept byte-tokenizer models with `bfloat16`
-or `float32` parameters.
+own common ancestor. Merges accept models with `bfloat16` or `float32`
+parameters, whether their tokenizer is the byte tokenizer or a trained one.
 
 WALDO writes the merge as an origin under the model store's `.merges`
 directory, keyed by its parents and weights, so the same merge is built once.
@@ -376,7 +377,10 @@ Schema 1 currently accepts standard bias-free Llama Safetensors with
 `OpenWALDOTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors—the
 format produced by current WALDO Hugging Face exports. Pull also accepts the
 legacy `OpenWALDOByteTokenizer` class name used by older WALDO exports; both
-names identify the same byte tokenizer. Other tokenizers, architectures, tensor
+names identify the same byte tokenizer. A package whose
+`openwaldo_tokenizer.json` carries a trained `waldo/byte-bpe` artifact is
+pulled with that tokenizer, validated against `config.json`'s vocabulary, so
+the pulled architecture is the exported model's. Other tokenizers, architectures, tensor
 layouts, and source providers fail before the destination model is published.
 `base.source` and `model pull` intentionally share this same compatibility
 boundary.
@@ -556,6 +560,7 @@ corpora:
 | `sources` | no | Matches either the canonical source identifier or source name. |
 | `metadata` | no | Maps canonical `meta` JSON keys to value filters. Each declared key must contain a string value and all declared keys must match. Missing, malformed, or non-string values are rejected. |
 | `date` | no | Selects canonical dates that overlap the inclusive `from`/`to` interval. |
+| `slice` | no | `{index, count}` with `0 <= index < count`. Keeps the records whose ID's SHA-256, read as a big-endian 64-bit integer from its first 8 bytes, modulo `count` equals `index` ([ADR 0087](adr/0087-select-deterministic-corpus-slices.md)). The `count` slices of a corpus are disjoint, near-equal in size, and stable for as long as each record's text is unchanged. |
 | `include` | no | At least one shell-style, case-sensitive pattern must match. |
 | `exclude` | no | Any matching pattern rejects the record and takes precedence over `include`. |
 | `languages.include_unset` | no | Also retains rows with no recorded language. Known languages must still match `include`. Defaults to `false`; it is not accepted for license or source filters. |
@@ -645,6 +650,8 @@ must use one representation or the other, never both.
 | `evaluation_fraction` | no | default `0.01`; `0 <= value < 1` | Candidate fraction for deterministic held-out selection. |
 | `evaluation_max_records` | no | default `256`; `0..1000000` | Held-out record cap. |
 | `evaluation_max_bytes` | no | default 1 MiB; `0 B..16 GiB` | Held-out text-byte cap. |
+| `evaluation_seed` | no | unsigned integer; default `seed` | Picks the held-out records instead of `seed`, so runs that shuffle differently, such as successive rounds of one join unit, hold out the same records. |
+| `artifact_selection` | no | `final`; default lowest held-out | Which weights the run publishes. By default, the checkpoint with the lowest held-out loss; `final`, the last step's weights, still verified against their held-out loss. |
 
 Exactly one of `tokens`, `epochs`, or legacy `steps` is normally declared. A
 legacy compose may declare both `steps` and `epochs`; steps remains the exact

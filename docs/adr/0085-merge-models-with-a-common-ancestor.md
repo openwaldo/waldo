@@ -6,9 +6,10 @@ Status: accepted
 ## Context
 
 Averaging the weights of models fine-tuned from common weights is an
-established way to combine them. Merges made outside WALDO discard provenance.
-A merged model also fits none of WALDO's existing model kinds: it has no
-training run, and ADR 0026 forbids recording a synthetic one.
+established way to combine them, and it is how distributed rounds combine their
+contributors' work. Merges made outside WALDO discard provenance. A merged model
+also fits none of WALDO's existing model kinds: it has no training run, and
+ADR 0026 forbids recording a synthetic one.
 
 ## Decision
 
@@ -27,7 +28,8 @@ The merge is an origin. WALDO computes the mean in float32 in parent order,
 rounds to nearest-even bfloat16 or float32, and writes it under
 `<model.root>/.merges/<hash of the merge>` with an origin BOM recording the
 versioned method (`mean-f32-v1` or `weighted-mean-f32-v1`), every parent's
-model ID, weights hash, and lineage node hash in order, and the weights. Its
+model ID, weights hash, and lineage node hash in order, the weights, its
+parents' run BOMs, and the union of their training closures. Its
 lineage node, computed from that record, names each parent's node like a git
 merge commit, and its `LINEAGE.json` holds every parent's history, so the
 parents can be deleted. The same merge is built once. A compose with `base.merge` may
@@ -40,7 +42,7 @@ merge-only compose.
 
 - Anyone holding the parents can recompute a merge and compare its weights hash;
   two independent merges of the same parents agree byte for byte.
-- A merge never invents a training run.
+- A merge never invents a training run; its provenance is its parents'.
 - Changing the arithmetic requires a new method name.
 - Parents trained from random weights, or pulled without recorded lineage,
   cannot be merged, except copies of the same weights.

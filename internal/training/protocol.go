@@ -32,6 +32,7 @@ type WorkerBegin struct {
 	Initialization         *WorkerInitialization `json:"initialization,omitempty"`
 	Resume                 *WorkerResume         `json:"resume,omitempty"`
 	DataNodeRank           int                   `json:"data_node_rank,omitempty"`
+	EvaluateOnly           bool                  `json:"evaluate_only,omitempty"`
 	PreparedCacheDirectory string                `json:"-"`
 	PreparedCacheMaxBytes  int64                 `json:"-"`
 	PreparedIdentity       string                `json:"-"`
@@ -158,8 +159,9 @@ func writeWorkerInputUntil(ctx context.Context, output io.Writer, begin WorkerBe
 		}
 	}
 	// A fully trained checkpoint may need only final artifact verification and
-	// bookkeeping. Do not replay the complete corpus merely to finalize it.
-	if begin.Resume != nil && begin.Resume.Step == begin.Parameters.Steps {
+	// bookkeeping, and an evaluation scores only the held-out records. Do not
+	// replay the training corpus for either.
+	if begin.EvaluateOnly || (begin.Resume != nil && begin.Resume.Step == begin.Parameters.Steps) {
 		return encoder.Encode(WorkerInputFrame{Kind: "end", Schema: WorkerProtocolSchema})
 	}
 	if begin.Parallelism.DataPlane == DataPlaneNodeLocal {

@@ -189,7 +189,16 @@ func BuildEUGPAIReport(inspection model.Inspection, provider *ProviderProfile, r
 	}
 	report.addProviderGaps(provider)
 	report.addReleaseGaps(release)
-	if len(inspection.RunBOMs) == 0 {
+	// Training behind the starting weights counts too: a merge or a model built
+	// on a release discloses its whole history, not only its own runs.
+	inherited, err := model.InheritedClosure(inspection)
+	if err != nil {
+		return EUGPAIReport{}, err
+	}
+	if !inherited.Complete {
+		report.gap("1.3", "training.lineage", inspection.Model.Name, "training behind the model's starting weights is not fully recorded")
+	}
+	if len(inspection.RunBOMs) == 0 && len(inherited.Corpora) == 0 {
 		report.gap("1.3", "training.stages", inspection.Model.Name, "the model records no training stages")
 	}
 	if len(inspection.RunBOMs) != len(inspection.Runs) {
@@ -224,6 +233,16 @@ func BuildEUGPAIReport(inspection model.Inspection, provider *ProviderProfile, r
 		}
 		entry.Uses++
 		entry.Stages = append(entry.Stages, runBOM.Stage)
+	}
+	for _, ancestor := range inherited.Corpora {
+		entry := corpora[ancestor.CorpusBOMSHA256]
+		if entry == nil {
+			entry = corpusUse(ancestor.CorpusBOMSHA256, ancestor.CorpusBOM)
+			corpora[ancestor.CorpusBOMSHA256] = entry
+			report.addCorpusGaps(*entry)
+		}
+		entry.Uses += ancestor.Uses
+		entry.Stages = append(entry.Stages, "inherited")
 	}
 	keys := make([]string, 0, len(corpora))
 	for key := range corpora {
