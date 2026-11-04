@@ -304,14 +304,15 @@ printf '%s\n' "$pulled_chat" | grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]
 "$binary" model export mlx-smoke "$mlx_export" --format mlx --allow-incomplete >/dev/null
 "$binary" model export mlx-smoke "$gguf_export" --format gguf --allow-incomplete >/dev/null
 "$binary" model export mlx-smoke "$ollama_export" --format ollama --allow-incomplete >/dev/null
-"$mlx_python" - "$current_weights" "$huggingface_export" "$mlx_export" "$gguf_export" "$ollama_export" <<'PY'
+"$mlx_python" - "$current_weights" "$huggingface_export" "$mlx_export" "$gguf_export" "$ollama_export" "$models/mlx-pulled/ORIGIN-BOM.json" <<'PY'
 import hashlib
 import json
 import os
 import struct
 import sys
 
-source, huggingface_root, mlx_root, gguf_root, ollama_root = sys.argv[1:]
+source, huggingface_root, mlx_root, gguf_root, ollama_root, pulled_origin = sys.argv[1:]
+lineages = []
 
 def tensor_payload(path):
     with open(path, "rb") as stream:
@@ -336,6 +337,7 @@ for root, release_format, container_format in (
     with open(os.path.join(root, "BOM.json"), encoding="utf-8") as stream:
         bom = json.load(stream)
     assert bom["format"] == release_format
+    lineages.append(bom["lineage"])
     for item in bom["artifacts"]:
         with open(os.path.join(root, item["path"]), "rb") as stream:
             data = stream.read()
@@ -349,11 +351,22 @@ for root, release_format in ((gguf_root, "gguf"), (ollama_root, "ollama")):
     with open(os.path.join(root, "BOM.json"), encoding="utf-8") as stream:
         bom = json.load(stream)
     assert bom["format"] == release_format
+    lineages.append(bom["lineage"])
     for item in bom["artifacts"]:
         with open(os.path.join(root, item["path"]), "rb") as stream:
             data = stream.read()
         assert len(data) == item["bytes"]
         assert hashlib.sha256(data).hexdigest() == item["sha256"]
+
+# Every release names the trained weights and the one run that made them, and
+# a pull of the Hugging Face release keeps that node as its origin's lineage.
+with open(source, "rb") as stream:
+    source_sha256 = hashlib.sha256(stream.read()).hexdigest()
+assert all(lineage == lineages[0] for lineage in lineages)
+assert lineages[0]["weights_sha256"] == source_sha256
+assert len(lineages[0]["runs"]) == 1
+with open(pulled_origin, encoding="utf-8") as stream:
+    assert json.load(stream)["lineage"] == lineages[0]
 
 with open(os.path.join(ollama_root, "Modelfile"), encoding="utf-8") as stream:
     modelfile = stream.read()

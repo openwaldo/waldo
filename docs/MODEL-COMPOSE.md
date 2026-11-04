@@ -87,6 +87,7 @@ schema: 1
 #   run_bom_sha256: <optional-run-bom-sha256>
 #   artifact_sha256: <optional-checkpoint-sha256>
 #   artifact_bytes: <optional-checkpoint-size>
+#   lineage_sha256: <optional-lineage-node-sha256>
 #   origin_sha256: <expected-origin-bom-sha256> # optional assertion
 #
 # Or acquire a supported external origin directly. With this form only,
@@ -230,6 +231,7 @@ model-level contract. New composes should use only `interaction.tools`.
 | `run_bom_sha256` | no | SHA-256 | Asserts the selected run BOM. WALDO fills it during resolution. |
 | `artifact_sha256` | no | SHA-256 | Asserts the selected checkpoint bytes. WALDO fills it during resolution. |
 | `artifact_bytes` | no | non-negative bytes | Asserts the selected checkpoint size. WALDO fills it during resolution. |
+| `lineage_sha256` | no | SHA-256 | Asserts the selected run's lineage node ([ADR 0084](adr/0084-record-model-lineage.md)). WALDO fills it during resolution. |
 
 ## Base initialization
 

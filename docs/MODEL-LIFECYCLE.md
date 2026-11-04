@@ -434,11 +434,11 @@ discover their checkout; logical paths use the current or configured checkout.
 When `base.model` is present, WALDO selects its explicitly requested completed
 run or its latest completed run with real weights. If it has no such run, WALDO
 uses the model's verified pulled origin. WALDO pins the parent model ID, run ID,
-run BOM hash, weight hash, and size, then hard-links or copies trained parent
-weights into the destination as `base/model.safetensors`. `base.source` instead
-accepts a pinned supported external source and uses the same verified importer
-as `model pull`. In every mode WALDO verifies artifacts and exact architecture
-equality, and a compose never mutates its base model.
+run BOM hash, weight hash, size, and lineage node hash, then hard-links or
+copies trained parent weights into the destination as `base/model.safetensors`.
+`base.source` instead accepts a pinned supported external source and uses the
+same verified importer as `model pull`. In every mode WALDO verifies artifacts
+and exact architecture equality, and a compose never mutates its base model.
 
 WALDO resolves and hash-verifies every stage and creates the active model at
 `<model.root>/<name>` when absent. When the name already exists, its normalized

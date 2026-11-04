@@ -208,10 +208,15 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 	if err != nil {
 		return Inspection{}, err
 	}
+	lineage, err := releaseLineage(filepath.Join(sourceDirectory, "BOM.json"))
+	if err != nil {
+		return Inspection{}, err
+	}
 	origin := OriginBOM{
 		Kind: "openwaldo-bom", Schema: 1, Subject: "model-origin",
 		Source:             OriginSource{Provider: "huggingface", Repository: metadata.ID, RequestedRevision: requested, Revision: metadata.SHA, URL: endpoint + "/" + metadata.ID, License: metadata.CardData.License},
 		ArchitectureSHA256: architectureHash, SourceArtifacts: sourceArtifacts, Artifacts: artifacts,
+		Lineage: lineage,
 	}
 	originHash, err := hashJSON(origin)
 	if err != nil {
@@ -658,4 +663,31 @@ func huggingFaceToken() string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// releaseLineage is the lineage node a WALDO release's BOM.json records, if
+// the package has one; the file itself is pinned among the source artifacts.
+func releaseLineage(path string) (*LineageNode, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	var release struct {
+		Kind    string          `json:"kind"`
+		Subject string          `json:"subject"`
+		Lineage json.RawMessage `json:"lineage"`
+	}
+	if json.Unmarshal(data, &release) != nil || release.Kind != "openwaldo-bom" || release.Subject != "model-release" || release.Lineage == nil || string(release.Lineage) == "null" {
+		return nil, nil
+	}
+	var lineage LineageNode
+	if err := json.Unmarshal(release.Lineage, &lineage); err != nil {
+		return nil, fmt.Errorf("release BOM.json lineage: %w", err)
+	}
+	if err := lineage.validate(); err != nil {
+		return nil, fmt.Errorf("release BOM.json lineage: %w", err)
+	}
+	return &lineage, nil
 }
