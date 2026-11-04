@@ -436,7 +436,8 @@ run or its latest completed run with real weights. If it has no such run, WALDO
 uses the model's verified pulled origin. WALDO pins the parent model ID, run ID,
 run BOM hash, weight hash, and size, then hard-links or copies trained parent
 weights into the destination as `base/model.safetensors` and records the chain
-of lineage nodes behind them in `LINEAGE.json`
+of lineage nodes behind them in `LINEAGE.json`; a base that is a pulled origin
+brings its kept release `BOM.json` instead
 ([ADR 0084](adr/0084-record-model-lineage.md)). `base.source` instead
 accepts a pinned supported external source and uses the same verified importer
 as `model pull`. In every mode WALDO verifies artifacts and exact architecture

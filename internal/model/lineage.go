@@ -78,7 +78,7 @@ func LineageHistory(inspection Inspection, runID string) (LineageNode, []Lineage
 func modelLineage(inspection Inspection, runID string) (LineageNode, map[string]LineageNode, error) {
 	start, held, err := startingLineage(inspection)
 	if err != nil {
-		return LineageNode{}, nil, err
+		return LineageNode{}, nil, fmt.Errorf("model %q lineage: %w", inspection.Model.Name, err)
 	}
 	nodes, err := runLineage(inspection, start, held)
 	if err != nil {
@@ -198,7 +198,7 @@ func keptReleaseBOM(directory string, origin OriginBOM) ([]byte, error) {
 			return nil, err
 		}
 		digest := sha256.Sum256(data)
-		if hex.EncodeToString(digest[:]) != pinned.SHA256 || int64(len(data)) != pinned.Bytes {
+		if hex.EncodeToString(digest[:]) != pinned.SHA256 {
 			return nil, fmt.Errorf("kept release BOM.json does not match the hash its origin pinned")
 		}
 		return data, nil
@@ -317,30 +317,41 @@ func parentLineage(base Inspection, runID, weights string) (*lineageRecord, erro
 	return &lineageRecord{Kind: lineageKind, Schema: 1, Parent: node, Ancestors: ancestors}, nil
 }
 
-// readLineageRecord reads LINEAGE.json once; nil when absent or a later schema, a shorter history.
+// readLineageRecord reads LINEAGE.json once, exactly as any reader would; nil
+// when absent or a later schema, which leaves a shorter history.
 func readLineageRecord(path string) (*lineageRecord, error) {
 	data, err := readRegularFile(path)
 	if err != nil || data == nil {
 		return nil, err
 	}
-	var header struct {
-		Kind   string `json:"kind"`
-		Schema int    `json:"schema"`
-	}
-	if err := json.Unmarshal(data, &header); err != nil || header.Kind != lineageKind || header.Schema < 1 {
-		return nil, fmt.Errorf("%s is not a %s record", path, lineageKind)
-	}
-	if header.Schema > 1 {
-		return nil, nil
-	}
-	var record lineageRecord
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&record); err != nil {
+	fields, err := topLevelFields(data)
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if _, err := decoder.Token(); err != io.EOF {
-		return nil, fmt.Errorf("%s: data after the JSON object", path)
+	for key := range fields {
+		if (key != "kind" && strings.EqualFold(key, "kind")) || (key != "schema" && strings.EqualFold(key, "schema")) {
+			return nil, fmt.Errorf("%s: unexpected key %q", path, key)
+		}
+	}
+	var record lineageRecord
+	if json.Unmarshal(fields["kind"], &record.Kind) != nil || record.Kind != lineageKind || json.Unmarshal(fields["schema"], &record.Schema) != nil || record.Schema < 1 {
+		return nil, fmt.Errorf("%s is not a %s record", path, lineageKind)
+	}
+	if record.Schema > 1 {
+		return nil, nil
+	}
+	for key := range fields {
+		if key != "kind" && key != "schema" && key != "parent" && key != "ancestors" {
+			return nil, fmt.Errorf("%s: unexpected key %q", path, key)
+		}
+	}
+	if err := exactJSON(fields["parent"], &record.Parent); err != nil {
+		return nil, fmt.Errorf("%s: parent %w", path, err)
+	}
+	if ancestors := fields["ancestors"]; ancestors != nil {
+		if err := exactJSON(ancestors, &record.Ancestors); err != nil {
+			return nil, fmt.Errorf("%s: ancestors %w", path, err)
+		}
 	}
 	return &record, nil
 }
@@ -357,7 +368,8 @@ func releaseLineage(data []byte, files []OriginArtifact) (*LineageNode, []Lineag
 		// Other readers may still find lineage in it, as its first value or in its text.
 		var first map[string]json.RawMessage
 		_ = json.NewDecoder(bytes.NewReader(data)).Decode(&first)
-		if declaresLineage(first) || bytes.Contains(bytes.ToLower(data), []byte("lineage")) {
+		// UTF-16 and UTF-32 hide the word from a byte search but not from every reader.
+		if declaresLineage(first) || bytes.Contains(bytes.ToLower(data), []byte("lineage")) || bytes.IndexByte(data, 0) >= 0 {
 			return leftOut(fmt.Sprintf("is not one JSON object (%v)", err))
 		}
 		return nil, nil, ""
@@ -394,7 +406,7 @@ func releaseLineage(data []byte, files []OriginArtifact) (*LineageNode, []Lineag
 		return leftOut(fmt.Sprintf("lineage is not one chain (%v)", err))
 	}
 	if !inventoriesWeights(release["artifacts"], files) {
-		return leftOut("does not inventory the weights pulled with it")
+		return leftOut("does not list the pulled weights files once each, in WALDO's form")
 	}
 	return &lineage, ancestors, ""
 }
@@ -408,30 +420,45 @@ func declaresLineage(fields map[string]json.RawMessage) bool {
 	return false
 }
 
-// inventoriesWeights reports whether artifacts list every pulled weights file once, by hash and size.
+// inventoriesWeights reports whether artifacts list every pulled weights file
+// once, by hash and size, in entries every reader reads alike.
 func inventoriesWeights(raw json.RawMessage, files []OriginArtifact) bool {
-	var listed []OriginArtifact
-	if exactJSON(raw, &listed) != nil {
+	var entries []json.RawMessage
+	if json.Unmarshal(raw, &entries) != nil {
 		return false
 	}
-	inventory := map[string]OriginArtifact{}
-	for _, artifact := range listed {
-		if _, repeated := inventory[artifact.Path]; repeated {
+	weights := map[string]OriginArtifact{}
+	for _, file := range files {
+		if file.Role == "source-weights" {
+			weights[file.Path] = file
+		}
+	}
+	listed := map[string]bool{}
+	for _, entry := range entries {
+		fields, err := topLevelFields(entry)
+		if err != nil {
 			return false
 		}
-		inventory[artifact.Path] = artifact
-	}
-	weights := 0
-	for _, file := range files {
-		if file.Role != "source-weights" {
+		for key := range fields {
+			if key != "path" && strings.EqualFold(key, "path") {
+				return false
+			}
+		}
+		var path string
+		if json.Unmarshal(fields["path"], &path) != nil {
 			continue
 		}
-		weights++
-		if listed, ok := inventory[file.Path]; !ok || listed.SHA256 != file.SHA256 || listed.Bytes != file.Bytes {
+		file, ok := weights[path]
+		if !ok {
+			continue
+		}
+		var artifact OriginArtifact
+		if listed[path] || exactJSON(entry, &artifact) != nil || artifact.SHA256 != file.SHA256 || artifact.Bytes != file.Bytes {
 			return false
 		}
+		listed[path] = true
 	}
-	return weights > 0
+	return len(listed) == len(weights)
 }
 
 // topLevelFields decodes one JSON object's members, refusing repeated keys and trailing data.

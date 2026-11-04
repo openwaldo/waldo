@@ -35,16 +35,16 @@ earlier WALDO versions write and read:
 
 - A model composed from a parent's run writes `LINEAGE.json`
   (`waldo-model-lineage`, schema 1): the parent run's node and every node behind
-  it the parent held. It is read only while the parent node names the weights
-  and run BOM the parent pin names and the ancestors are exactly the chain
-  behind it.
+  it the parent held. It is read with exact keys, and its parent node must
+  name the weights and run BOM the parent pin names and its ancestors must be
+  exactly the chain behind it; a file that does not is an error.
 - A pull keeps the release's `BOM.json`, whose hash the origin already pins
-  among its source files, as `origin/release/BOM.json`, and reads the release's
-  lineage from it only while that hash matches.
+  among its source files, as `origin/release/BOM.json`; a kept file that no
+  longer has that hash is an error.
 - A derived release's `BOM.json` (Hugging Face, MLX, GGUF, Ollama) carries its
   weights' node as `lineage` and the nodes behind it as `lineage_ancestors`. A
   pull keeps that lineage only when every reader reads it the same way and the
-  release's `artifacts` list the pulled weights files by hash and size;
+  release's `artifacts` list each pulled weights file once by hash and size;
   otherwise it notes why and leaves it out. A release's `BOM.json` never fails a
   pull.
 
@@ -60,8 +60,8 @@ the node.
 - Hashes prove a history consistent, not true: anyone can write a consistent
   chain. Trust in what a node claims comes from signed records above it.
 - Fewer ancestors make a shorter history, not a different one: the chain ends at
-  the first node a model does not hold. Deleting `LINEAGE.json` or the kept
-  release file shortens a history the same way, without an error.
+  the first node a model does not hold. A missing `LINEAGE.json` or kept
+  release file shortens a history the same way; an altered one is an error.
 - Nodes make it possible to tell whether two models started from the same
   weights by walking parents, like `git merge-base`; nothing walks them yet.
 - Earlier WALDO versions read every model this one writes; they ignore
@@ -73,8 +73,6 @@ the node.
   changes either bumps its schema.
 - A WALDO-format export copies `LINEAGE.json` but does not sign it; release
   formats carry lineage in their signed `BOM.json`.
-- `model list` skips a model it cannot read with a warning, so one model from a
-  later WALDO doesn't hide the rest of the store.
 - A pulled release's node is what the release declared. WALDO keeps it as
   declared and cannot check it; verifying it against signed releases is future
   work.

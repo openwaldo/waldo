@@ -340,6 +340,63 @@ func TestLineageAndCurrentWeightsSkipRunsThePinMarksSimulated(t *testing.T) {
 	}
 }
 
+// LINEAGE.json is read exactly as any reader would read it: keys another
+// reader could resolve differently, or a link in place of the file, are refused.
+func TestLineageFileMustReadAlike(t *testing.T) {
+	root := t.TempDir()
+	builder := realWeightsBuilder(root)
+	trainTwice(t, builder)
+	stage := testStage("child")
+	child, err := builder.Compose(t.Context(), "child", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "child", LineageFile)
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.TrimSuffix(strings.TrimSpace(string(original)), "}")
+	forged := `{"weights_sha256":"` + strings.Repeat("e", 64) + `"}`
+	for name, data := range map[string]string{
+		"case-variant parent": body + `,"Parent":` + forged + `}`,
+		"repeated ancestors":  body + `,"ancestors":[` + forged + `]}`,
+		"case-variant schema": body + `,"Schema":2}`,
+		"unknown key":         body + `,"note":"x"}`,
+		"trailing data":       string(original) + ` x`,
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ModelLineage(child, ""); err == nil || !strings.Contains(err.Error(), `model "child"`) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	target := filepath.Join(t.TempDir(), "elsewhere.json")
+	if err := os.WriteFile(target, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ModelLineage(child, ""); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("linked LINEAGE.json: %v", err)
+	}
+	// A later schema may change everything but its kind and schema.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"kind":"waldo-model-lineage","schema":2,"history":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if node, err := ModelLineage(child, ""); err != nil || !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: child.Model.Parent.Artifact.SHA256}}) {
+		t.Fatalf("later schema: %+v, %v", node.Parents, err)
+	}
+}
+
 // A pull keeps the release's BOM.json, so its origin descends from the node
 // the release declares and holds the chain behind it, and training the pulled
 // model, or a model composed from it, continues that chain.
@@ -448,6 +505,65 @@ func TestPullLeavesOutLineageItCannotReadExactly(t *testing.T) {
 		files["BOM.json"] = []byte(bom)
 		assertPulledRoot(t, files, name)
 	}
+}
+
+// Lineage in a release BOM.json saved as UTF-16 is left out with a note, not silently.
+func TestPullNotesLineageInUTF16(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
+	bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": LineageNode{WeightsSHA256: strings.Repeat("a", 64)}, "artifacts": inventory(files)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	utf16 := []byte{0xff, 0xfe}
+	for _, char := range bom {
+		utf16 = append(utf16, char, 0)
+	}
+	files["BOM.json"] = utf16
+	assertPulledRoot(t, files, "utf-16")
+}
+
+// Only the weights entries of a release's artifacts bind its lineage: other
+// entries may repeat or carry more fields, while a weights entry must be exact.
+func TestPullReadsOnlyWeightsEntriesExactly(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	declared := LineageNode{WeightsSHA256: strings.Repeat("a", 64)}
+	pull := func(extra map[string]any, weightsField bool) (map[string][]byte, []any) {
+		files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
+		var artifacts []any
+		for _, artifact := range inventory(files) {
+			entry := map[string]any{"role": artifact.Role, "path": artifact.Path, "sha256": artifact.SHA256, "bytes": artifact.Bytes}
+			if artifact.Path == "model.safetensors" && !weightsField {
+				artifacts = append(artifacts, artifact)
+				continue
+			}
+			for key, value := range extra {
+				entry[key] = value
+			}
+			artifacts = append(artifacts, entry)
+		}
+		return files, append(artifacts, map[string]any{"path": "config.json", "note": "listed twice"})
+	}
+	files, artifacts := pull(map[string]any{"media_type": "application/json"}, false)
+	bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": declared, "artifacts": artifacts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files["BOM.json"] = bom
+	client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
+	pulled, err := (Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "tiny", "huggingface://org/tiny")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if origin, err := ModelLineage(pulled, ""); err != nil || len(origin.Parents) != 1 {
+		t.Fatalf("other entries cost the lineage: %+v, %v", origin, err)
+	}
+	files, artifacts = pull(map[string]any{"media_type": "application/octet-stream"}, true)
+	if bom, err = json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": declared, "artifacts": artifacts}); err != nil {
+		t.Fatal(err)
+	}
+	files["BOM.json"] = bom
+	assertPulledRoot(t, files, "extra field on weights entry")
 }
 
 // A release BOM.json saved with a UTF-8 byte-order mark keeps its lineage.

@@ -194,8 +194,8 @@ inventory. Its schema-1 shape is:
   "lineage": {
     "weights_sha256": "<hash of the weights this release was converted from>",
     "parents": [{"weights_sha256": "<parent weights hash>", "lineage_sha256": "<parent node hash>"}],
-    "runs": ["<run BOM hash>"],
-    "source_sha256": "<hash of the release, when the weights are a pulled origin's>"
+    "runs": ["<run BOM hash, for weights a run trained>"],
+    "source_sha256": "<release hash, instead of runs, for a pulled origin's weights>"
   },
   "lineage_ancestors": [{"weights_sha256": "<ancestor weights hash>", "parents": [{"weights_sha256": "...", "lineage_sha256": "..."}], "runs": ["..."]}],
   "artifacts": [
@@ -230,7 +230,8 @@ the pulled weights: one JSON object (a UTF-8 byte-order mark is allowed) with no
 repeated or case-variant keys, `kind` `openwaldo-bom`, `subject`
 `model-release`, `schema` 1, nodes in WALDO's canonical form whose links name
 their nodes' weights, ancestors that are exactly the chain behind `lineage`, and
-`artifacts` listing every pulled weights file once by hash and size. Otherwise
+`artifacts` listing every pulled weights file once, by hash and size, in an
+entry in WALDO's form (other entries are not read). Otherwise
 the pull still succeeds, notes why the lineage was left out, and the origin is a
 root.
 

@@ -529,17 +529,14 @@ func runModelPull(context Context, args []string, stdout, stderr io.Writer) erro
 	return nil
 }
 
-func runModelList(context Context, args []string, stdout, stderr io.Writer) error {
+func runModelList(context Context, args []string, stdout, _ io.Writer) error {
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
 	}
-	models, unreadable, err := model.ListReadable(root, args)
+	models, err := model.List(root, args)
 	if err != nil {
 		return err
-	}
-	for _, failure := range unreadable {
-		fmt.Fprintf(stderr, "warning: skipped model %s: %v\n", failure.Name, failure.Err)
 	}
 	if context.JSON {
 		return writeJSON(stdout, models)
