@@ -81,6 +81,7 @@ func TestExternalComposeParsing(t *testing.T) {
 		"unknown data":      strings.Replace(externalComposeYAML, "seed: 42", "seed: 42, learning_rate: 0.01", 1),
 		"unknown stage":     strings.Replace(externalComposeYAML, "    trainer:", "    parameters: {}\n    trainer:", 1),
 		"determinism":       strings.Replace(externalComposeYAML, "best-effort", "sometimes", 1),
+		"no determinism":    strings.Replace(externalComposeYAML, "  determinism: best-effort\n", "", 1),
 		"environment":       strings.Replace(externalComposeYAML, "environment: cpu", "environment: ''", 1),
 		"bad budget":        strings.Replace(externalComposeYAML, "tokens: 128", "tokens: -1", 1),
 		"zero batch":        strings.Replace(externalComposeYAML, "global_batch_sequences: 2", "global_batch_sequences: 0", 1),

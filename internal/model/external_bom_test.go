@@ -199,3 +199,105 @@ func TestExternalPlanRejectsUnresolvedRecipe(t *testing.T) {
 		t.Fatal("invalid plan created model state")
 	}
 }
+
+func cloneExternalPlan(t *testing.T, p ExternalPlan) ExternalPlan {
+	t.Helper()
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clone ExternalPlan
+	if err := json.Unmarshal(raw, &clone); err != nil {
+		t.Fatal(err)
+	}
+	return clone
+}
+
+// Every pin in PLAN.json is cross-checked against the content it names when a
+// plan is read back, so a hand-edited plan cannot keep a stale digest.
+func TestExternalPlanRejectsTamperedPins(t *testing.T) {
+	p, schemas, _ := externalBOMFixture(t)
+	if err := p.ValidateSchemas(schemas); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]func(*ExternalPlan){
+		"architecture content":       func(p *ExternalPlan) { p.Identity.Architecture["width"] = float64(32) },
+		"tokenizer configuration":    func(p *ExternalPlan) { p.Identity.Tokenizer.Configuration = json.RawMessage(`{"lowercase":true}`) },
+		"stage recipe content":       func(p *ExternalPlan) { p.Identity.Stages[0].Recipe["rate"] = 0.2 },
+		"tokenizer schema pin":       func(p *ExternalPlan) { p.Identity.Tokenizer.SchemaSHA256 = strings.Repeat("f", 64) },
+		"architecture schema pin":    func(p *ExternalPlan) { p.Identity.ArchitectureSchemaSHA256 = strings.Repeat("f", 64) },
+		"tokenizer environment lock": func(p *ExternalPlan) { p.Identity.Tokenizer.Environment.LockSHA256 = "not-a-digest" },
+		"tokenizer source tree":      func(p *ExternalPlan) { p.Identity.Tokenizer.Source.Tree = "HEAD" },
+		"interpreter digest":         func(p *ExternalPlan) { p.Identity.Environment.InterpreterSHA256 = "python3" },
+		"determinism":                func(p *ExternalPlan) { p.Identity.Determinism = "sometimes" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			clone := cloneExternalPlan(t, p)
+			mutate(&clone)
+			if err := clone.ValidateSchemas(schemas); err == nil {
+				t.Fatal("accepted plan whose pins differ from its content")
+			}
+		})
+	}
+}
+
+// WriteExternalPlan must refuse resolve results whose own digests or execution
+// split disagree with the plan, not only results with a different recipe.
+func TestExternalPlanRejectsInconsistentResolveResult(t *testing.T) {
+	cases := map[string]func(*trainerapp.Resolved){
+		"recipe digest":     func(r *trainerapp.Resolved) { r.RecipeSHA256 = strings.Repeat("f", 64) },
+		"execution split":   func(r *trainerapp.Resolved) { r.Execution = map[string]any{"micro": float64(1)} },
+		"parameters digest": func(r *trainerapp.Resolved) { r.ParametersSHA256 = strings.Repeat("f", 64) },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			p, schemas, r := externalBOMFixture(t)
+			mutate(&r.Resolved)
+			dir := filepath.Join(t.TempDir(), "model")
+			if _, err := WriteExternalPlan(dir, p, schemas, []trainerapp.Resolved{r.Resolved}); err == nil {
+				t.Fatal("accepted inconsistent resolve result")
+			}
+			if _, err := os.Stat(dir); !os.IsNotExist(err) {
+				t.Fatal("inconsistent resolve result created model state")
+			}
+		})
+	}
+}
+
+// Identity inputs from the ADR "Model identity" list that the original
+// sensitivity test does not cover individually.
+func TestExternalIdentitySensitivityCoversAllInputs(t *testing.T) {
+	p, _, _ := externalBOMFixture(t)
+	original, _ := p.SHA256()
+	mutations := map[string]func(*ExternalPlan){
+		"tokenizer commit":        func(p *ExternalPlan) { p.Identity.Tokenizer.Source.Source.Commit = strings.Repeat("f", 40) },
+		"tokenizer tree":          func(p *ExternalPlan) { p.Identity.Tokenizer.Source.Tree = strings.Repeat("f", 40) },
+		"tokenizer manifest":      func(p *ExternalPlan) { p.Identity.Tokenizer.Source.ManifestSHA256 = strings.Repeat("f", 64) },
+		"tokenizer repository":    func(p *ExternalPlan) { p.Identity.Tokenizer.Source.Source.Repository = "https://example.invalid/other" },
+		"trainer repository":      func(p *ExternalPlan) { p.Identity.Trainer.Source.Repository = "https://example.invalid/other" },
+		"trainer path":            func(p *ExternalPlan) { p.Identity.Trainer.Source.Path = "trainer" },
+		"tokenizer lock":          func(p *ExternalPlan) { p.Identity.Tokenizer.Environment.LockSHA256 = strings.Repeat("f", 64) },
+		"tokenizer interpreter":   func(p *ExternalPlan) { p.Identity.Tokenizer.Environment.InterpreterVersion = "3.13.1" },
+		"selected environment":    func(p *ExternalPlan) { p.Identity.Environment.Name = "cuda" },
+		"tokenizer configuration": func(p *ExternalPlan) { p.Identity.Tokenizer.Configuration = json.RawMessage(`{"lowercase":true}`) },
+		"architecture":            func(p *ExternalPlan) { p.Identity.Architecture["width"] = float64(32) },
+		"architecture schema":     func(p *ExternalPlan) { p.Identity.ArchitectureSchemaSHA256 = strings.Repeat("f", 64) },
+		"tokenizer schema":        func(p *ExternalPlan) { p.Identity.Tokenizer.SchemaSHA256 = strings.Repeat("f", 64) },
+		"determinism":             func(p *ExternalPlan) { p.Identity.Determinism = "required" },
+		"interaction":             func(p *ExternalPlan) { p.Identity.Interaction.Template = "chatml-v1" },
+		"recipe content":          func(p *ExternalPlan) { p.Identity.Stages[0].Recipe["rate"] = 0.2 },
+		"data seed":               func(p *ExternalPlan) { p.Identity.Stages[0].Data.Seed = 7 },
+		"data sequence length":    func(p *ExternalPlan) { p.Identity.Stages[0].Data.SequenceLength = 8 },
+		"data global batch":       func(p *ExternalPlan) { p.Identity.Stages[0].Data.GlobalBatchSequences = 4 },
+		"conversation":            func(p *ExternalPlan) { p.Identity.Stages[0].Conversation.SupervisedRoles = []string{"assistant"} },
+		"objective":               func(p *ExternalPlan) { p.Identity.Stages[0].Objective = "assistant-response-modeling" },
+	}
+	for name, mutate := range mutations {
+		clone := cloneExternalPlan(t, p)
+		mutate(&clone)
+		if got, _ := clone.SHA256(); got == original {
+			t.Errorf("%s did not alter identity", name)
+		}
+	}
+}

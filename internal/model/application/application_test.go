@@ -329,3 +329,64 @@ func TestSchemaCombinatorProjection(t *testing.T) {
 		}
 	}
 }
+
+// Identity carries the canonical lowercase commit, so a compose that spells the
+// same pin in uppercase cannot fork the plan hash or the cache entry.
+func TestSourceCommitIsCanonicalized(t *testing.T) {
+	repo, commit := fixtureRepo(t)
+	cache := t.TempDir()
+	t.Cleanup(func() { removeTemporarySource(cache) })
+	lower, err := ResolveSource(context.Background(), cache, Source{Repository: repo, Commit: commit, Path: "app"}, "waldo-trainer", "cpu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upper, err := ResolveSource(context.Background(), cache, Source{Repository: repo, Commit: strings.ToUpper(commit), Path: "app"}, "waldo-trainer", "cpu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upper.Source != lower.Source || upper.Source.Commit != commit || upper.Directory != lower.Directory {
+		t.Fatalf("commit spelling changed identity: %+v != %+v", upper.Source, lower.Source)
+	}
+}
+
+// The checkout is the trainer's working directory and import root, so a file
+// planted in a cached checkout (for example bytecode) must fail verification.
+func TestSourceCacheRejectsPlantedFiles(t *testing.T) {
+	for _, planted := range []string{"app/sitecustomize.py", "app/__pycache__/trainer.cpython-312.pyc"} {
+		t.Run(planted, func(t *testing.T) {
+			repo, commit := fixtureRepo(t)
+			cache := t.TempDir()
+			t.Cleanup(func() { removeTemporarySource(cache) })
+			source := Source{Repository: repo, Commit: commit, Path: "app"}
+			first, err := ResolveSource(context.Background(), cache, source, "waldo-trainer", "cpu")
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkout := filepath.Dir(first.Directory)
+			p := filepath.Join(checkout, filepath.FromSlash(planted))
+			for dir := filepath.Dir(p); ; dir = filepath.Dir(dir) {
+				if _, err := os.Stat(dir); err == nil {
+					if err := os.Chmod(dir, 0755); err != nil {
+						t.Fatal(err)
+					}
+					break
+				}
+			}
+			if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("planted"), 0444); err != nil {
+				t.Fatal(err)
+			}
+			_ = filepath.WalkDir(checkout, func(path string, d os.DirEntry, err error) error {
+				if err == nil && d.IsDir() {
+					return os.Chmod(path, 0555)
+				}
+				return err
+			})
+			if _, err := ResolveSource(context.Background(), cache, source, "waldo-trainer", "cpu"); err == nil || !strings.Contains(err.Error(), "unexpected source cache file") {
+				t.Fatalf("planted file accepted: %v", err)
+			}
+		})
+	}
+}

@@ -266,5 +266,57 @@ marker = 'python_version < "2"'
         self.assertEqual(other['identity']['name'], 'tokenizer')
 
 
+    def test_changed_lock_never_reuses_another_entry(self):
+        result, root, _ = self.create()
+        self.lock.write_text(self.lock_text().replace('waldo-test', 'waldo-test-2'))
+        other = env.ensure(self.request)
+        self.assertEqual(other['identity']['lock_sha256'], env.digest(self.lock))
+        self.assertNotEqual(other['identity']['lock_sha256'], result['identity']['lock_sha256'])
+        self.assertNotEqual(other['run']['cache_path'], str(root))
+        self.assertEqual(len(list((self.temp / 'cache').iterdir())), 2)
+
+    def test_receipt_identity_tampering(self):
+        result, root, _ = self.create()
+        self.writable(root)
+        receipt_path = root / env.RECEIPT
+        receipt = json.loads(receipt_path.read_text())
+        receipt['identity']['interpreter_version'] = '0.0.0'
+        receipt_path.write_text(json.dumps(receipt, sort_keys=True) + '\n')
+        with self.assertRaisesRegex(ValueError, 'environment identity mismatch'):
+            env.ensure(self.request, 'verify')
+
+    def test_lock_rejections(self):
+        sha = hashlib.sha256(self.wheel).hexdigest()
+        cases = {
+            'plain http': (self.lock_text().replace('url = "https://', 'url = "http://'), 'HTTPS URL'),
+            'wheel name': (self.lock_text().replace('sample-1.0-py3-none-any.whl', 'other-1.0-py3-none-any.whl'), 'does not match locked'),
+            'wheel version': (self.lock_text().replace('sample-1.0-py3-none-any.whl', 'sample-2.0-py3-none-any.whl'), 'does not match locked'),
+            'requires-python': ('requires-python = "<3"\n' + self.lock_text(), 'requires-python'),
+            'duplicate entry': (self.lock_text() + self.lock_text().split('\n', 2)[2], 'multiple matching'),
+            'missing hash': (self.lock_text().replace(sha, ''), 'SHA-256'),
+        }
+        for label, (data, message) in cases.items():
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(ValueError, message):
+                    env.parse_lock(data.encode())
+
+    def test_symlink_wheel_member(self):
+        wheel = self.temp / 'link.whl'
+        with zipfile.ZipFile(wheel, 'w') as z:
+            info = zipfile.ZipInfo('sample/link.py')
+            info.external_attr = (0o120777 << 16)
+            z.writestr(info, '/etc/passwd')
+        with self.assertRaisesRegex(ValueError, 'unsafe wheel member'):
+            env.check_wheel(wheel, {})
+
+    def test_download_redirect_away_from_https(self):
+        class Redirected(Response):
+            def geturl(self):
+                return 'http://example.invalid/sample-1.0-py3-none-any.whl'
+        self.download.side_effect = lambda *a, **k: Redirected(self.wheel)
+        with self.assertRaisesRegex(ValueError, 'redirected away from HTTPS'):
+            env.ensure(self.request)
+        self.assertEqual(list((self.temp / 'cache').iterdir()), [])
+
 if __name__ == '__main__':
     unittest.main()
