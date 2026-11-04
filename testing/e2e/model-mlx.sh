@@ -295,8 +295,13 @@ hub_port=$("$mlx_python" -c 'import socket; s = socket.socket(); s.bind(("127.0.
 "$mlx_python" -m http.server "$hub_port" --bind 127.0.0.1 --directory "$hub" >/dev/null 2>&1 &
 hub_pid=$!
 until "$mlx_python" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$hub_port/api/models/e2e/mlx-smoke/revision/main')" 2>/dev/null; do sleep 0.2; done
-HF_ENDPOINT="http://127.0.0.1:$hub_port" HF_TOKEN= "$binary" model pull mlx-pulled huggingface://e2e/mlx-smoke@main >/dev/null
+HF_ENDPOINT="http://127.0.0.1:$hub_port" HF_TOKEN= "$binary" model pull mlx-pulled huggingface://e2e/mlx-smoke@main >/dev/null 2>"$work/pull.log"
 kill "$hub_pid"
+# The release's own inventory lists the pulled weights, so its lineage is kept.
+if grep -q "lineage is left out" "$work/pull.log"; then
+  cat "$work/pull.log" >&2
+  exit 1
+fi
 pulled_chat=$("$binary" --json model chat mlx-pulled "OpenWALDO" --max-tokens 2 --temperature 0 --seed 7)
 printf '%s\n' "$pulled_chat" | grep -Eq '"source_type"[[:space:]]*:[[:space:]]*"origin"'
 printf '%s\n' "$pulled_chat" | grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(eos|max_tokens)"'
@@ -304,14 +309,14 @@ printf '%s\n' "$pulled_chat" | grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]
 "$binary" model export mlx-smoke "$mlx_export" --format mlx --allow-incomplete >/dev/null
 "$binary" model export mlx-smoke "$gguf_export" --format gguf --allow-incomplete >/dev/null
 "$binary" model export mlx-smoke "$ollama_export" --format ollama --allow-incomplete >/dev/null
-"$mlx_python" - "$current_weights" "$huggingface_export" "$mlx_export" "$gguf_export" "$ollama_export" "$models/mlx-pulled/ORIGIN-BOM.json" <<'PY'
+"$mlx_python" - "$current_weights" "$huggingface_export" "$mlx_export" "$gguf_export" "$ollama_export" "$models/mlx-pulled" <<'PY'
 import hashlib
 import json
 import os
 import struct
 import sys
 
-source, huggingface_root, mlx_root, gguf_root, ollama_root, pulled_origin = sys.argv[1:]
+source, huggingface_root, mlx_root, gguf_root, ollama_root, pulled_root = sys.argv[1:]
 lineages = []
 
 def tensor_payload(path):
@@ -359,14 +364,20 @@ for root, release_format in ((gguf_root, "gguf"), (ollama_root, "ollama")):
         assert hashlib.sha256(data).hexdigest() == item["sha256"]
 
 # Every release names the trained weights and the one run that made them, and
-# a pull of the Hugging Face release keeps that node as its origin's lineage.
+# a pull of the Hugging Face release keeps its BOM.json, unchanged, as where its
+# origin's lineage begins, leaving the origin's own record without lineage.
 with open(source, "rb") as stream:
     source_sha256 = hashlib.sha256(stream.read()).hexdigest()
 assert all(lineage == lineages[0] for lineage in lineages)
 assert lineages[0]["weights_sha256"] == source_sha256
 assert len(lineages[0]["runs"]) == 1
-with open(pulled_origin, encoding="utf-8") as stream:
-    assert json.load(stream)["lineage"] == lineages[0]
+with open(os.path.join(pulled_root, "origin", "release", "BOM.json"), "rb") as stream:
+    kept = stream.read()
+with open(os.path.join(huggingface_root, "BOM.json"), "rb") as stream:
+    assert kept == stream.read()
+assert json.loads(kept)["lineage"] == lineages[0]
+with open(os.path.join(pulled_root, "ORIGIN-BOM.json"), encoding="utf-8") as stream:
+    assert "lineage" not in json.load(stream)
 
 with open(os.path.join(ollama_root, "Modelfile"), encoding="utf-8") as stream:
     modelfile = stream.read()

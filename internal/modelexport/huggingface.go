@@ -67,10 +67,13 @@ type releaseBOM struct {
 	SourceBOM   string            `json:"source_bom_sha256"`
 	// Lineage is the node of the managed weights this release was converted
 	// from, so a model pulled from it continues the chain it declares.
-	Lineage      *model.LineageNode   `json:"lineage,omitempty"`
-	Artifacts    []releaseArtifact    `json:"artifacts"`
-	Quantization *releaseQuantization `json:"quantization,omitempty"`
-	Generated    string               `json:"generated"`
+	Lineage *model.LineageNode `json:"lineage,omitempty"`
+	// LineageAncestors is every node behind Lineage the model held, so the
+	// history travels with the release.
+	LineageAncestors []model.LineageNode  `json:"lineage_ancestors,omitempty"`
+	Artifacts        []releaseArtifact    `json:"artifacts"`
+	Quantization     *releaseQuantization `json:"quantization,omitempty"`
+	Generated        string               `json:"generated"`
 }
 
 type releaseQuantization struct {
@@ -192,11 +195,11 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	if err != nil {
 		return "", err
 	}
-	lineage, err := model.ModelLineage(inspection, artifacts.RunID)
+	lineage, ancestors, err := model.LineageHistory(inspection, artifacts.RunID)
 	if err != nil {
 		return "", err
 	}
-	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Lineage: &lineage, Artifacts: inventory, Generated: inspection.Model.Updated}
+	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Lineage: &lineage, LineageAncestors: ancestors, Artifacts: inventory, Generated: inspection.Model.Updated}
 	if err := writeJSON(filepath.Join(temporary, "BOM.json"), bom); err != nil {
 		return "", err
 	}

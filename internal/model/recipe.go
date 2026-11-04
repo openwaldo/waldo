@@ -120,8 +120,6 @@ type ComposeBase struct {
 	RunBOMSHA256   string `json:"run_bom_sha256,omitempty" yaml:"run_bom_sha256,omitempty"`
 	ArtifactSHA256 string `json:"artifact_sha256,omitempty" yaml:"artifact_sha256,omitempty"`
 	ArtifactBytes  int64  `json:"artifact_bytes,omitempty" yaml:"artifact_bytes,omitempty"`
-	// LineageSHA256 is resolved from a trained base model's lineage node and pinned with it.
-	LineageSHA256 string `json:"lineage_sha256,omitempty" yaml:"lineage_sha256,omitempty"`
 }
 
 type Architecture struct {
@@ -578,7 +576,7 @@ func (compose Compose) Validate() error {
 			return fmt.Errorf("base.model must name a locally managed model")
 		}
 		if hasSource {
-			if compose.Base.ModelID != "" || compose.Base.RunID != "" || compose.Base.RunBOMSHA256 != "" || compose.Base.ArtifactSHA256 != "" || compose.Base.ArtifactBytes != 0 || compose.Base.LineageSHA256 != "" {
+			if compose.Base.ModelID != "" || compose.Base.RunID != "" || compose.Base.RunBOMSHA256 != "" || compose.Base.ArtifactSHA256 != "" || compose.Base.ArtifactBytes != 0 {
 				return fmt.Errorf("base.source cannot declare managed-model run pins")
 			}
 			_, revision, err := parseHuggingFaceSource(compose.Base.Source)

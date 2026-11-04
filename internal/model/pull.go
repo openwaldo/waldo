@@ -6,7 +6,6 @@
 package model
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -209,15 +208,22 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 	if err != nil {
 		return Inspection{}, err
 	}
-	lineage, err := releaseLineage(filepath.Join(sourceDirectory, "BOM.json"))
-	if err != nil {
+	// Malformed release lineage refuses the pull; the BOM.json itself is kept.
+	if data, err := os.ReadFile(filepath.Join(sourceDirectory, "BOM.json")); err == nil {
+		_, _, note, err := releaseLineage(data, sourceArtifacts)
+		if err != nil {
+			return Inspection{}, err
+		}
+		if note != "" {
+			puller.report(PullProgress{Phase: "lineage", Message: note})
+		}
+	} else if !os.IsNotExist(err) {
 		return Inspection{}, err
 	}
 	origin := OriginBOM{
 		Kind: "openwaldo-bom", Schema: 1, Subject: "model-origin",
 		Source:             OriginSource{Provider: "huggingface", Repository: metadata.ID, RequestedRevision: requested, Revision: metadata.SHA, URL: endpoint + "/" + metadata.ID, License: metadata.CardData.License},
 		ArchitectureSHA256: architectureHash, SourceArtifacts: sourceArtifacts, Artifacts: artifacts,
-		Lineage: lineage,
 	}
 	originHash, err := hashJSON(origin)
 	if err != nil {
@@ -241,6 +247,9 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 		Kind: "waldo-model", Schema: 1, ID: planHash, Name: name, PlanSHA256: planHash,
 		ArchitectureSHA256: architectureHash, Architecture: architecture, Forecast: plan.Forecast,
 		Created: created, Updated: created, Runs: []RunPin{}, OriginBOMSHA256: originHash, OriginArtifacts: artifacts,
+	}
+	if err := keepReleaseBOM(filepath.Join(sourceDirectory, "BOM.json"), filepath.Join(temporary, filepath.FromSlash(ReleaseBOMPath))); err != nil {
+		return Inspection{}, err
 	}
 	if err := os.RemoveAll(sourceDirectory); err != nil {
 		return Inspection{}, err
@@ -666,55 +675,15 @@ func huggingFaceToken() string {
 	return strings.TrimSpace(string(data))
 }
 
-// releaseLineage is the lineage node a WALDO release's BOM.json records, if
-// the package has one; the file itself is pinned among the source artifacts.
-func releaseLineage(path string) (*LineageNode, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, nil
+// keepReleaseBOM moves a pulled package's BOM.json, if any, to ReleaseBOMPath.
+func keepReleaseBOM(source, kept string) error {
+	if _, err := os.Stat(source); os.IsNotExist(err) {
+		return nil
 	} else if err != nil {
-		return nil, err
+		return err
 	}
-	// Keys are read exactly, as other readers of BOM.json read them; Go's
-	// decoder alone would also match "LINEAGE".
-	var release map[string]json.RawMessage
-	if json.Unmarshal(data, &release) != nil {
-		return nil, nil
+	if err := os.MkdirAll(filepath.Dir(kept), 0o755); err != nil {
+		return err
 	}
-	var kind, subject string
-	if json.Unmarshal(release["kind"], &kind) != nil || json.Unmarshal(release["subject"], &subject) != nil || kind != "openwaldo-bom" || subject != "model-release" {
-		return nil, nil
-	}
-	for key := range release {
-		if key != "lineage" && strings.EqualFold(key, "lineage") {
-			return nil, fmt.Errorf("release BOM.json lineage: unexpected key %q", key)
-		}
-	}
-	raw := release["lineage"]
-	if raw == nil || string(raw) == "null" {
-		return nil, nil
-	}
-	// Lineage is read with schema 1's meaning, so only a schema-1 release may carry it.
-	var schema int
-	if json.Unmarshal(release["schema"], &schema) != nil || schema != 1 {
-		return nil, fmt.Errorf("release BOM.json lineage: unsupported schema %s", release["schema"])
-	}
-	var lineage LineageNode
-	if err := json.Unmarshal(raw, &lineage); err != nil {
-		return nil, fmt.Errorf("release BOM.json lineage: %w", err)
-	}
-	if err := lineage.validate(); err != nil {
-		return nil, fmt.Errorf("release BOM.json lineage: %w", err)
-	}
-	// The node must be exactly the one WALDO hashes, so the bytes a release
-	// publishes say what this pull records.
-	canonical, err := json.Marshal(lineage)
-	if err != nil {
-		return nil, err
-	}
-	var published bytes.Buffer
-	if err := json.Compact(&published, raw); err != nil || !bytes.Equal(published.Bytes(), canonical) {
-		return nil, fmt.Errorf("release BOM.json lineage is not a lineage node in WALDO's form")
-	}
-	return &lineage, nil
+	return os.Rename(source, kept)
 }

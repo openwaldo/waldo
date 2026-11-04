@@ -87,7 +87,6 @@ schema: 1
 #   run_bom_sha256: <optional-run-bom-sha256>
 #   artifact_sha256: <optional-checkpoint-sha256>
 #   artifact_bytes: <optional-checkpoint-size>
-#   lineage_sha256: <optional-lineage-node-sha256>
 #   origin_sha256: <expected-origin-bom-sha256> # optional assertion
 #
 # Or acquire a supported external origin directly. With this form only,
@@ -231,7 +230,6 @@ model-level contract. New composes should use only `interaction.tools`.
 | `run_bom_sha256` | no | SHA-256 | Asserts the selected run BOM. WALDO fills it during resolution. |
 | `artifact_sha256` | no | SHA-256 | Asserts the selected checkpoint bytes. WALDO fills it during resolution. |
 | `artifact_bytes` | no | non-negative bytes | Asserts the selected checkpoint size. WALDO fills it during resolution. |
-| `lineage_sha256` | no | SHA-256 | Asserts the selected run's lineage node ([ADR 0084](adr/0084-record-model-lineage.md)). WALDO fills it during resolution. |
 
 ## Base initialization
 
@@ -314,8 +312,10 @@ Hugging Face token file. Verified direct origins are cached beneath
 `waldo model list`. The destination hard-links cached artifacts when possible
 and copies them otherwise. Its `ORIGIN-BOM.json` records the repository,
 requested and resolved revisions, declared license when available, source-file
-hashes, normalized artifact hashes, and the lineage node a WALDO release
-declares, if any.
+hashes, and normalized artifact hashes. A pull keeps the release's `BOM.json`,
+whose hash the origin pins among its source files, as
+`origin/release/BOM.json`: the lineage a WALDO release declares begins there
+([ADR 0084](adr/0084-record-model-lineage.md)).
 
 Schema 1 currently accepts standard bias-free Llama Safetensors with
 `OpenWALDOTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors—the

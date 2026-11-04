@@ -197,6 +197,7 @@ inventory. Its schema-1 shape is:
     "runs": ["<run BOM hash>"],
     "source_sha256": "<hash of the release, when the weights are a pulled origin's>"
   },
+  "lineage_ancestors": [{"weights_sha256": "<ancestor weights hash>", "parents": ["..."], "runs": ["..."]}],
   "artifacts": [
     {
       "role": "weights",
@@ -221,9 +222,14 @@ root. This makes a release relocatable without embedding a machine-specific
 model directory. `lineage` is the lineage node of the managed weights this
 release was converted from ([ADR 0084](adr/0084-record-model-lineage.md)), so
 its `weights_sha256` names no file in the release; a pull keeps it as the node
-its origin descends from, so the chain continues past publication. A pull reads
-the exact `lineage` key and refuses a node that is malformed or not in WALDO's
-canonical form, so the recorded node is the one any reader of the release sees.
+its origin descends from, so the chain continues past publication.
+`lineage_ancestors` carries every node behind it the model held, so the history
+travels with the release without the models that made it. A pull refuses lineage
+that other readers could read differently: repeated or case-variant keys, data
+after the object, a missing schema, nodes not in WALDO's canonical form, or
+ancestors that are not exactly the chain behind `lineage`. It leaves lineage out,
+with a note, when the release is a later schema or its `artifacts` do not list
+the pulled weights files with their hashes and sizes.
 
 The derived package currently records the source model BOM by hash rather than
 embedding the full `MODEL-BOM.json` and run tree. The hash makes substitution

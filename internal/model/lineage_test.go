@@ -25,13 +25,18 @@ func releaseArchitecture() Architecture {
 	return Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
 }
 
-// pullRelease pulls a release whose BOM.json declares node as the lineage its
-// weights came from, or with no BOM.json when node is empty.
-func pullRelease(t *testing.T, root, name string, node LineageNode) {
+// pullRelease pulls a release whose BOM.json declares node, with ancestors
+// behind it, as the lineage its weights came from, or with no BOM.json when
+// node is empty.
+func pullRelease(t *testing.T, root, name string, node LineageNode, ancestors ...LineageNode) {
 	t.Helper()
 	files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
 	if node.WeightsSHA256 != "" {
-		bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": node})
+		release := map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": node, "artifacts": inventory(files)}
+		if len(ancestors) > 0 {
+			release["lineage_ancestors"] = ancestors
+		}
+		bom, err := json.Marshal(release)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -41,6 +46,16 @@ func pullRelease(t *testing.T, root, name string, node LineageNode) {
 	if _, err := (Puller{Root: root, Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), name, "huggingface://org/tiny"); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// inventory is a release BOM's artifacts list for files.
+func inventory(files map[string][]byte) []OriginArtifact {
+	var artifacts []OriginArtifact
+	for path, data := range files {
+		digest := sha256.Sum256(data)
+		artifacts = append(artifacts, OriginArtifact{Role: "weights", Path: path, SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))})
+	}
+	return artifacts
 }
 
 // releaseStage is a stage that fits releaseArchitecture's context.
@@ -127,12 +142,14 @@ func TestEachRunRecordsItsOwnLineageNode(t *testing.T) {
 	}
 }
 
-// Pinning an earlier run records that run's node: its weights and only the run that made them.
-func TestComposePinnedToEarlierRunRecordsThatRunsLineage(t *testing.T) {
+// A fine-tune pinned to an earlier run starts from that run's node: its
+// weights and only the run that made them.
+func TestComposePinnedToEarlierRunStartsFromThatRunsNode(t *testing.T) {
 	root := t.TempDir()
 	builder := realWeightsBuilder(root)
 	first := trainTwice(t, builder)
-	resolved, err := builder.ResolveCompose(t.Context(), Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first}, Stages: []Stage{testStage("child")}}, false)
+	stage := testStage("child")
+	child, err := builder.Compose(t.Context(), "child", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,18 +157,91 @@ func TestComposePinnedToEarlierRunRecordsThatRunsLineage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := ModelLineage(p, first)
+	pinned, err := ModelLineage(p, first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Base.LineageSHA256 != lineageHash(t, node) || node.WeightsSHA256 != resolved.Base.ArtifactSHA256 || !reflect.DeepEqual(node.Runs, []string{resolved.Base.RunBOMSHA256}) {
-		t.Fatalf("pin weights %s, run %s, lineage %s; node %+v", resolved.Base.ArtifactSHA256, resolved.Base.RunBOMSHA256, resolved.Base.LineageSHA256, node)
+	node, history, err := LineageHistory(child, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: pinned.WeightsSHA256, LineageSHA256: lineageHash(t, pinned)}}) || !reflect.DeepEqual(history, []LineageNode{pinned}) {
+		t.Fatalf("child's node %+v and history %+v, want to start from %+v", node, history, pinned)
 	}
 }
 
-// A fine-tune's first run descends from the node its parent pin records, so
-// the chain continues from model to model.
-func TestFineTuneContinuesItsParentsChain(t *testing.T) {
+// A fine-tune holds its parent's whole chain, so its history stays complete
+// once the parent model is deleted.
+func TestFineTuneKeepsItsHistoryWithoutItsParent(t *testing.T) {
+	root := t.TempDir()
+	builder := realWeightsBuilder(root)
+	trainTwice(t, builder)
+	p, err := Inspect(root, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, history, err := LineageHistory(p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := testStage("child")
+	if _, err := builder.Compose(t.Context(), "child", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Remove(root, []string{"p"}); err != nil {
+		t.Fatal(err)
+	}
+	child, err := Inspect(root, "child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, chain, err := LineageHistory(child, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]LineageNode{second}, history...)
+	if len(want) != 2 || !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: second.WeightsSHA256, LineageSHA256: lineageHash(t, second)}}) || !reflect.DeepEqual(chain, want) {
+		t.Fatalf("child's node %+v and history %+v, want %+v", node, chain, want)
+	}
+}
+
+// Lineage lives beside the records, which stay exactly as earlier WALDO
+// versions write and read them.
+func TestLineageLeavesRecordsAsEarlierVersionsReadThem(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	builder := realWeightsBuilder(root)
+	trainTwice(t, builder)
+	stage := testStage("child")
+	if _, err := builder.Compose(t.Context(), "child", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+		t.Fatal(err)
+	}
+	pullRelease(t, root, "pulled", LineageNode{WeightsSHA256: strings.Repeat("a", 64)})
+	for _, model := range []string{"child", "pulled"} {
+		paths, err := filepath.Glob(filepath.Join(root, model, "*.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range paths {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if filepath.Base(path) != LineageFile && strings.Contains(string(data), "lineage") {
+				t.Fatalf("%s records lineage", path)
+			}
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "child", LineageFile)); err != nil {
+		t.Fatalf("child has no %s: %v", LineageFile, err)
+	}
+}
+
+// A LINEAGE.json is refused unless its parent node names the weights the
+// parent pin names and its ancestors are exactly the chain behind it. Fewer
+// ancestors is a shorter history, not a different one; a model made before
+// lineage starts from its parent's weights alone.
+func TestFineTuneLineageMustMatchItsParent(t *testing.T) {
 	root := t.TempDir()
 	builder := realWeightsBuilder(root)
 	trainTwice(t, builder)
@@ -160,13 +250,45 @@ func TestFineTuneContinuesItsParentsChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := ModelLineage(child, "")
+	path := filepath.Join(root, "child", LineageFile)
+	original, err := readLineageRecord(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent := child.Model.Parent
-	if parent == nil || parent.LineageSHA256 == "" || !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: parent.Artifact.SHA256, LineageSHA256: parent.LineageSHA256}}) {
-		t.Fatalf("child's node %+v does not continue its parent pin %+v", node, parent)
+	stray := LineageNode{WeightsSHA256: strings.Repeat("c", 64)}
+	for name, change := range map[string]func(*lineageRecord){
+		"other weights":    func(record *lineageRecord) { record.Parent.WeightsSHA256 = strings.Repeat("d", 64) },
+		"other run":        func(record *lineageRecord) { record.Parent.Runs = []string{strings.Repeat("f", 64)} },
+		"stray ancestor":   func(record *lineageRecord) { record.Ancestors = append(record.Ancestors, stray) },
+		"altered ancestor": func(record *lineageRecord) { record.Ancestors[0].Runs = []string{strings.Repeat("e", 64)} },
+		"another kind":     func(record *lineageRecord) { record.Kind = "waldo-model" },
+	} {
+		record := *original
+		record.Ancestors = append([]LineageNode(nil), original.Ancestors...)
+		change(&record)
+		if err := writeJSONAtomic(path, record); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ModelLineage(child, ""); err == nil {
+			t.Fatalf("%s: lineage accepted", name)
+		}
+	}
+	// A later schema's LINEAGE.json, like none at all, starts from the parent's weights alone.
+	later := map[string]any{"kind": lineageKind, "schema": 2, "parent": map[string]any{"weights": "a later form"}}
+	for name, write := range map[string]func() error{
+		"later schema": func() error { return writeJSONAtomic(path, later) },
+		"none":         func() error { return os.Remove(path) },
+	} {
+		if err := write(); err != nil {
+			t.Fatal(err)
+		}
+		node, err := ModelLineage(child, "")
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: child.Model.Parent.Artifact.SHA256}}) {
+			t.Fatalf("%s: starts from %+v", name, node.Parents)
+		}
 	}
 }
 
@@ -218,37 +340,62 @@ func TestLineageAndCurrentWeightsSkipRunsThePinMarksSimulated(t *testing.T) {
 	}
 }
 
-// A pull keeps the node its release declares, and training the pulled model
-// continues the chain from it.
+// A pull keeps the release's BOM.json, so its origin descends from the node
+// the release declares and holds the chain behind it, and training the pulled
+// model, or a model composed from it, continues that chain.
 func TestPulledReleaseKeepsItsLineage(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	root := t.TempDir()
-	declared := LineageNode{WeightsSHA256: strings.Repeat("a", 64), Runs: []string{strings.Repeat("b", 64)}}
-	pullRelease(t, root, "pulled", declared)
+	older := LineageNode{WeightsSHA256: strings.Repeat("c", 64), Runs: []string{strings.Repeat("d", 64)}}
+	declared := LineageNode{WeightsSHA256: strings.Repeat("a", 64), Parents: []LineageLink{{WeightsSHA256: older.WeightsSHA256, LineageSHA256: lineageHash(t, older)}}, Runs: []string{strings.Repeat("b", 64)}}
+	pullRelease(t, root, "pulled", declared, older)
 	pulled, err := Inspect(root, "pulled")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pulled.Origin.Lineage == nil || !reflect.DeepEqual(*pulled.Origin.Lineage, declared) {
-		t.Fatalf("origin lineage = %+v", pulled.Origin.Lineage)
-	}
-	origin, err := ModelLineage(pulled, "")
+	origin, history, err := LineageHistory(pulled, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(origin.Parents, []LineageLink{{WeightsSHA256: declared.WeightsSHA256, LineageSHA256: lineageHash(t, declared)}}) {
-		t.Fatalf("pulled origin's node = %+v", origin)
+	if !reflect.DeepEqual(origin.Parents, []LineageLink{{WeightsSHA256: declared.WeightsSHA256, LineageSHA256: lineageHash(t, declared)}}) || !reflect.DeepEqual(history, []LineageNode{declared, older}) {
+		t.Fatalf("pulled origin's node %+v and history %+v", origin, history)
+	}
+	stage := releaseStage("more")
+	composed, err := realWeightsBuilder(root).Compose(t.Context(), "composed", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "pulled"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)})
+	if err != nil {
+		t.Fatal(err)
 	}
 	trained, err := realWeightsBuilder(root).Train(t.Context(), "pulled", preparedFixture(t, releaseStage("more")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := ModelLineage(trained, "")
+	for _, model := range []Inspection{trained, composed} {
+		node, chain, err := LineageHistory(model, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: origin.WeightsSHA256, LineageSHA256: lineageHash(t, origin)}}) || !reflect.DeepEqual(chain, []LineageNode{origin, declared, older}) {
+			t.Fatalf("%s: node %+v and history %+v do not continue the pulled origin %+v", model.Model.Name, node, chain, origin)
+		}
+	}
+}
+
+// The kept release BOM.json is read only while it has the hash its origin
+// pinned.
+func TestPulledLineageRefusesAnEditedReleaseBOM(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullRelease(t, root, "pulled", LineageNode{WeightsSHA256: strings.Repeat("a", 64)})
+	pulled, err := Inspect(root, "pulled")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: origin.WeightsSHA256, LineageSHA256: lineageHash(t, origin)}}) {
-		t.Fatalf("trained node %+v does not continue the pulled origin %+v", node, origin)
+	bom := `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":{"weights_sha256":"` + strings.Repeat("e", 64) + `"}}`
+	if err := os.WriteFile(filepath.Join(root, "pulled", filepath.FromSlash(ReleaseBOMPath)), []byte(bom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ModelLineage(pulled, ""); err == nil || !strings.Contains(err.Error(), "release BOM.json") {
+		t.Fatalf("edited release BOM.json: %v", err)
 	}
 }
 
@@ -266,98 +413,6 @@ func TestPullRefusesMalformedReleaseLineage(t *testing.T) {
 	}
 }
 
-// Only a trained base has a lineage node to pin; any other pin is refused, not recorded.
-func TestComposeRefusesLineagePinOnUntrainedBase(t *testing.T) {
-	isolateHuggingFaceToken(t)
-	root := t.TempDir()
-	pullRelease(t, root, "pulled", LineageNode{})
-	stage := releaseStage("continue")
-	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "pulled", LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
-	if _, err := (Builder{Root: root, Resolver: training.FakeResolver()}).Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil || !strings.Contains(err.Error(), "cannot assert managed-model run pins") {
-		t.Fatalf("origin base with a lineage pin: %v", err)
-	}
-	source := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Source: "huggingface://org/tiny@" + strings.Repeat("a", 40), LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
-	if err := source.Validate(); err == nil || !strings.Contains(err.Error(), "base.source") {
-		t.Fatalf("source base with a lineage pin: %v", err)
-	}
-}
-
-// Parent pins recorded before lineage still match the same parent, so existing
-// fine-tunes keep accepting stages.
-func TestSameParentAcceptsPinsRecordedBeforeLineage(t *testing.T) {
-	pin := ModelParent{Model: "base", ModelID: "id", RunID: "run", RunBOMSHA256: "bom", Artifact: training.Artifact{Path: "base/model.safetensors", SHA256: "weights"}}
-	withLineage := pin
-	withLineage.LineageSHA256 = strings.Repeat("a", 64)
-	if !sameParent(&pin, &withLineage) || !sameParent(&withLineage, &withLineage) {
-		t.Fatal("matching parents rejected")
-	}
-	other := withLineage
-	other.LineageSHA256 = strings.Repeat("b", 64)
-	if sameParent(&withLineage, &other) {
-		t.Fatal("a recorded lineage must match exactly")
-	}
-	changed := pin
-	changed.RunID = "another"
-	if sameParent(&changed, &withLineage) || sameParent(nil, &withLineage) {
-		t.Fatal("a different parent matched")
-	}
-}
-
-// An asserted lineage pin must be the base run's own node.
-func TestComposeRefusesAWrongLineagePin(t *testing.T) {
-	builder := realWeightsBuilder(t.TempDir())
-	first := trainTwice(t, builder)
-	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first, LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{testStage("child")}}
-	if _, err := builder.ResolveCompose(t.Context(), compose, false); err == nil || !strings.Contains(err.Error(), "recorded ancestry") {
-		t.Fatalf("wrong lineage pin: %v", err)
-	}
-}
-
-// A fine-tune compose interrupted before lineage was recorded, whose kept
-// transaction has no lineage pin, resumes with the same command.
-func TestComposeResumesATransactionFromBeforeLineage(t *testing.T) {
-	root := t.TempDir()
-	builder := realWeightsBuilder(root)
-	first := trainTwice(t, builder)
-	stage := testStage("child")
-	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first}, Stages: []Stage{stage}}
-	interrupted := builder
-	interrupted.Resolver = training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
-		return testSelection(backendFunc(func(context.Context, training.Request) (training.Observation, error) {
-			return training.Observation{}, context.Canceled
-		})), nil
-	})
-	if _, err := interrupted.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil {
-		t.Fatal("interrupted compose finished")
-	}
-	// Rewrite the kept transaction and compose as a WALDO without lineage wrote them.
-	paths, err := filepath.Glob(filepath.Join(root, ".waldo-compose", "*", "COMPOSE.json"))
-	if err != nil || len(paths) != 1 {
-		t.Fatalf("pending transactions %v, %v", paths, err)
-	}
-	var transaction composeTransaction
-	if err := readJSON(paths[0], &transaction); err != nil {
-		t.Fatal(err)
-	}
-	transaction.Compose.Base.LineageSHA256 = ""
-	if err := writeJSONAtomic(paths[0], transaction); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeJSONAtomic(filepath.Join(root, "child", "COMPOSE.json"), transaction.Compose); err != nil {
-		t.Fatal(err)
-	}
-	resolved, err := builder.ResolveCompose(t.Context(), compose, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := builder.CheckComposeTarget("child", resolved); err != nil {
-		t.Fatalf("check before resuming: %v", err)
-	}
-	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err != nil {
-		t.Fatalf("resume: %v", err)
-	}
-}
-
 // The pull reads the exact lineage key in WALDO's own form, so the recorded
 // node is the one any reader of the release's BOM.json sees.
 func TestPullRefusesALineageItsReadersCouldSeeDifferently(t *testing.T) {
@@ -368,6 +423,9 @@ func TestPullRefusesALineageItsReadersCouldSeeDifferently(t *testing.T) {
 		"node key case":   `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":{"WEIGHTS_SHA256":"` + strings.Repeat("a", 64) + `"}}`,
 		"node extra":      `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":{"weights_sha256":"` + strings.Repeat("a", 64) + `","note":"x"}}`,
 		"node duplicates": `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":{"weights_sha256":"` + strings.Repeat("a", 64) + `","weights_sha256":"` + strings.Repeat("c", 64) + `"}}`,
+		"repeated key":    `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":` + node + `,"lineage":{"weights_sha256":"` + strings.Repeat("c", 64) + `"}}`,
+		"trailing data":   `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":` + node + `} x`,
+		"kind case":       `{"Kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":` + node + `}`,
 	} {
 		files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
 		files["BOM.json"] = []byte(bom)
@@ -378,18 +436,62 @@ func TestPullRefusesALineageItsReadersCouldSeeDifferently(t *testing.T) {
 	}
 }
 
-// Lineage is read with schema 1's meaning, so a release BOM without that
-// schema is refused rather than read as if it had it.
-func TestPullRefusesReleaseLineageOfAnotherSchema(t *testing.T) {
+// Lineage is read with schema 1's meaning: a release BOM without a schema is
+// refused, and one from a later schema is pulled with its lineage left out.
+func TestPullReadsReleaseLineageOnlyAsSchemaOne(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	node := `{"weights_sha256":"` + strings.Repeat("a", 64) + `"}`
-	for name, schema := range map[string]string{"missing": ``, "future": `"schema":2,`, "string": `"schema":"1",`} {
+	for name, schema := range map[string]string{"missing": ``, "string": `"schema":"1",`, "zero": `"schema":0,`} {
 		files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
 		files["BOM.json"] = []byte(`{"kind":"openwaldo-bom",` + schema + `"subject":"model-release","lineage":` + node + `}`)
 		client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
 		if _, err := (Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "tiny", "huggingface://org/tiny"); err == nil || !strings.Contains(err.Error(), "unsupported schema") {
 			t.Fatalf("%s: pull error = %v", name, err)
 		}
+	}
+	files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
+	files["BOM.json"] = []byte(`{"kind":"openwaldo-bom","schema":2,"subject":"model-release","lineage":{"weights_sha256":"a later form","method":"merge"}}`)
+	assertPulledRoot(t, files, "schema 2")
+}
+
+// A release BOM.json whose artifacts do not list the pulled weights, such as
+// one left behind when the weights were replaced, lends them no lineage.
+func TestPullLeavesOutLineageOfOtherWeights(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	node := LineageNode{WeightsSHA256: strings.Repeat("a", 64)}
+	for name, artifacts := range map[string][]OriginArtifact{
+		"other weights": {{Role: "weights", Path: "model.safetensors", SHA256: strings.Repeat("0", 64), Bytes: 1}},
+		"no inventory":  nil,
+	} {
+		files := huggingFaceFixture(t, releaseArchitecture(), HuggingFaceTokenizerClass)
+		bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": node, "artifacts": artifacts})
+		if err != nil {
+			t.Fatal(err)
+		}
+		files["BOM.json"] = bom
+		assertPulledRoot(t, files, name)
+	}
+}
+
+// assertPulledRoot pulls files and requires a pull that notes its release's
+// lineage was left out and whose origin is a root.
+func assertPulledRoot(t *testing.T, files map[string][]byte, name string) {
+	t.Helper()
+	root := t.TempDir()
+	var notes []string
+	client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
+	puller := Puller{Root: root, Endpoint: "https://hub.test", Client: client, Progress: func(progress PullProgress) {
+		if progress.Phase == "lineage" {
+			notes = append(notes, progress.Message)
+		}
+	}}
+	pulled, err := puller.Pull(t.Context(), "tiny", "huggingface://org/tiny")
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	origin, history, err := LineageHistory(pulled, "")
+	if err != nil || len(origin.Parents) != 0 || len(history) != 0 || len(notes) != 1 {
+		t.Fatalf("%s: origin %+v, history %+v, notes %q, err %v", name, origin, history, notes, err)
 	}
 }
 

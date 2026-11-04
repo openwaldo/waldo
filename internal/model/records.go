@@ -49,8 +49,6 @@ type ModelParent struct {
 	RunID        string            `json:"run_id"`
 	RunBOMSHA256 string            `json:"run_bom_sha256"`
 	Artifact     training.Artifact `json:"artifact"`
-	// LineageSHA256 names the parent's lineage node, as a git commit names its parent.
-	LineageSHA256 string `json:"lineage_sha256,omitempty"`
 }
 
 type OriginSource struct {
@@ -77,8 +75,6 @@ type OriginBOM struct {
 	ArchitectureSHA256 string           `json:"architecture_sha256"`
 	SourceArtifacts    []OriginArtifact `json:"source_artifacts"`
 	Artifacts          []OriginArtifact `json:"artifacts"`
-	// Lineage is the node the source release recorded for its weights, if any.
-	Lineage *LineageNode `json:"lineage,omitempty"`
 }
 
 // LineageNode names a model's weights and the weights they came from, each by

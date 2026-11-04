@@ -33,8 +33,8 @@ func List(root string, patterns []string) ([]Listing, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, failure := range unreadable {
-		return nil, failure.Err
+	if len(unreadable) > 0 {
+		return nil, unreadable[0].Err
 	}
 	return result, nil
 }
