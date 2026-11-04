@@ -29,7 +29,17 @@ else:
             tokens = [259]
         if mode == "null-token":
             tokens = [None]
+        if mode == "negative":
+            tokens = [-1]
+        if mode == "oversize":
+            tokens = [3] * (6 << 20)
         response = {"id": request["id"], "tokens": tokens}
+        if mode == "error":
+            response = {"id": request["id"], "error": "fixture refused"}
+        if mode == "missing-tokens":
+            del response["tokens"]
+        if mode == "unknown-field":
+            response["surprise"] = 1
         if mode == "wrong-id":
             response["id"] += 1
         if mode == "reverse":

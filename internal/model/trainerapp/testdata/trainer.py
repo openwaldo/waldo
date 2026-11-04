@@ -26,6 +26,9 @@ if command == 'probe':
     if MODE == 'capability': result['capabilities']['resume'] = False
     if MODE == 'objective': result['capabilities']['objectives'] = []
     if MODE == 'missing': del result['devices']
+    if MODE == 'probe-error':
+        emit('error', error='no accelerator', error_class='configuration')
+        sys.exit(0)
     print(json.dumps(result), flush=True)
     if MODE == 'extra': print('{}', flush=True)
 elif command == 'resolve':
@@ -34,7 +37,7 @@ elif command == 'resolve':
     parameters = dict(lr=0.1, micro=global_batch // world)
     if MODE == 'world-recipe': parameters['lr'] *= world
     if MODE == 'invalid-resolved': parameters['micro'] = 'bad'
-    emit('resolve', parameters=parameters, batch=dict(micro_batch_sequences=global_batch // world,
+    emit('resolved' if MODE == 'resolve-kind' else 'resolve', parameters=parameters, batch=dict(micro_batch_sequences=global_batch // world,
          accumulation_steps=2 if MODE == 'batch' else 1, world_size=world))
 else:
     assert request['kind'] == 'begin'
@@ -66,12 +69,26 @@ else:
         import time
         time.sleep(60)
     tokens = sum(counts.values())
+    log = dict(kind='log', step=0, tokens=0, message='x')
+    if MODE == 'non-json': print('not json', flush=True)
+    if MODE == 'unknown-field': emit('event', event=log, surprise=1)
+    if MODE == 'unknown-event-field': emit('event', event=dict(log, surprise=1))
+    if MODE == 'trailing': print(json.dumps(dict(kind='event', protocol=1, event=log)) + ' {}', flush=True)
+    if MODE == 'schema-1': print(json.dumps(dict(kind='event', schema=1, event=log)), flush=True)
+    if MODE == 'error-no-class': emit('error', error='fake failure', error_class='')
+    if MODE == 'event-with-error': emit('event', event=log, error='x')
+    if MODE == 'unknown-event-kind': emit('event', event=dict(log, kind='bogus'))
+    if MODE == 'empty-log': emit('event', event=dict(log, message=''))
+    if MODE == 'token-overflow': emit('event', event=dict(kind='progress', step=1, tokens=tokens + 1, loss=1.))
+    if MODE == 'nan-loss': emit('event', event=dict(kind='progress', step=1, tokens=tokens, loss=float('nan')))
+    if MODE == 'oversize': emit('event', event=dict(log, message='x' * (16 << 20)))
     header = json.dumps({'weight': dict(dtype='F32', shape=[1], data_offsets=[0, 4])}).encode()
     payload = struct.pack('<Q', len(header)) + header + struct.pack('<f', 1.0)
     os.makedirs(begin['paths']['checkpoints'], exist_ok=True)
     with open(os.path.join(begin['paths']['checkpoints'], 'model.safetensors'), 'wb') as f: f.write(payload)
     artifact = dict(path='model.safetensors', sha256=hashlib.sha256(payload).hexdigest(), bytes=len(payload), role='weights', format='safetensors')
     checkpoint = dict(step=1, tokens=tokens, artifacts=[artifact])
+    if MODE == 'checkpoint-step': checkpoint['step'] = 0
     evaluation = dict(step=1, tokens=tokens, nll_sum=2., target_tokens=2, text_bytes=2, loss=1., bits_per_byte=1 / math.log(2))
     emit('event', event=dict(kind='log', step=0, tokens=0, message='hello'))
     emit('event', event=dict(kind='progress', step=1, tokens=tokens, loss=1.))
@@ -88,5 +105,11 @@ else:
     if MODE == 'consumption': complete['consumption'][0]['corpus'] = 'wrong'
     if MODE == 'escape': artifact['path'] = '../escape'
     if MODE == 'selection': complete['selected_checkpoint']['step'] = 0
-    emit('complete', complete=complete)
+    if MODE == 'profile': complete['artifact_profile'] = 'other'
+    if MODE == 'no-complete': sys.exit(0)
+    emit('complete', complete=complete, **({'error_class': 'x'} if MODE == 'complete-with-error' else {}))
+    if MODE == 'duplicate-complete': emit('complete', complete=complete)
+    if MODE == 'exit-after-complete':
+        print('trainer-stderr-marker', file=sys.stderr, flush=True)
+        sys.exit(3)
     if MODE == 'after-complete': emit('event', event=dict(kind='log', message='late'))
