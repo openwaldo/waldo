@@ -261,6 +261,7 @@ func TestFineTuneLineageMustMatchItsParent(t *testing.T) {
 		"other run":        func(record *lineageRecord) { record.Parent.Runs = []string{strings.Repeat("f", 64)} },
 		"stray ancestor":   func(record *lineageRecord) { record.Ancestors = append(record.Ancestors, stray) },
 		"altered ancestor": func(record *lineageRecord) { record.Ancestors[0].Runs = []string{strings.Repeat("e", 64)} },
+		"link weights":     func(record *lineageRecord) { record.Parent.Parents[0].WeightsSHA256 = strings.Repeat("9", 64) },
 		"another kind":     func(record *lineageRecord) { record.Kind = "waldo-model" },
 	} {
 		record := *original
