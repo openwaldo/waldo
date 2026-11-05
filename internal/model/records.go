@@ -77,6 +77,7 @@ type OriginBOM struct {
 	ArchitectureSHA256 string           `json:"architecture_sha256"`
 	SourceArtifacts    []OriginArtifact `json:"source_artifacts"`
 	Artifacts          []OriginArtifact `json:"artifacts"`
+	Merge              *OriginMerge     `json:"merge,omitempty"`
 }
 
 // LineageNode names weights, their direct parents' nodes, and the runs that made them, like a git commit.
@@ -90,6 +91,24 @@ type LineageNode struct {
 type LineageLink struct {
 	WeightsSHA256 string `json:"weights_sha256"`
 	LineageSHA256 string `json:"lineage_sha256,omitempty"`
+}
+
+// OriginMerge records a merged origin: its parents in merge order, so anyone
+// holding them can recompute the weights and compare hashes.
+type OriginMerge struct {
+	Method  string              `json:"method"`
+	Parents []OriginMergeParent `json:"parents"`
+	// DeclaredAncestry is true when the parents' common ancestor is shown only
+	// by lineage a pulled release declared, which this store cannot check.
+	DeclaredAncestry bool `json:"declared_ancestry,omitempty"`
+}
+
+type OriginMergeParent struct {
+	Model         string  `json:"model"`
+	ModelID       string  `json:"model_id"`
+	WeightsSHA256 string  `json:"weights_sha256"`
+	LineageSHA256 string  `json:"lineage_sha256"`
+	Weight        float64 `json:"weight,omitempty"`
 }
 
 type PlannedStage struct {

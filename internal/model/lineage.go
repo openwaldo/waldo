@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -168,6 +169,9 @@ func startingLineage(inspection Inspection) (*LineageLink, map[string]LineageNod
 	if inspection.Origin == nil {
 		return nil, held, nil
 	}
+	if inspection.Origin.Merge != nil {
+		return mergedLineage(inspection, held)
+	}
 	release, ancestors, err := keptReleaseLineage(inspection)
 	if err != nil {
 		return nil, nil, err
@@ -178,6 +182,45 @@ func startingLineage(inspection Inspection) (*LineageLink, map[string]LineageNod
 	}
 	link, err := hold(held, node)
 	return &link, held, err
+}
+
+// mergedLineage is a merged origin's node, linking every parent's node like a git merge commit,
+// and the history its LINEAGE.json holds behind them.
+func mergedLineage(inspection Inspection, held map[string]LineageNode) (*LineageLink, map[string]LineageNode, error) {
+	node, err := mergeNode(*inspection.Origin)
+	if err != nil {
+		return nil, nil, err
+	}
+	record, err := readLineageRecord(filepath.Join(inspection.Path, lineageFile))
+	if err != nil {
+		return nil, nil, err
+	}
+	var ancestors []LineageNode
+	if record != nil {
+		if !reflect.DeepEqual(record.Parent, node) {
+			return nil, nil, fmt.Errorf("%s does not record this merge's node", lineageFile)
+		}
+		ancestors = record.Ancestors
+	}
+	link, err := holdChain(held, node, ancestors)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", lineageFile, err)
+	}
+	return &link, held, nil
+}
+
+// mergeNode is the node a merged origin's record names.
+func mergeNode(origin OriginBOM) (LineageNode, error) {
+	node := LineageNode{}
+	for _, artifact := range origin.Artifacts {
+		if artifact.Role == "weights" {
+			node.WeightsSHA256 = artifact.SHA256
+		}
+	}
+	for _, parent := range origin.Merge.Parents {
+		node.Parents = append(node.Parents, LineageLink{WeightsSHA256: parent.WeightsSHA256, LineageSHA256: parent.LineageSHA256})
+	}
+	return node, node.validate()
 }
 
 // keptReleaseLineage is the lineage in a pulled origin's kept release BOM.json.

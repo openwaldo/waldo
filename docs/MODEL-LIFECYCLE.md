@@ -118,7 +118,11 @@ architecture as an exact assertion. Acquired origins are content-addressed
 beneath `<model.root>/.origins`, hidden from `model list`, and reused by later
 composes. Target models hard-link cached artifacts when the filesystem permits
 and copy them otherwise. The resulting model retains the same `ORIGIN-BOM.json`
-provenance as an explicit `model pull`.
+provenance as an explicit `model pull`. Merged origins (`base.merge`) live
+beneath `<model.root>/.merges`; `model rm` removes a model, not the cached
+origin or merge it was built from. Unlike a pinned source, a merge cannot be
+fetched again: a merge-based model is composed again or extended only while
+its `.merges` entry is there.
 
 `init` creates an untrained immutable architecture. `train` resolves one or
 more recursive index selections, deduplicates them into an OpenWALDO BOM,
@@ -335,8 +339,8 @@ this section describes its place in the model lifecycle:
 kind: waldo-model-compose
 schema: 1
 
-# Optional. Omit this block to initialize a blank architecture. Use either
-# model or source, never both.
+# Optional. Omit this block to initialize a blank architecture. Use exactly one
+# of model, source, or merge (see MODEL-COMPOSE.md).
 base:
   model: llama-base
   # Optional assertion; WALDO always pins the resolved value into PLAN.json.

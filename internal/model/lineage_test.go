@@ -439,7 +439,7 @@ func TestComposeRefusesAWrongLineagePin(t *testing.T) {
 	first := trainTwice(t, builder)
 	stage := testStage("child")
 	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first, LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
-	resolved, err := builder.ResolveCompose(t.Context(), compose, false)
+	resolved, err := builder.ResolveCompose(t.Context(), "", compose, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +455,7 @@ func TestComposeRefusesAWrongLineagePin(t *testing.T) {
 // a parent pin without a lineage hash and no LINEAGE.json.
 func legacyFineTune(t *testing.T, builder Builder) Compose {
 	t.Helper()
-	resolved, err := builder.ResolveCompose(t.Context(), Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p"}, Stages: []Stage{testStage("child")}}, false)
+	resolved, err := builder.ResolveCompose(t.Context(), "", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p"}, Stages: []Stage{testStage("child")}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -535,7 +535,7 @@ func TestLegacyFineTuneAcceptsNewStages(t *testing.T) {
 		t.Fatalf("first stage: %v", err)
 	}
 	compose.Stages = append(compose.Stages, testStage("more"))
-	resolved, err := builder.ResolveCompose(t.Context(), compose, false)
+	resolved, err := builder.ResolveCompose(t.Context(), "", compose, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +587,7 @@ func TestChildOutlivesItsPulledBasesReleaseFile(t *testing.T) {
 		// The child keeps the pin it was made with, and may assert it.
 		compose.Base.LineageSHA256 = child.Model.Parent.LineageSHA256
 		compose.Stages = append(compose.Stages, releaseStage("again"))
-		resolved, err := builder.ResolveCompose(t.Context(), compose, false)
+		resolved, err := builder.ResolveCompose(t.Context(), "", compose, false)
 		if err == nil {
 			err = builder.CheckComposeTarget("child", resolved)
 		}

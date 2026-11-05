@@ -69,7 +69,8 @@ the node.
   fine-tunes of it pin a different lineage than those of the same release
   pulled with it.
 - Nodes make it possible to tell whether two models started from the same
-  weights by walking parents, like `git merge-base`; nothing walks them yet.
+  weights by walking parents, like `git merge-base`, as merges do
+  ([0085](0085-merge-models-with-a-common-ancestor.md)).
 - The upgrade is one-way for fine-tunes: earlier WALDO versions refuse a model
   whose parent pin records `lineage_sha256`, and composes that assert it, as an
   invalid model plan; they cannot `model rm` one, and one such model stops their

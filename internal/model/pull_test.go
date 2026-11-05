@@ -113,7 +113,7 @@ func TestComposeAcquiresPinnedHuggingFaceBaseWithoutVisibleModel(t *testing.T) {
 	stage := testStage("adapt")
 	stage.Parameters.SequenceLength = 32
 	compose := Compose{Kind: "waldo-model-compose", Schema: 1, Base: &ComposeBase{Source: "huggingface://org/tiny@" + revision}, Stages: []Stage{stage}}
-	probed, err := builder.ResolveCompose(t.Context(), compose, false)
+	probed, err := builder.ResolveCompose(t.Context(), "", compose, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,11 @@ func huggingFaceWeights(t *testing.T, architecture Architecture) []byte {
 			elements *= dimension
 		}
 		bytes := elements * 2
-		header[hf] = map[string]any{"dtype": "BF16", "shape": shapes[name], "data_offsets": []uint64{offset, offset + bytes}}
+		dtype := "BF16"
+		if architecture.ParameterDType == "float16" {
+			dtype = "F16"
+		}
+		header[hf] = map[string]any{"dtype": dtype, "shape": shapes[name], "data_offsets": []uint64{offset, offset + bytes}}
 		offset += bytes
 	}
 	encoded, err := json.Marshal(header)
