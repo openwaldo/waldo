@@ -31,7 +31,7 @@ stages:
     objective: causal-language-modeling
     corpora: [core/synthetic/tinystories-reference]
     data:
-      steps: 9156
+      tokens: 150011904
       global_batch_sequences: 32
       sequence_length: 512
       seed: 42
