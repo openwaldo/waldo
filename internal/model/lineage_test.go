@@ -125,11 +125,11 @@ func TestEachRunRecordsItsOwnLineageNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := ModelLineage(p, p.Model.Runs[0].ID)
+	first, err := nodeOf(p, p.Model.Runs[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := ModelLineage(p, "")
+	second, err := nodeOf(p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestComposePinnedToEarlierRunStartsFromThatRunsNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pinned, err := ModelLineage(p, first)
+	pinned, err := nodeOf(p, first)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestFineTuneLineageMustMatchItsParent(t *testing.T) {
 		if err := writeJSONAtomic(path, record); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ModelLineage(child, ""); err == nil {
+		if _, err := nodeOf(child, ""); err == nil {
 			t.Fatalf("%s: lineage accepted", name)
 		}
 	}
@@ -286,7 +286,7 @@ func TestFineTuneLineageMustMatchItsParent(t *testing.T) {
 		if err := write(); err != nil {
 			t.Fatal(err)
 		}
-		node, err := ModelLineage(child, "")
+		node, err := nodeOf(child, "")
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -331,7 +331,7 @@ func TestLineageAndCurrentWeightsSkipRunsThePinMarksSimulated(t *testing.T) {
 	}
 	p.Model.Runs[1].Simulated = true
 	first := p.Model.Runs[0].Artifacts[0].SHA256
-	node, err := ModelLineage(p, "")
+	node, err := nodeOf(p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +372,7 @@ func TestLineageFileMustReadAlike(t *testing.T) {
 		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ModelLineage(child, ""); err == nil || !strings.Contains(err.Error(), `model "child"`) {
+		if _, err := nodeOf(child, ""); err == nil || !strings.Contains(err.Error(), `model "child"`) {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
@@ -386,7 +386,7 @@ func TestLineageFileMustReadAlike(t *testing.T) {
 	if err := os.Symlink(target, path); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ModelLineage(child, ""); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+	if _, err := nodeOf(child, ""); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Fatalf("linked LINEAGE.json: %v", err)
 	}
 	// A later schema may change everything but its kind and schema.
@@ -396,7 +396,7 @@ func TestLineageFileMustReadAlike(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"kind":"waldo-model-lineage","schema":2,"history":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if node, err := ModelLineage(child, ""); err != nil || !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: child.Model.Parent.Artifact.SHA256, LineageSHA256: child.Model.Parent.LineageSHA256}}) {
+	if node, err := nodeOf(child, ""); err != nil || !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: child.Model.Parent.Artifact.SHA256, LineageSHA256: child.Model.Parent.LineageSHA256}}) {
 		t.Fatalf("later schema: %+v, %v", node.Parents, err)
 	}
 }
@@ -672,7 +672,7 @@ func TestPulledLineageRefusesAnEditedReleaseBOM(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "pulled", filepath.FromSlash(ReleaseBOMPath)), []byte(bom), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ModelLineage(pulled, ""); err == nil || !strings.Contains(err.Error(), "release BOM.json") {
+	if _, err := nodeOf(pulled, ""); err == nil || !strings.Contains(err.Error(), "release BOM.json") {
 		t.Fatalf("edited release BOM.json: %v", err)
 	}
 	stage := releaseStage("child")
@@ -776,7 +776,7 @@ func TestPullReadsOnlyWeightsEntriesExactly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if origin, err := ModelLineage(pulled, ""); err != nil || len(origin.Parents) != 1 {
+	if origin, err := nodeOf(pulled, ""); err != nil || len(origin.Parents) != 1 {
 		t.Fatalf("other entries cost the lineage: %+v, %v", origin, err)
 	}
 	files, artifacts = pull(map[string]any{"media_type": "application/octet-stream"}, true)
@@ -802,7 +802,7 @@ func TestPullKeepsLineageAfterAByteOrderMark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	origin, err := ModelLineage(pulled, "")
+	origin, err := nodeOf(pulled, "")
 	if err != nil || !reflect.DeepEqual(origin.Parents, []LineageLink{{WeightsSHA256: declared.WeightsSHA256, LineageSHA256: lineageHash(t, declared)}}) {
 		t.Fatalf("origin %+v, err %v", origin, err)
 	}
@@ -872,7 +872,7 @@ func TestPulledRootsNameTheirRelease(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		node, err := ModelLineage(pulled, "")
+		node, err := nodeOf(pulled, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -922,4 +922,10 @@ func TestComposeAssertsOnlyTheModelsOwnPin(t *testing.T) {
 	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage), preparedFixture(t, testStage("more"))}); err != nil {
 		t.Errorf("extending with the model's own pin: %v", err)
 	}
+}
+
+// nodeOf is the node LineageHistory names, without its history.
+func nodeOf(inspection Inspection, runID string) (LineageNode, error) {
+	node, _, err := LineageHistory(inspection, runID)
+	return node, err
 }

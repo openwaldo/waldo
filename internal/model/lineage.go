@@ -59,13 +59,8 @@ func (node LineageNode) validate() error {
 	return nil
 }
 
-// ModelLineage is the node of a model's weights after run runID, or its newest real run's, or its origin's.
-func ModelLineage(inspection Inspection, runID string) (LineageNode, error) {
-	node, _, err := modelLineage(inspection, runID)
-	return node, err
-}
-
-// LineageHistory is ModelLineage's node and every node behind it the model holds, nearest first.
+// LineageHistory is the node of a model's weights after run runID, or its newest
+// real run's, or its origin's, and every node behind it the model holds, nearest first.
 func LineageHistory(inspection Inspection, runID string) (LineageNode, []LineageNode, error) {
 	node, held, err := modelLineage(inspection, runID)
 	if err != nil {
