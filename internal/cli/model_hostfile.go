@@ -27,6 +27,7 @@ import (
 	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/model/applaunch"
 	"github.com/openwaldo/waldo/internal/training"
 	"golang.org/x/term"
 )
@@ -49,9 +50,6 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 		return err
 	}
 	backend := config.EffectiveModelBackend(configuration)
-	if backend != training.BackendAuto && backend != training.BackendTorchTitan {
-		return fmt.Errorf("--hostfile requires TorchTitan, but model.backend=%s; set model.backend=auto or torchtitan", backend)
-	}
 	var hostfile trainingHostfile
 	if path != "" {
 		hostfile, err = loadTrainingHostfile(path)
@@ -61,11 +59,35 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 	if err != nil {
 		return err
 	}
-	if complete, err := runCompletedComposeNoop(commandContext, args, stdout, stderr); err != nil {
+	externalJSON := ""
+	composePath, err := trainingComposeInput(args[1:])
+	if err != nil {
 		return err
-	} else if complete {
-		fmt.Fprintln(stderr, "multi-host            complete; no training stages required")
-		return nil
+	}
+	if composePath != "" {
+		document, _, err := model.LoadComposeDocument(composePath)
+		if err != nil {
+			return err
+		}
+		if document.External != nil {
+			raw, err := json.Marshal(document.External)
+			if err != nil {
+				return err
+			}
+			externalJSON = string(raw)
+		}
+	}
+	if externalJSON == "" {
+		if backend != training.BackendAuto && backend != training.BackendTorchTitan {
+			return fmt.Errorf("--hostfile requires TorchTitan, but model.backend=%s; set model.backend=auto or torchtitan", backend)
+		}
+
+		if complete, err := runCompletedComposeNoop(commandContext, args, stdout, stderr); err != nil {
+			return err
+		} else if complete {
+			fmt.Fprintln(stderr, "multi-host            complete; no training stages required")
+			return nil
+		}
 	}
 	if hostfile.Wrapper == "" {
 		hostfile.Wrapper, err = loadFuzzballSSHWrapper()
@@ -108,7 +130,7 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 	if err := cache.EnsureScratch(); err != nil {
 		return fmt.Errorf("prepare multi-host node-local cache: %w", err)
 	}
-	session, err := startHostfileSession(commandContext.Execution, hostfile, cluster, cache, stderr)
+	session, err := startHostfileSession(commandContext.Execution, hostfile, cluster, cache, stderr, externalJSON)
 	if err != nil {
 		return err
 	}
@@ -119,7 +141,16 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 		StageOrdinal: 1, StageCount: 1, PrepareResume: session.prepareResume, Publish: session.publish,
 		Cleanup: func() {},
 	}
-	trainErr := runModelTrainWithCluster(commandContext, args, cluster, handoff, stdout, stderr)
+	var trainErr error
+	if externalJSON != "" {
+		var c model.ExternalCompose
+		if err = json.Unmarshal([]byte(externalJSON), &c); err != nil {
+			return session.finish(err)
+		}
+		trainErr = runExternalComposeTrainingCluster(commandContext, args[0], c, cluster, session, stdout, stderr)
+	} else {
+		trainErr = runModelTrainWithCluster(commandContext, args, cluster, handoff, stdout, stderr)
+	}
 	finishErr := session.finish(trainErr)
 	if finishErr == nil && !session.workersStarted {
 		fmt.Fprintln(stderr, "multi-host            complete; no training stages required")
@@ -295,6 +326,8 @@ type hostfileStageReady struct {
 }
 
 type hostfileSession struct {
+	externalLaunches     map[string][]applaunch.Evidence
+	externalCompose      string
 	ctx                  context.Context
 	cancel               context.CancelFunc
 	hostfile             trainingHostfile
@@ -324,7 +357,7 @@ const hostfileWorkerExitGrace = 10 * time.Second
 
 var hostfileStageReadyTimeout = 24 * time.Hour
 
-func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluster training.Cluster, cache *lookaside.Cache, output io.Writer) (*hostfileSession, error) {
+func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluster training.Cluster, cache *lookaside.Cache, output io.Writer, external ...string) (*hostfileSession, error) {
 	if cache == nil {
 		return nil, fmt.Errorf("multi-host launch requires a node-local cache configuration")
 	}
@@ -351,7 +384,14 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 		cacheRetainCompleted: cache.RetainCompleted(), cacheMirrors: cache.Mirrors(),
 		output: output, outputTerminal: terminalWriter(output),
 	}
-	local, err := inspectHostfileTorchTitan(sessionContext)
+	var local training.TorchTitanHost
+	if len(external) > 0 && external[0] != "" {
+		session.externalCompose = external[0]
+		session.externalLaunches = map[string][]applaunch.Evidence{}
+		local, err = externalHostCapabilities(sessionContext, external[0])
+	} else {
+		local, err = inspectHostfileTorchTitan(sessionContext)
+	}
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("rank 0 TorchTitan preflight: %w", err)
@@ -384,6 +424,9 @@ func startHostfileSession(ctx context.Context, hostfile trainingHostfile, cluste
 		}
 		if err := compareTorchTitanHosts(local, remote); err != nil {
 			session.abort()
+			if session.externalCompose != "" {
+				return nil, fmt.Errorf("host %s external trainer preflight: %w; every node must have matching runtime and accelerator topology", host, err)
+			}
 			return nil, torchTitanHostMismatchError(host, err)
 		}
 		if err := training.ValidateTorchTitanHostConfiguration(remote, cluster); err != nil {
@@ -584,11 +627,27 @@ func (session *hostfileSession) probeHost(host string, rank int) (training.Torch
 	if err := command.Run(); err != nil {
 		return training.TorchTitanHost{}, fmt.Errorf("host %s is not ready for TorchTitan%s\ncorrect the reported condition on host %s, then retry the training command: %w", host, commandOutput(stderr.String()), host, err)
 	}
-	var capabilities training.TorchTitanHost
-	if err := json.Unmarshal([]byte(stdout.String()), &capabilities); err != nil {
+	var result externalHostPreflight
+	if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
 		return training.TorchTitanHost{}, fmt.Errorf("decode TorchTitan preflight from %s: %w%s", host, err, commandOutput(stdout.String()))
 	}
-	return capabilities, nil
+	if session.externalCompose != "" {
+		var compose model.ExternalCompose
+		if err := json.Unmarshal([]byte(session.externalCompose), &compose); err != nil {
+			return training.TorchTitanHost{}, err
+		}
+		if len(result.Launches) != len(compose.Stages) {
+			return training.TorchTitanHost{}, fmt.Errorf("host %s omitted external launch evidence", host)
+		}
+		for _, stage := range compose.Stages {
+			evidence, ok := result.Launches[stage.Name]
+			if !ok || evidence.Profile != "distributed" || evidence.Launcher != "torchrun" || evidence.World.NodeRank != rank || evidence.World.Nodes != session.cluster.Nodes {
+				return training.TorchTitanHost{}, fmt.Errorf("host %s returned inconsistent external launch evidence for %s", host, stage.Name)
+			}
+			session.externalLaunches[stage.Name] = append(session.externalLaunches[stage.Name], evidence)
+		}
+	}
+	return result.TorchTitanHost, nil
 }
 
 func torchTitanHostSummary(host training.TorchTitanHost) string {
@@ -604,6 +663,9 @@ func torchTitanHostSummary(host training.TorchTitanHost) string {
 		interconnect = "one local GPU"
 	case "":
 		interconnect = "unknown local interconnect"
+	}
+	if host.TorchTitanVersion == "external" {
+		return fmt.Sprintf("%d GPUs (%s), Python %s, PyTorch %s (external trainer)", len(host.Accelerators), interconnect, host.PythonVersion, host.TorchVersion)
 	}
 	return fmt.Sprintf("%d GPUs (%s), Python %s, PyTorch %s, TorchTitan %s", len(host.Accelerators), interconnect, host.PythonVersion, host.TorchVersion, host.TorchTitanVersion)
 }
@@ -630,10 +692,20 @@ func (session *hostfileSession) workerArguments(rank int, check bool) []string {
 		"--nccl-interface", session.cluster.Interface,
 		"--nccl-hca", session.cluster.HCA,
 	}
-	if check {
-		return append(arguments, "--check")
+	if session.externalCompose != "" {
+		python := os.Getenv("WALDO_APPLICATION_PYTHON")
+		if python == "" {
+			python = "python3"
+		}
+		arguments = append(arguments, "--external-compose-json", session.externalCompose, "--application-python", python)
 	}
 	scratch := fmt.Sprintf("%s/runs/%s/node-%d", session.remoteRoot, session.cluster.RendezvousID, rank)
+	if check {
+		if session.externalCompose != "" {
+			arguments = append(arguments, "--scratch", scratch)
+		}
+		return append(arguments, "--check")
+	}
 	arguments = append(arguments,
 		"--plan-stdin", "--scratch", scratch,
 		"--cache-root", session.cacheRoot,
@@ -671,9 +743,13 @@ func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWor
 		host: host, rank: rank, stdin: stdin, command: command,
 		ready: make(chan hostfileStageReady, 1), done: make(chan struct{}),
 	}
-	go session.copyWorkerStdout(worker, stdout)
-	go session.copyWorkerOutput(host, stderr)
+	var readers sync.WaitGroup
+	readers.Add(2)
+	go func() { defer readers.Done(); session.copyWorkerStdout(worker, stdout); close(worker.ready) }()
+	go func() { defer readers.Done(); session.copyWorkerOutput(host, stderr) }()
 	go func() {
+		// StdoutPipe and StderrPipe must be drained before Wait closes them.
+		readers.Wait()
 		worker.err = command.Wait()
 		close(worker.done)
 		if worker.err != nil && session.ctx.Err() == nil {
@@ -732,12 +808,20 @@ func (session *hostfileSession) copyWorkerOutput(host string, source io.Reader) 
 }
 
 func (session *hostfileSession) copyWorkerStdout(worker *hostfileWorker, source io.Reader) {
+	ctx := session.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	scanner := bufio.NewScanner(source)
 	for scanner.Scan() {
 		line := scanner.Text()
 		var ready hostfileStageReady
 		if json.Unmarshal([]byte(line), &ready) == nil && ready.Kind == hostfileStageReadyKind {
-			worker.ready <- ready
+			select {
+			case worker.ready <- ready:
+			case <-ctx.Done():
+				return
+			}
 			continue
 		}
 		session.writeWorkerLine(worker.host, line)
@@ -774,6 +858,9 @@ func (session *hostfileSession) publish(plan model.MultiNodePlan) error {
 	if err := session.startWorkers(); err != nil {
 		return err
 	}
+	if err := session.prepareExternalFiles(&plan); err != nil {
+		return err
+	}
 	if err := session.prepareInitialization(&plan); err != nil {
 		return err
 	}
@@ -790,20 +877,18 @@ func (session *hostfileSession) publish(plan model.MultiNodePlan) error {
 	for _, worker := range session.workers {
 		timer := time.NewTimer(hostfileStageReadyTimeout)
 		select {
-		case ready := <-worker.ready:
+		case ready, ok := <-worker.ready:
 			if !timer.Stop() {
 				<-timer.C
+			}
+			if !ok {
+				_ = rendezvousListener.Close()
+				return fmt.Errorf("host %s closed output before acknowledging stage %d/%d", worker.host, plan.StageOrdinal, plan.StageCount)
 			}
 			if ready.Schema != 1 || ready.RunID != plan.RunID || ready.Stage != plan.Stage || ready.StageOrdinal != plan.StageOrdinal || ready.StageCount != plan.StageCount {
 				_ = rendezvousListener.Close()
 				return fmt.Errorf("host %s acknowledged unexpected stage plan: schema %d, run %q, stage %q (%d/%d); expected schema 1, run %q, stage %q (%d/%d)", worker.host, ready.Schema, ready.RunID, ready.Stage, ready.StageOrdinal, ready.StageCount, plan.RunID, plan.Stage, plan.StageOrdinal, plan.StageCount)
 			}
-		case <-worker.done:
-			if !timer.Stop() {
-				<-timer.C
-			}
-			_ = rendezvousListener.Close()
-			return fmt.Errorf("host %s exited before acknowledging stage %d/%d: %v", worker.host, plan.StageOrdinal, plan.StageCount, worker.err)
 		case <-session.ctx.Done():
 			if !timer.Stop() {
 				<-timer.C
@@ -1028,4 +1113,65 @@ func commandOutput(value string) string {
 		return ""
 	}
 	return ": " + value
+}
+
+func (session *hostfileSession) prepareExternalFiles(plan *model.MultiNodePlan) error {
+	if plan.External == nil {
+		return nil
+	}
+	p := plan.External
+	if p.Checkpoint != nil {
+		var artifacts []training.Artifact
+		var sources, targets []string
+		targetRoot := filepath.Join(session.remoteRoot, "external-checkpoints", plan.RunID)
+		sourceRoot := p.CheckpointDirectory
+		err := filepath.WalkDir(filepath.Join(sourceRoot, filepath.Dir(p.Checkpoint.Path)), func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("checkpoint staging requires regular files")
+			}
+			relative, err := filepath.Rel(sourceRoot, path)
+			if err != nil {
+				return err
+			}
+			hash, err := fileSHA256(path)
+			if err != nil {
+				return err
+			}
+			artifacts = append(artifacts, training.Artifact{Path: relative, SHA256: hash, Bytes: info.Size()})
+			sources = append(sources, path)
+			targets = append(targets, filepath.Join(targetRoot, relative))
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		for _, host := range session.secondaryHosts() {
+			if err = session.stageResume(host, artifacts, sources, targets); err != nil {
+				return err
+			}
+		}
+		p.CheckpointDirectory = targetRoot
+	}
+	if p.Begin.Initialization != nil {
+		init := *p.Begin.Initialization
+		target := filepath.Join(session.remoteRoot, "external-initialization", plan.RunID, filepath.Base(init.Path))
+		for _, host := range session.secondaryHosts() {
+			if err := session.stageResume(host, []training.Artifact{init.Artifact}, []string{init.Path}, []string{target}); err != nil {
+				return err
+			}
+		}
+		init.Path = target
+		p.Begin.Initialization = &init
+	}
+	return nil
 }

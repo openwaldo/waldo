@@ -29,6 +29,17 @@ Read these in order:
 ## Model contracts
 
 - [Model compose](MODEL-COMPOSE.md): portable training-plan schema.
+- [External application loading](EXTERNAL-APPLICATIONS.md): PoC compose reader,
+  pinned sources, manifests, probe schemas, managed Python environments and
+  single-process and torchrun distributed launch.
+- [External trainer protocol](EXTERNAL-TRAINER-PROTOCOL.md): probe, resolve and
+  token-only train frames, schema evidence and developer API.
+- [External checkpoints](EXTERNAL-CHECKPOINTS.md): verified resume bundles and
+  reusable interruption/decomposition conformance harness.
+- [Writing an external trainer](WRITING-EXTERNAL-TRAINERS.md): short guide to
+  the manifests, protocol and reference trainer.
+- [Qwen3 external reference](../examples/trainers/qwen3-hf/README.md): pinned
+  trainer/tokenizer, tiny and 281M composes, CPU/GB10 qualification and CLI end-to-end test.
 - [Model lifecycle](MODEL-LIFECYCLE.md): managed models, runs, and backends.
 - [Multi-host training](MULTI-NODE-TRAINING.md): TorchTitan cluster
   requirements and exact operator commands.

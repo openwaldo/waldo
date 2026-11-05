@@ -45,6 +45,16 @@ func List(root string, patterns []string) ([]Listing, error) {
 		if !entry.IsDir() || !validName.MatchString(entry.Name()) || !matchesAny(entry.Name(), patterns) {
 			continue
 		}
+		if external, err := IsExternalModel(root, entry.Name()); err != nil {
+			return nil, err
+		} else if external {
+			inspection, err := InspectExternal(root, entry.Name())
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, Listing{Name: inspection.Model.Name, ID: inspection.Model.ID, Path: inspection.Path, Runs: len(inspection.Runs), State: string(inspection.Model.State), Updated: inspection.Model.Updated})
+			continue
+		}
 		inspection, err := Inspect(root, entry.Name())
 		if err != nil {
 			return nil, err
@@ -97,6 +107,16 @@ func Remove(root string, names []string) ([]string, error) {
 			return nil, fmt.Errorf("model %q was named more than once", name)
 		}
 		seen[name] = true
+		if external, err := IsExternalModel(root, name); err != nil {
+			return nil, err
+		} else if external {
+			inspection, err := InspectExternal(root, name)
+			if err != nil {
+				return nil, err
+			}
+			paths[index] = inspection.Path
+			continue
+		}
 		inspection, err := Inspect(root, name)
 		if err != nil {
 			return nil, err

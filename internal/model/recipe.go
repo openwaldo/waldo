@@ -469,6 +469,9 @@ func LoadCompose(path string) (Compose, string, error) {
 			return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
 		}
 	}
+	if compose.Schema == 2 {
+		compose.Schema = ComposeSchema
+	}
 	compose.normalizeLegacyInteraction()
 	if err := resolveComposeTokenizerArtifact(&compose, filepath.Dir(absolute)); err != nil {
 		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)

@@ -15,6 +15,7 @@ require (
 	github.com/parquet-go/parquet-go v0.30.1
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/pkoukk/tiktoken-go-loader v0.0.2
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.2
 	go.etcd.io/bbolt v1.4.0
 	golang.org/x/net v0.56.0

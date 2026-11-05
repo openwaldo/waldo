@@ -1,0 +1,38 @@
+kind: waldo-model-compose
+schema: 2
+trainer:
+  source: &application
+    repository: https://github.com/kyleishie/waldo.git
+    commit: 66fdb61901243ec0311930ab9bf3a12a3dd3a9bc
+    path: examples/trainers/qwen3-hf
+  environment: cuda
+  determinism: required
+tokenizer:
+  source: *application
+  environment: tokenizer
+  configuration: {}
+architecture:
+  vocab_size: 151936
+  hidden_size: 1024
+  intermediate_size: 3072
+  num_hidden_layers: 10
+  num_attention_heads: 16
+  num_key_value_heads: 8
+  head_dim: 64
+  max_position_embeddings: 32768
+  tie_word_embeddings: true
+stages:
+  - name: pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    corpora: [books]
+    data:
+      steps: 2
+      global_batch_sequences: 4
+      sequence_length: 8
+      seed: 42
+      checkpoint_every: 1
+      evaluate_every: 1
+    trainer:
+      learning_rate: 0.0003
+      init_seed: 42

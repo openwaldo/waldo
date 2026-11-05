@@ -8,6 +8,7 @@ package training
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -251,4 +252,33 @@ func (source staticRecordSource) Stream(ctx context.Context, consume func(Record
 		}
 	}
 	return nil
+}
+
+// A fallible codec must never turn a process failure into zero-token data.
+type brokenCodec struct{ byteCodec }
+
+func (brokenCodec) EncodeChecked(string) ([]int, error) {
+	return nil, fmt.Errorf("tokenizer disconnected")
+}
+func TestFallibleTokenizerPreparation(t *testing.T) {
+	codec := brokenCodec{}
+	r := Record{SelectionID: "record-42", Text: "hello"}
+	if _, _, err := tokenizeRecord(r, codec, "causal-language-modeling", ConversationTransform{}); err == nil || !strings.Contains(err.Error(), "record-42") {
+		t.Fatalf("record failure: %v", err)
+	}
+	if _, _, err := addRecordCapacity(&sequenceCapacityPacker{}, r, codec, "causal-language-modeling", ConversationTransform{}, 1); err == nil {
+		t.Fatal("capacity ignored codec error")
+	}
+	conversation := record.Conversation{Messages: []record.Message{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "world"}}}
+	if _, _, err := (ConversationTransform{Template: ConversationTemplateUserAssistantV1, SupervisedRoles: []string{"assistant"}}).render(conversation, codec); err == nil {
+		t.Fatal("mask renderer ignored codec error")
+	}
+}
+func TestPreparedCachePinsTokenizerIdentity(t *testing.T) {
+	request := Request{Tokenizer: TokenizerSpec{Name: "external", Revision: "source-config-probe-a", VocabularySize: 259, EOSID: 2}}
+	before := workerBeginFromRequest(request).PreparedIdentity
+	request.Tokenizer.Revision = "source-config-probe-b"
+	if before == workerBeginFromRequest(request).PreparedIdentity {
+		t.Fatal("cache ignored tokenizer identity")
+	}
 }

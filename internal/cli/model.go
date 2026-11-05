@@ -561,6 +561,20 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 	if err != nil {
 		return err
 	}
+	if external, err := model.IsExternalModel(root, args[0]); err != nil {
+		return err
+	} else if external {
+		i, err := model.InspectExternal(root, args[0])
+		if err != nil {
+			return err
+		}
+		if context.JSON {
+			return writeJSON(stdout, i)
+		}
+		fmt.Fprintf(stdout, "NAME:          %s\nSTATE:         %s\nMODEL ID:      %s\nTRAINER:       %s@%s\nRUNS:          %d\n", i.Model.Name, i.Model.State, i.Model.ID, i.Plan.Identity.Trainer.Source.Repository, i.Plan.Identity.Trainer.Source.Commit, len(i.Runs))
+		return nil
+	}
+
 	inspection, err := model.Inspect(root, args[0])
 	if err != nil {
 		return err
@@ -692,12 +706,25 @@ func runModelBOM(context Context, args []string, stdout, stderr io.Writer) error
 	if err != nil {
 		return err
 	}
-	inspection, err := model.Inspect(root, options.Model)
-	if err != nil {
+	var bom any
+	if external, err := model.IsExternalModel(root, options.Model); err != nil {
 		return err
+	} else if external {
+		i, err := model.InspectExternal(root, options.Model)
+		if err != nil {
+			return err
+		}
+		bom = i.BOM
+	} else {
+		i, err := model.Inspect(root, options.Model)
+		if err != nil {
+			return err
+		}
+		bom = i.BOM
 	}
+
 	if options.Output == "" {
-		return writeJSON(stdout, inspection.BOM)
+		return writeJSON(stdout, bom)
 	}
 	output, err := filepath.Abs(options.Output)
 	if err != nil {
@@ -711,7 +738,7 @@ func runModelBOM(context Context, args []string, stdout, stderr io.Writer) error
 	if err != nil {
 		return err
 	}
-	if err := writeJSON(file, inspection.BOM); err != nil {
+	if err := writeJSON(file, bom); err != nil {
 		_ = file.Close()
 		_ = os.Remove(output)
 		return err
@@ -905,7 +932,15 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 	if planWait <= 0 {
 		return fmt.Errorf("--plan-wait %q must be a positive duration such as 30m", planWaitValue)
 	}
-	capabilities, err := training.InspectTorchTitanHost(commandContext.Execution)
+	var capabilities training.TorchTitanHost
+	var externalEvidence *externalHostPreflight
+	if raw := stringOption(commandContext, "external-compose-json"); raw != "" {
+		result, probeErr := externalNodePreflight(commandContext.Execution, raw, stringOption(commandContext, "application-python"), stringOption(commandContext, "scratch"), cluster)
+		capabilities, err = result.TorchTitanHost, probeErr
+		externalEvidence = &result
+	} else {
+		capabilities, err = training.InspectTorchTitanHost(commandContext.Execution)
+	}
 	if err != nil {
 		return fmt.Errorf("secondary training preflight: %w", err)
 	}
@@ -915,6 +950,9 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 	if boolOption(commandContext, "check") {
 		if err := checkTrainingRendezvous(commandContext.Execution, cluster.Rendezvous); err != nil {
 			return fmt.Errorf("secondary training preflight: %w", err)
+		}
+		if externalEvidence != nil {
+			return writeJSON(stdout, externalEvidence)
 		}
 		return writeJSON(stdout, capabilities)
 	}
@@ -1061,6 +1099,16 @@ func runSecondaryStreamPlansWithRunner(commandContext Context, cluster training.
 		stageScratch := filepath.Join(scratch, plan.RunID)
 		if err := os.MkdirAll(stageScratch, 0o700); err != nil {
 			return err
+		}
+		if plan.External != nil {
+			if err := runExternalSecondaryPlan(commandContext, cluster, plan, cache, stageScratch, stdout, stderr); err != nil {
+				return err
+			}
+			lastRunID = plan.RunID
+			if plan.StageOrdinal == plan.StageCount {
+				return nil
+			}
+			continue
 		}
 		var request training.Request
 		var err error
@@ -1400,10 +1448,17 @@ func finishCompletedComposeNoop(context Context, name, composePath string, reque
 }
 
 func runModelComposeTrainingWithHandoff(context Context, name, path string, cluster training.Cluster, handoff *model.MultiNodeHandoff, stdout, stderr io.Writer) error {
-	compose, composePath, err := model.LoadCompose(path)
+	document, composePath, err := model.LoadComposeDocument(path)
 	if err != nil {
 		return err
 	}
+	if document.External != nil {
+		if cluster.WorldSize > 1 || handoff != nil {
+			return fmt.Errorf("external distributed launch is not implemented")
+		}
+		return runExternalComposeTraining(context, name, *document.External, stdout, stderr)
+	}
+	compose := *document.Builtin
 	builder, err := configuredModelBuilderForCluster(context, stderr, cluster)
 	if err != nil {
 		return err
@@ -1585,6 +1640,12 @@ func runModelContinue(context Context, args []string, stdout, stderr io.Writer) 
 		return err
 	}
 	name := args[0]
+	if external, err := model.IsExternalModel(root, name); err != nil {
+		return err
+	} else if external {
+		return runModelComposeTraining(context, name, filepath.Join(root, name, "COMPOSE.json"), training.Cluster{}, stdout, stderr)
+	}
+
 	inspection, err := model.Inspect(root, name)
 	if err != nil {
 		return err
@@ -1657,6 +1718,12 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
+	if external, err := model.IsExternalModel(root, parsed.Name); err != nil {
+		return err
+	} else if external {
+		return runExternalModelExport(context, root, parsed, stdout, stderr)
+	}
+
 	inspection, err := model.Inspect(root, parsed.Name)
 	if err != nil {
 		return err
