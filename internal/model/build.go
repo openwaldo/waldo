@@ -1223,7 +1223,7 @@ func resolveInitialization(inspection Inspection) (*training.Initialization, err
 // realRun reports whether the run at position completed with real weights, judged by its pin.
 func realRun(inspection Inspection, position int) bool {
 	run := inspection.Runs[position]
-	return run.State == RunComplete && run.Observation != nil && position < len(inspection.Model.Runs) && !inspection.Model.Runs[position].Simulated
+	return run.State == RunComplete && run.Observation != nil && !inspection.Model.Runs[position].Simulated
 }
 
 func resolveRunInitialization(inspection Inspection, requestedRunID string) (*training.Initialization, error) {
@@ -1299,7 +1299,7 @@ func (builder Builder) CheckComposeTarget(name string, compose Compose) error {
 		return nil
 	}
 	if _, err := os.Stat(filepath.Join(builder.Root, name)); os.IsNotExist(err) {
-		return nil
+		return checkNewModelLineage(builder.Root, compose)
 	} else if err != nil {
 		return err
 	}
@@ -1320,8 +1320,20 @@ func (builder Builder) CheckComposeTarget(name string, compose Compose) error {
 	return validateComposeTarget(target, compose)
 }
 
+// checkNewModelLineage reads the base lineage a new model will pin, so it fails before any corpus work.
+func checkNewModelLineage(root string, compose Compose) error {
+	if compose.Base == nil || compose.Base.RunID == "" {
+		return nil
+	}
+	base, err := Inspect(root, compose.Base.Model)
+	if err != nil {
+		return err
+	}
+	_, err = baseLineage(base, compose.Base.RunID, compose.Base.LineageSHA256)
+	return err
+}
+
 func pendingComposeMatchesRequest(root string, pending composeTransaction, requested Compose) (bool, error) {
-	requested = withStoredPin(pending.Compose, requested)
 	if reflect.DeepEqual(pending.Compose, requested) {
 		return true, nil
 	}
@@ -1330,16 +1342,6 @@ func pendingComposeMatchesRequest(root string, pending composeTransaction, reque
 		return false, err
 	}
 	return reflect.DeepEqual(pending.Compose, normalized), nil
-}
-
-// withStoredPin is requested with stored's lineage pin where only one asserts one; Compose checks the request's.
-func withStoredPin(stored, requested Compose) Compose {
-	if stored.Base != nil && requested.Base != nil && (stored.Base.LineageSHA256 == "" || requested.Base.LineageSHA256 == "") {
-		base := *requested.Base
-		base.LineageSHA256 = stored.Base.LineageSHA256
-		requested.Base = &base
-	}
-	return requested
 }
 
 // NormalizePendingComposeRequest removes only corpora completed before the
@@ -1520,10 +1522,6 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		if compose.Base.ArtifactBytes != 0 && compose.Base.ArtifactBytes != initialization.Artifact.Bytes {
 			return Compose{}, nil, fmt.Errorf("compose base artifact has %d bytes, not requested %d", initialization.Artifact.Bytes, compose.Base.ArtifactBytes)
 		}
-		// Checked again when the model is made; here it fails before any corpus work.
-		if _, err := baseLineage(base, initialization.SourceRunID, compose.Base.LineageSHA256); err != nil {
-			return Compose{}, nil, err
-		}
 		compose.Base.RunID = initialization.SourceRunID
 		compose.Base.RunBOMSHA256 = pin.BOMSHA256
 		compose.Base.ArtifactSHA256 = initialization.Artifact.SHA256
@@ -1698,7 +1696,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 		if err := json.Unmarshal(data, &persisted); err != nil {
 			return Inspection{}, fmt.Errorf("read persisted compose for model %s: %w", destination, err)
 		}
-		if !reflect.DeepEqual(persisted, withStoredPin(persisted, compose)) && transaction.ModelID == "" {
+		if !reflect.DeepEqual(persisted, compose) && transaction.ModelID == "" {
 			return Inspection{}, fmt.Errorf("composing model %s has a different persisted compose", destination)
 		}
 		if !reflect.DeepEqual(persisted, compose) {
@@ -1875,13 +1873,11 @@ func findComposeTransaction(root string, requested composeTransaction) (string, 
 		candidate.StartRun = 0
 		candidate.TargetModelID = ""
 		candidate.TargetSHA256 = ""
-		request := requested
-		request.Compose = withStoredPin(existing.Compose, requested.Compose)
-		if reflect.DeepEqual(candidate, request) {
+		if reflect.DeepEqual(candidate, requested) {
 			return workspace, &existing, nil
 		}
-		if existing.Kind == request.Kind && existing.Schema == request.Schema && existing.Name == request.Name {
-			if reflect.DeepEqual(candidate.Compose, request.Compose) {
+		if existing.Kind == requested.Kind && existing.Schema == requested.Schema && existing.Name == requested.Name {
+			if reflect.DeepEqual(candidate.Compose, requested.Compose) {
 				// Reuse the transaction workspace and let validatePreparedResume
 				// compare the complete saved and prepared corpus BOMs. Their hashes
 				// can differ when non-training metadata (for example shard
@@ -2099,7 +2095,7 @@ func (builder Builder) initializeFromRun(name string, compose Compose, base Insp
 	}
 	destination := filepath.Join(builder.Root, name)
 	if err := initializeModel(builder.Root, destination, plan, record, func(temporary string) error {
-		return writeJSONAtomic(filepath.Join(temporary, LineageFile), lineage)
+		return writeJSONAtomic(filepath.Join(temporary, lineageFile), lineage)
 	}); err != nil {
 		return Inspection{}, err
 	}
@@ -2135,14 +2131,7 @@ func (builder Builder) initializeFromOrigin(name string, compose Compose, base I
 		return Inspection{}, err
 	}
 	if err := initializeModel(builder.Root, destination, plan, record, func(temporary string) error {
-		if release == nil {
-			return nil
-		}
-		path := filepath.Join(temporary, filepath.FromSlash(ReleaseBOMPath))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return err
-		}
-		return os.WriteFile(path, release, 0o644)
+		return writeReleaseBOM(temporary, release)
 	}); err != nil {
 		return Inspection{}, err
 	}

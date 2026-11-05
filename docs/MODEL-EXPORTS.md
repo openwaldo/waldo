@@ -231,7 +231,7 @@ repeated or case-variant keys, `kind` `openwaldo-bom`, `subject`
 `model-release`, `schema` 1, nodes in WALDO's canonical form whose links name
 their nodes' weights, ancestors that are exactly the chain behind `lineage`, and
 `artifacts` listing every pulled weights file once, by hash and size, in an
-entry in WALDO's form (other entries are not read). Otherwise
+entry in WALDO's form (other entries need only be objects without repeated keys or a case-variant `path`). Otherwise
 the pull still succeeds, notes why the lineage was left out, and the origin is a
 root.
 

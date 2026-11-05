@@ -200,7 +200,7 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	if err != nil {
 		return "", err
 	}
-	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Lineage: &lineage, LineageAncestors: ancestors, Artifacts: inventory, Generated: inspection.Model.Updated}
+	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Lineage: lineage, LineageAncestors: ancestors, Artifacts: inventory, Generated: inspection.Model.Updated}
 	if options.Quantization != nil {
 		if options.result == nil {
 			return "", fmt.Errorf("quantization result is missing")

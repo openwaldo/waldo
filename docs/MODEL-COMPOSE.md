@@ -231,7 +231,7 @@ model-level contract. New composes should use only `interaction.tools`.
 | `run_bom_sha256` | no | SHA-256 | Asserts the selected run BOM. WALDO fills it during resolution. |
 | `artifact_sha256` | no | SHA-256 | Asserts the selected checkpoint bytes. WALDO fills it during resolution. |
 | `artifact_bytes` | no | non-negative bytes | Asserts the selected checkpoint size. WALDO fills it during resolution. |
-| `lineage_sha256` | no | SHA-256 | Asserts the selected run's lineage node ([ADR 0084](adr/0084-record-model-lineage.md)). WALDO records it in the new model, checked against this value when set, and refuses one that differs from an existing model's; earlier WALDO versions refuse composes that set it. |
+| `lineage_sha256` | no | SHA-256 | Asserts the selected run's lineage node ([ADR 0084](adr/0084-record-model-lineage.md)). A new model always pins its base run's node; when set, this must equal that node, or an existing model's pin. Only a trained base has one. Earlier WALDO versions refuse composes that set it. |
 
 ## Base initialization
 

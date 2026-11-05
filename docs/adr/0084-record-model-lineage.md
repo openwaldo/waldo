@@ -72,14 +72,15 @@ the node.
   weights by walking parents, like `git merge-base`; nothing walks them yet.
 - The upgrade is one-way for fine-tunes: earlier WALDO versions refuse a model
   whose parent pin records `lineage_sha256`, and composes that assert it, as an
-  invalid model plan; one such model stops their `model list`, `model rm`, and
-  `lookaside cache` over the whole store. They still read
+  invalid model plan; they cannot `model rm` one, and one such model stops their
+  `model list` and `lookaside cache` over the whole store. They still read
   pulled, untrained, and from-scratch models, and ignore `LINEAGE.json` and the
   kept release file.
 - Fine-tunes from before lineage keep their pins without lineage, so both
   versions still read and extend them; their history starts at their parent's
   weights hash, and a `LINEAGE.json` beside one is ignored. A model this WALDO
-  makes pins its lineage, even when it resumes an earlier interrupted compose.
+  makes pins its lineage, even for a compose an earlier WALDO was interrupted
+  in before making the model; one it had made keeps its pin without lineage.
 - Only a model's records hold its pin, computed from its base's history when
   the model is made; composes carry one only when asserted, which must match.
   Models already made keep the lineage they pinned, even if their base's
@@ -88,7 +89,8 @@ the node.
   schema is left out, giving a shorter history, and a release of one leaves its
   pulled origin a root. A later WALDO that
   changes either bumps its schema.
-- A WALDO-format export copies `LINEAGE.json` but does not sign it; release
+- A WALDO-format export copies `LINEAGE.json` unsigned, but its signed
+  `BOM.json` pins the parent node hash, which commits to that chain; release
   formats carry lineage in their signed `BOM.json`.
 - A pulled release's node is what the release declared. WALDO keeps it as
   declared and cannot check it; verifying it against signed releases is future

@@ -217,7 +217,7 @@ func TestFineTunePinsItsParentsLineage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := readLineageRecord(filepath.Join(root, "child", LineageFile))
+	record, err := readLineageRecord(filepath.Join(root, "child", lineageFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestFineTunePinsItsParentsLineage(t *testing.T) {
 	}
 	pullRelease(t, root, "pulled", LineageNode{WeightsSHA256: strings.Repeat("a", 64)})
 	err = filepath.WalkDir(filepath.Join(root, "pulled"), func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".json") || strings.HasSuffix(path, filepath.FromSlash(ReleaseBOMPath)) {
+		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".json") || strings.HasSuffix(path, filepath.FromSlash(releaseBOMPath)) {
 			return err
 		}
 		data, err := os.ReadFile(path)
@@ -252,7 +252,7 @@ func TestFineTuneLineageMustMatchItsParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, "child", LineageFile)
+	path := filepath.Join(root, "child", lineageFile)
 	original, err := readLineageRecord(path)
 	if err != nil {
 		t.Fatal(err)
@@ -355,7 +355,7 @@ func TestLineageFileMustReadAlike(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, "child", LineageFile)
+	path := filepath.Join(root, "child", lineageFile)
 	original, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -439,7 +439,11 @@ func TestComposeRefusesAWrongLineagePin(t *testing.T) {
 	first := trainTwice(t, builder)
 	stage := testStage("child")
 	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first, LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
-	if _, err := builder.ResolveCompose(t.Context(), compose, false); err == nil {
+	resolved, err := builder.ResolveCompose(t.Context(), compose, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := builder.CheckComposeTarget("child", resolved); err == nil {
 		t.Fatal("preflight accepted a wrong lineage pin")
 	}
 	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil || !strings.Contains(err.Error(), "not requested") {
@@ -508,7 +512,7 @@ func TestLegacyFineTuneIgnoresALineageFile(t *testing.T) {
 	}
 	invented := LineageNode{WeightsSHA256: strings.Repeat("e", 64), SourceSHA256: strings.Repeat("d", 64)}
 	parent := LineageNode{WeightsSHA256: legacy.Model.Parent.Artifact.SHA256, Parents: []LineageLink{{WeightsSHA256: invented.WeightsSHA256, LineageSHA256: lineageHash(t, invented)}}, Runs: []string{legacy.Model.Parent.RunBOMSHA256}}
-	if err := writeJSONAtomic(filepath.Join(root, "legacy", LineageFile), lineageRecord{Kind: lineageKind, Schema: 1, Parent: parent, Ancestors: []LineageNode{invented}}); err != nil {
+	if err := writeJSONAtomic(filepath.Join(root, "legacy", lineageFile), lineageRecord{Kind: lineageKind, Schema: 1, Parent: parent, Ancestors: []LineageNode{invented}}); err != nil {
 		t.Fatal(err)
 	}
 	node, history, err := LineageHistory(legacy, "")
@@ -557,31 +561,46 @@ func TestLegacyFineTuneAcceptsNewStages(t *testing.T) {
 	}
 }
 
-// Losing a base's recorded history doesn't lock out the models already made
+// Losing or altering a base's recorded history doesn't lock out the models made
 // from it: they keep the lineage they pinned.
 func TestChildOutlivesItsPulledBasesReleaseFile(t *testing.T) {
 	isolateHuggingFaceToken(t)
-	root := t.TempDir()
-	builder := realWeightsBuilder(root)
-	pullRelease(t, root, "pulled", LineageNode{WeightsSHA256: strings.Repeat("a", 64)})
-	if _, err := builder.Train(t.Context(), "pulled", preparedFixture(t, releaseStage("more"))); err != nil {
-		t.Fatal(err)
-	}
-	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "pulled"}, Stages: []Stage{releaseStage("child")}}
-	child, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, releaseStage("child"))})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(filepath.Join(root, "pulled", filepath.FromSlash(ReleaseBOMPath))); err != nil {
-		t.Fatal(err)
-	}
-	compose.Stages = append(compose.Stages, releaseStage("again"))
-	extended, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, releaseStage("child")), preparedFixture(t, releaseStage("again"))})
-	if err != nil {
-		t.Fatalf("extend: %v", err)
-	}
-	if extended.Model.Parent.LineageSHA256 != child.Model.Parent.LineageSHA256 {
-		t.Fatalf("pin changed from %s to %s", child.Model.Parent.LineageSHA256, extended.Model.Parent.LineageSHA256)
+	edited := `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":{"weights_sha256":"` + strings.Repeat("e", 64) + `"}}`
+	for name, change := range map[string]func(string) error{
+		"removed": os.Remove,
+		"edited":  func(path string) error { return os.WriteFile(path, []byte(edited), 0o644) },
+	} {
+		root := t.TempDir()
+		builder := realWeightsBuilder(root)
+		pullRelease(t, root, "pulled", LineageNode{WeightsSHA256: strings.Repeat("a", 64)})
+		if _, err := builder.Train(t.Context(), "pulled", preparedFixture(t, releaseStage("more"))); err != nil {
+			t.Fatal(err)
+		}
+		compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "pulled"}, Stages: []Stage{releaseStage("child")}}
+		child, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, releaseStage("child"))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := change(filepath.Join(root, "pulled", filepath.FromSlash(releaseBOMPath))); err != nil {
+			t.Fatal(err)
+		}
+		// The child keeps the pin it was made with, and may assert it.
+		compose.Base.LineageSHA256 = child.Model.Parent.LineageSHA256
+		compose.Stages = append(compose.Stages, releaseStage("again"))
+		resolved, err := builder.ResolveCompose(t.Context(), compose, false)
+		if err == nil {
+			err = builder.CheckComposeTarget("child", resolved)
+		}
+		if err != nil {
+			t.Fatalf("%s: preflight: %v", name, err)
+		}
+		extended, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, releaseStage("child")), preparedFixture(t, releaseStage("again"))})
+		if err != nil {
+			t.Fatalf("%s: extend: %v", name, err)
+		}
+		if extended.Model.Parent.LineageSHA256 != child.Model.Parent.LineageSHA256 {
+			t.Fatalf("%s: pin changed from %s to %s", name, child.Model.Parent.LineageSHA256, extended.Model.Parent.LineageSHA256)
+		}
 	}
 }
 
@@ -613,7 +632,7 @@ func TestComposeResumesATransactionFromBeforeLineage(t *testing.T) {
 	if child.Model.Parent.LineageSHA256 == "" {
 		t.Fatal("resumed model has no lineage pin")
 	}
-	if _, err := os.Stat(filepath.Join(root, "child", LineageFile)); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "child", lineageFile)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -669,7 +688,7 @@ func TestPulledLineageRefusesAnEditedReleaseBOM(t *testing.T) {
 		t.Fatal(err)
 	}
 	bom := `{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":{"weights_sha256":"` + strings.Repeat("e", 64) + `"}}`
-	if err := os.WriteFile(filepath.Join(root, "pulled", filepath.FromSlash(ReleaseBOMPath)), []byte(bom), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "pulled", filepath.FromSlash(releaseBOMPath)), []byte(bom), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := nodeOf(pulled, ""); err == nil || !strings.Contains(err.Error(), "release BOM.json") {

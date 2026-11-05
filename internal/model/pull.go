@@ -209,8 +209,9 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 		return Inspection{}, err
 	}
 	// The release's BOM.json is kept; lineage it cannot keep is noted, never fatal.
-	if data, err := os.ReadFile(filepath.Join(sourceDirectory, "BOM.json")); err == nil {
-		if _, _, note := releaseLineage(data, sourceArtifacts); note != "" {
+	release, err := os.ReadFile(filepath.Join(sourceDirectory, "BOM.json"))
+	if err == nil {
+		if _, _, note := releaseLineage(release, sourceArtifacts); note != "" {
 			puller.report(PullProgress{Phase: "lineage", Message: note})
 		}
 	} else if !os.IsNotExist(err) {
@@ -244,7 +245,7 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 		ArchitectureSHA256: architectureHash, Architecture: architecture, Forecast: plan.Forecast,
 		Created: created, Updated: created, Runs: []RunPin{}, OriginBOMSHA256: originHash, OriginArtifacts: artifacts,
 	}
-	if err := keepReleaseBOM(filepath.Join(sourceDirectory, "BOM.json"), filepath.Join(temporary, filepath.FromSlash(ReleaseBOMPath))); err != nil {
+	if err := writeReleaseBOM(temporary, release); err != nil {
 		return Inspection{}, err
 	}
 	if err := os.RemoveAll(sourceDirectory); err != nil {
@@ -671,15 +672,14 @@ func huggingFaceToken() string {
 	return strings.TrimSpace(string(data))
 }
 
-// keepReleaseBOM moves a pulled package's BOM.json, if any, to ReleaseBOMPath.
-func keepReleaseBOM(source, kept string) error {
-	if _, err := os.Stat(source); os.IsNotExist(err) {
+// writeReleaseBOM keeps a release's BOM.json in a model directory; nothing when data is nil.
+func writeReleaseBOM(directory string, data []byte) error {
+	if data == nil {
 		return nil
-	} else if err != nil {
+	}
+	path := filepath.Join(directory, filepath.FromSlash(releaseBOMPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(kept), 0o755); err != nil {
-		return err
-	}
-	return os.Rename(source, kept)
+	return os.WriteFile(path, data, 0o644)
 }

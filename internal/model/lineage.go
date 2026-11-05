@@ -21,10 +21,10 @@ import (
 var lineageDigest = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 const (
-	// LineageFile is the chain behind a model's parent run, kept beside its records.
-	LineageFile = "LINEAGE.json"
-	// ReleaseBOMPath is where a pull keeps the release's BOM.json, which its origin pins.
-	ReleaseBOMPath = "origin/release/BOM.json"
+	// lineageFile is the chain behind a model's parent run, kept beside its records.
+	lineageFile = "LINEAGE.json"
+	// releaseBOMPath is where a pull keeps the release's BOM.json, which its origin pins.
+	releaseBOMPath = "origin/release/BOM.json"
 	lineageKind    = "waldo-model-lineage"
 )
 
@@ -144,7 +144,7 @@ func startingLineage(inspection Inspection) (*LineageLink, map[string]LineageNod
 		if parent.LineageSHA256 == "" {
 			return link, held, nil
 		}
-		record, err := readLineageRecord(filepath.Join(inspection.Path, LineageFile))
+		record, err := readLineageRecord(filepath.Join(inspection.Path, lineageFile))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -157,11 +157,11 @@ func startingLineage(inspection Inspection) (*LineageLink, map[string]LineageNod
 			return nil, nil, err
 		}
 		if digest != parent.LineageSHA256 {
-			return nil, nil, fmt.Errorf("%s parent node %s is not the one the parent pin names, %s", LineageFile, digest, parent.LineageSHA256)
+			return nil, nil, fmt.Errorf("%s parent node %s is not the one the parent pin names, %s", lineageFile, digest, parent.LineageSHA256)
 		}
 		start, err := holdChain(held, record.Parent, record.Ancestors)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%s: %w", LineageFile, err)
+			return nil, nil, fmt.Errorf("%s: %w", lineageFile, err)
 		}
 		return &start, held, nil
 	}
@@ -196,7 +196,7 @@ func keptReleaseBOM(directory string, origin OriginBOM) ([]byte, error) {
 		if pinned.Path != "BOM.json" {
 			continue
 		}
-		data, err := readRegularFile(filepath.Join(directory, filepath.FromSlash(ReleaseBOMPath)))
+		data, err := readRegularFile(filepath.Join(directory, filepath.FromSlash(releaseBOMPath)))
 		if err != nil || data == nil {
 			return nil, err
 		}
@@ -257,22 +257,15 @@ func originNode(origin OriginBOM, release *LineageNode, held map[string]LineageN
 	return node, nil
 }
 
-// holdChain holds node and ancestors, which must be exactly the chain behind it, and links to node.
+// holdChain holds node and ancestors, which must be exactly the chain behind it, in an empty held, and links to node.
 func holdChain(held map[string]LineageNode, node LineageNode, ancestors []LineageNode) (LineageLink, error) {
-	pool := map[string]LineageNode{}
 	for _, ancestor := range ancestors {
-		if _, err := hold(pool, ancestor); err != nil {
+		if _, err := hold(held, ancestor); err != nil {
 			return LineageLink{}, err
 		}
 	}
-	if err := node.validate(); err != nil {
-		return LineageLink{}, err
-	}
-	if reached := chain(node, pool); len(reached) != len(ancestors) {
+	if reached := chain(node, held); len(reached) != len(ancestors) || len(held) != len(ancestors) {
 		return LineageLink{}, fmt.Errorf("%d ancestors, of which the chain reaches %d", len(ancestors), len(reached))
-	}
-	for digest, ancestor := range pool {
-		held[digest] = ancestor
 	}
 	return hold(held, node)
 }
