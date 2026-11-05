@@ -671,9 +671,10 @@ func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWor
 		host: host, rank: rank, stdin: stdin, command: command,
 		ready: make(chan hostfileStageReady, 1), done: make(chan struct{}),
 	}
-	go session.copyWorkerStdout(worker, stdout)
 	go session.copyWorkerOutput(host, stderr)
 	go func() {
+		// Wait closes stdout, so read it to the end first: an acknowledgement sent before exit is never lost.
+		session.copyWorkerStdout(worker, stdout)
 		worker.err = command.Wait()
 		close(worker.done)
 		if worker.err != nil && session.ctx.Err() == nil {
@@ -801,6 +802,14 @@ func (session *hostfileSession) publish(plan model.MultiNodePlan) error {
 		case <-worker.done:
 			if !timer.Stop() {
 				<-timer.C
+			}
+			// A worker that acknowledged and then exited is checked by its next stage or finish.
+			select {
+			case ready := <-worker.ready:
+				if ready.Schema == 1 && ready.RunID == plan.RunID && ready.Stage == plan.Stage && ready.StageOrdinal == plan.StageOrdinal && ready.StageCount == plan.StageCount {
+					continue
+				}
+			default:
 			}
 			_ = rendezvousListener.Close()
 			return fmt.Errorf("host %s exited before acknowledging stage %d/%d: %v", worker.host, plan.StageOrdinal, plan.StageCount, worker.err)

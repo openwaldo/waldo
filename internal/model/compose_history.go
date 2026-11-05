@@ -53,7 +53,7 @@ func ArchiveCompose(modelPath string, compose Compose, sourceName string) (strin
 		if loadErr != nil {
 			return "", fmt.Errorf("load compose history %s: %w", entry.Name(), loadErr)
 		}
-		if reflect.DeepEqual(existing, compose) {
+		if reflect.DeepEqual(archived(existing), archived(compose)) {
 			return filepath.Join(directory, entry.Name()), nil
 		}
 	}
@@ -168,4 +168,12 @@ func PendingCompose(root, name string) (Compose, bool, error) {
 		return Compose{}, false, nil
 	}
 	return transaction.Compose, true, nil
+}
+
+// archived is compose as its YAML archive reads back, with no stages as none.
+func archived(compose Compose) Compose {
+	if len(compose.Stages) == 0 {
+		compose.Stages = nil
+	}
+	return compose
 }
