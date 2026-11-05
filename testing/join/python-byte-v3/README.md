@@ -2,9 +2,9 @@
 
 [python-byte-v2](../python-byte-v2/README.md)'s recipe, with the pre-training rate at 0.0003, trained from
 scratch like [python-byte-v1](../python-byte-v1/README.md): bootstrap, 12 pretraining rounds, 4
-post-training rounds and the gate. It runs on the restacked lineage (#41) and merge (#42) PRs, whose
-records older binaries can't read, so v2 keeps its own frozen binary (`~/.waldo/join/bin/waldo-v2`)
-and v3 its own identities, whose model stores v2 never opens.
+post-training rounds and the gate. It replaces v2, which ran on code from before the lineage (#41) and merge
+(#42) PRs were reworked: the binary built from them can't read v2's models. v3 uses its own
+identities, so their model stores start empty.
 
 ## Launch
 
