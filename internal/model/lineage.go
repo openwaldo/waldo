@@ -314,21 +314,14 @@ func chain(node LineageNode, held map[string]LineageNode) []LineageNode {
 }
 
 // parentLineage is the LINEAGE.json of a model trained from base's run runID,
-// checking the lineage parent pins is that run's; nil for a pin without lineage.
-func parentLineage(base Inspection, runID string, parent ModelParent) (*lineageRecord, error) {
-	if parent.LineageSHA256 == "" {
-		return nil, nil
-	}
+// whose weights must be the ones the model starts from.
+func parentLineage(base Inspection, runID, weights string) (*lineageRecord, error) {
 	node, ancestors, err := LineageHistory(base, runID)
 	if err != nil {
 		return nil, err
 	}
-	digest, err := hashJSON(node)
-	if err != nil {
-		return nil, err
-	}
-	if node.WeightsSHA256 != parent.Artifact.SHA256 || digest != parent.LineageSHA256 {
-		return nil, fmt.Errorf("base model %q's lineage %s is not the one pinned, %s", base.Model.Name, digest, parent.LineageSHA256)
+	if node.WeightsSHA256 != weights {
+		return nil, fmt.Errorf("base model %q's lineage names weights %s, not %s", base.Model.Name, node.WeightsSHA256, weights)
 	}
 	return &lineageRecord{Kind: lineageKind, Schema: 1, Parent: node, Ancestors: ancestors}, nil
 }

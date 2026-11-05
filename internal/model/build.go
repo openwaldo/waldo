@@ -1321,7 +1321,6 @@ func (builder Builder) CheckComposeTarget(name string, compose Compose) error {
 }
 
 func pendingComposeMatchesRequest(root string, pending composeTransaction, requested Compose) (bool, error) {
-	requested = asStored(pending.Compose, requested)
 	if reflect.DeepEqual(pending.Compose, requested) {
 		return true, nil
 	}
@@ -1330,16 +1329,6 @@ func pendingComposeMatchesRequest(root string, pending composeTransaction, reque
 		return false, err
 	}
 	return reflect.DeepEqual(pending.Compose, normalized), nil
-}
-
-// asStored is requested with the lineage pin stored keeps, as sameParent compares parents without it.
-func asStored(stored, requested Compose) Compose {
-	if stored.Base != nil && requested.Base != nil && stored.Base.LineageSHA256 != requested.Base.LineageSHA256 {
-		base := *requested.Base
-		base.LineageSHA256 = stored.Base.LineageSHA256
-		requested.Base = &base
-	}
-	return requested
 }
 
 // NormalizePendingComposeRequest removes only corpora completed before the
@@ -1400,6 +1389,17 @@ func validateComposeCompatibility(target Inspection, compose Compose) error {
 	}
 	if compose.Base != nil && compose.Base.RunID != "" && !sameParent(target.Model.Parent, composeParent(compose)) {
 		return fmt.Errorf("compose parent does not match existing model %q; use a new model name", target.Model.Name)
+	}
+	return checkLineagePin(target, compose)
+}
+
+// checkLineagePin refuses a compose asserting a lineage pin other than the model's own.
+func checkLineagePin(target Inspection, compose Compose) error {
+	if compose.Base == nil || compose.Base.LineageSHA256 == "" {
+		return nil
+	}
+	if target.Model.Parent == nil || target.Model.Parent.LineageSHA256 != compose.Base.LineageSHA256 {
+		return fmt.Errorf("compose base lineage does not match existing model %q; use a new model name", target.Model.Name)
 	}
 	return nil
 }
@@ -1508,16 +1508,6 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		}
 		if compose.Base.ArtifactBytes != 0 && compose.Base.ArtifactBytes != initialization.Artifact.Bytes {
 			return Compose{}, nil, fmt.Errorf("compose base artifact has %d bytes, not requested %d", initialization.Artifact.Bytes, compose.Base.ArtifactBytes)
-		}
-		// A pin is checked against the base's history when the model it names is made.
-		if compose.Base.LineageSHA256 == "" {
-			node, err := ModelLineage(base, initialization.SourceRunID)
-			if err != nil {
-				return Compose{}, nil, err
-			}
-			if compose.Base.LineageSHA256, err = hashJSON(node); err != nil {
-				return Compose{}, nil, err
-			}
 		}
 		compose.Base.RunID = initialization.SourceRunID
 		compose.Base.RunBOMSHA256 = pin.BOMSHA256
@@ -1684,8 +1674,6 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 		if err := json.Unmarshal(data, &persisted); err != nil {
 			return Inspection{}, fmt.Errorf("read persisted compose for model %s: %w", destination, err)
 		}
-		// An existing model keeps its own lineage pin, even where its base's history has since changed.
-		compose = asStored(persisted, compose)
 		if !reflect.DeepEqual(persisted, compose) && transaction.ModelID == "" {
 			return Inspection{}, fmt.Errorf("composing model %s has a different persisted compose", destination)
 		}
@@ -1864,7 +1852,6 @@ func findComposeTransaction(root string, requested composeTransaction) (string, 
 		candidate.TargetModelID = ""
 		candidate.TargetSHA256 = ""
 		request := requested
-		request.Compose = asStored(existing.Compose, requested.Compose)
 		if reflect.DeepEqual(candidate, request) {
 			return workspace, &existing, nil
 		}
@@ -2059,6 +2046,21 @@ func (builder Builder) initializeFromRun(name string, compose Compose, base Insp
 	if initialization == nil {
 		return Inspection{}, fmt.Errorf("compose base model %q has no complete real weights", base.Model.Name)
 	}
+	// The pin records the lineage of the base run, here and nowhere else.
+	lineage, err := parentLineage(base, compose.Base.RunID, initialization.Artifact.SHA256)
+	if err != nil {
+		return Inspection{}, err
+	}
+	pin, err := hashJSON(lineage.Parent)
+	if err != nil {
+		return Inspection{}, err
+	}
+	if compose.Base.LineageSHA256 != "" && compose.Base.LineageSHA256 != pin {
+		return Inspection{}, fmt.Errorf("base model %q's lineage is %s, not requested %s", base.Model.Name, pin, compose.Base.LineageSHA256)
+	}
+	pinned := *compose.Base
+	pinned.LineageSHA256 = pin
+	compose.Base = &pinned
 	plan, err := composePlan(name, compose)
 	if err != nil {
 		return Inspection{}, err
@@ -2075,15 +2077,8 @@ func (builder Builder) initializeFromRun(name string, compose Compose, base Insp
 		Architecture: plan.Architecture, Interaction: plan.Interaction, Forecast: plan.Forecast,
 		Created: formatTime(now), Updated: formatTime(now), Parent: parent,
 	}
-	lineage, err := parentLineage(base, compose.Base.RunID, *parent)
-	if err != nil {
-		return Inspection{}, err
-	}
 	destination := filepath.Join(builder.Root, name)
 	if err := initializeModel(builder.Root, destination, plan, record, func(temporary string) error {
-		if lineage == nil {
-			return nil
-		}
 		return writeJSONAtomic(filepath.Join(temporary, LineageFile), lineage)
 	}); err != nil {
 		return Inspection{}, err

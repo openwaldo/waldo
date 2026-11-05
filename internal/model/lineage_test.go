@@ -439,7 +439,7 @@ func TestComposeRefusesAWrongLineagePin(t *testing.T) {
 	first := trainTwice(t, builder)
 	stage := testStage("child")
 	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first, LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
-	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil || !strings.Contains(err.Error(), "is not the one pinned") {
+	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil || !strings.Contains(err.Error(), "not requested") {
 		t.Fatalf("wrong lineage pin: %v", err)
 	}
 }
@@ -460,7 +460,31 @@ func legacyFineTune(t *testing.T, builder Builder) Compose {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := builder.initializeFromBase("legacy", legacy, p); err != nil {
+	initialization, err := resolveRunInitialization(p, base.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := composePlan("legacy", legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planHash, err := hashJSON(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := formatTime(builder.clock()())
+	parent := composeParent(legacy)
+	record := ModelRecord{
+		Kind: "waldo-model", Schema: ModelSchema, ID: planHash, Name: "legacy",
+		PlanSHA256: planHash, ArchitectureSHA256: plan.ArchitectureSHA256,
+		Architecture: plan.Architecture, Interaction: plan.Interaction, Forecast: plan.Forecast,
+		Created: now, Updated: now, Parent: parent,
+	}
+	destination := filepath.Join(builder.Root, "legacy")
+	if err := initializeModel(builder.Root, destination, plan, record, func(string) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyArtifactFile(initialization.Path, filepath.Join(destination, filepath.FromSlash(parent.Artifact.Path))); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeJSONAtomic(filepath.Join(builder.Root, "legacy", "COMPOSE.json"), legacy); err != nil {
@@ -878,5 +902,35 @@ func TestPulledRootsNameTheirRelease(t *testing.T) {
 		if node.WeightsSHA256 != byBranch.WeightsSHA256 || node.SourceSHA256 == byBranch.SourceSHA256 {
 			t.Fatalf("%s: same weights should be another root: %+v and %+v", name, node, byBranch)
 		}
+	}
+}
+
+// Only a model's record holds its lineage pin; a compose asserting one must match it.
+func TestComposeAssertsOnlyTheModelsOwnPin(t *testing.T) {
+	root := t.TempDir()
+	builder := realWeightsBuilder(root)
+	trainTwice(t, builder)
+	stage := testStage("child")
+	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p"}, Stages: []Stage{stage}}
+	child, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "child", "COMPOSE.json"))
+	if err != nil || strings.Contains(string(data), "lineage_sha256") {
+		t.Fatalf("COMPOSE.json holds a pin it was not asked to: %v %s", err, data)
+	}
+	compose.Base.LineageSHA256 = strings.Repeat("f", 64)
+	if _, err := ComposeCompleted(compose, child); err == nil {
+		t.Error("a completed compose accepted another lineage pin")
+	}
+	more := append(compose.Stages, testStage("more"))
+	compose.Stages = more
+	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage), preparedFixture(t, testStage("more"))}); err == nil {
+		t.Error("extending accepted another lineage pin")
+	}
+	compose.Base.LineageSHA256 = child.Model.Parent.LineageSHA256
+	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage), preparedFixture(t, testStage("more"))}); err != nil {
+		t.Errorf("extending with the model's own pin: %v", err)
 	}
 }

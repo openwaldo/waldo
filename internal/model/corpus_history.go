@@ -78,6 +78,9 @@ func ComposeCompleted(compose Compose, inspection Inspection) (bool, error) {
 	if len(compose.Stages) == 0 || len(inspection.Runs) != len(inspection.RunBOMs) || len(inspection.Runs) < len(compose.Stages) {
 		return false, nil
 	}
+	if err := checkLineagePin(inspection, compose); err != nil {
+		return false, err
+	}
 	// Failed and interrupted attempts do not publish model weights, so they do
 	// not change the completed lineage. The requested compose must match the
 	// suffix of that lineage: an older matching sequence is not proof of the
