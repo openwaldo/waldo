@@ -417,19 +417,14 @@ func TestComposeRefusesLineagePinOnUntrainedBase(t *testing.T) {
 	}
 }
 
-// Parent pins recorded before lineage still match the same parent, so existing
-// fine-tunes keep accepting stages.
-func TestSameParentAcceptsPinsRecordedBeforeLineage(t *testing.T) {
+// Parent pins match by the parent run, whatever lineage they record, so
+// fine-tunes from before lineage keep accepting stages.
+func TestSameParentComparesTheParentRun(t *testing.T) {
 	pin := ModelParent{Model: "base", ModelID: "id", RunID: "run", RunBOMSHA256: "bom", Artifact: training.Artifact{Path: "base/model.safetensors", SHA256: "weights"}}
 	withLineage := pin
 	withLineage.LineageSHA256 = strings.Repeat("a", 64)
 	if !sameParent(&pin, &withLineage) || !sameParent(&withLineage, &withLineage) {
 		t.Fatal("matching parents rejected")
-	}
-	other := withLineage
-	other.LineageSHA256 = strings.Repeat("b", 64)
-	if sameParent(&withLineage, &other) {
-		t.Fatal("a recorded lineage must match exactly")
 	}
 	changed := pin
 	changed.RunID = "another"
@@ -438,13 +433,130 @@ func TestSameParentAcceptsPinsRecordedBeforeLineage(t *testing.T) {
 	}
 }
 
-// An asserted lineage pin must be the base run's own node.
+// An asserted lineage pin must be the base run's own node when the model is made.
 func TestComposeRefusesAWrongLineagePin(t *testing.T) {
 	builder := realWeightsBuilder(t.TempDir())
 	first := trainTwice(t, builder)
-	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first, LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{testStage("child")}}
-	if _, err := builder.ResolveCompose(t.Context(), compose, false); err == nil || !strings.Contains(err.Error(), "recorded ancestry") {
+	stage := testStage("child")
+	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first, LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
+	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil || !strings.Contains(err.Error(), "is not the one pinned") {
 		t.Fatalf("wrong lineage pin: %v", err)
+	}
+}
+
+// legacyFineTune makes "legacy" from p's newest run as WALDO did before lineage:
+// a parent pin without a lineage hash and no LINEAGE.json.
+func legacyFineTune(t *testing.T, builder Builder) Compose {
+	t.Helper()
+	resolved, err := builder.ResolveCompose(t.Context(), Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p"}, Stages: []Stage{testStage("child")}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := resolved
+	base := *resolved.Base
+	base.LineageSHA256 = ""
+	legacy.Base = &base
+	p, err := Inspect(builder.Root, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.initializeFromBase("legacy", legacy, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(filepath.Join(builder.Root, "legacy", "COMPOSE.json"), legacy); err != nil {
+		t.Fatal(err)
+	}
+	return legacy
+}
+
+// A fine-tune from before lineage starts its history at its parent's weights:
+// a LINEAGE.json placed beside it adds nothing, so its children can't pin a made-up history.
+func TestLegacyFineTuneIgnoresALineageFile(t *testing.T) {
+	root := t.TempDir()
+	builder := realWeightsBuilder(root)
+	trainTwice(t, builder)
+	legacyFineTune(t, builder)
+	stage := testStage("child")
+	legacy, err := builder.Train(t.Context(), "legacy", preparedFixture(t, stage))
+	if err != nil {
+		t.Fatal(err)
+	}
+	invented := LineageNode{WeightsSHA256: strings.Repeat("e", 64), SourceSHA256: strings.Repeat("d", 64)}
+	parent := LineageNode{WeightsSHA256: legacy.Model.Parent.Artifact.SHA256, Parents: []LineageLink{{WeightsSHA256: invented.WeightsSHA256, LineageSHA256: lineageHash(t, invented)}}, Runs: []string{legacy.Model.Parent.RunBOMSHA256}}
+	if err := writeJSONAtomic(filepath.Join(root, "legacy", LineageFile), lineageRecord{Kind: lineageKind, Schema: 1, Parent: parent, Ancestors: []LineageNode{invented}}); err != nil {
+		t.Fatal(err)
+	}
+	node, history, err := LineageHistory(legacy, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: legacy.Model.Parent.Artifact.SHA256}}) || len(history) != 0 {
+		t.Fatalf("legacy history %+v from %+v", history, node.Parents)
+	}
+}
+
+// A fine-tune from before lineage still accepts compose stages from a new binary.
+func TestLegacyFineTuneAcceptsNewStages(t *testing.T) {
+	root := t.TempDir()
+	builder := realWeightsBuilder(root)
+	trainTwice(t, builder)
+	legacyFineTune(t, builder)
+	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p"}, Stages: []Stage{testStage("child")}}
+	if _, err := builder.Compose(t.Context(), "legacy", compose, []PreparedStage{preparedFixture(t, testStage("child"))}); err != nil {
+		t.Fatalf("first stage: %v", err)
+	}
+	compose.Stages = append(compose.Stages, testStage("more"))
+	resolved, err := builder.ResolveCompose(t.Context(), compose, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := builder.CheckComposeTarget("legacy", resolved); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	extended, err := builder.Compose(t.Context(), "legacy", compose, []PreparedStage{preparedFixture(t, testStage("child")), preparedFixture(t, testStage("more"))})
+	if err != nil {
+		t.Fatalf("second stage: %v", err)
+	}
+	if extended.Model.Parent.LineageSHA256 != "" {
+		t.Fatalf("legacy pin gained lineage %s", extended.Model.Parent.LineageSHA256)
+	}
+	// Its composes keep its own pin, so an earlier WALDO can still add stages.
+	paths, err := filepath.Glob(filepath.Join(root, "legacy", "compose*", "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range append(paths, filepath.Join(root, "legacy", "COMPOSE.json")) {
+		if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), "lineage_sha256") {
+			t.Errorf("%s pins lineage", path)
+		}
+	}
+}
+
+// Losing a base's recorded history doesn't lock out the models already made
+// from it: they keep the lineage they pinned.
+func TestChildOutlivesItsPulledBasesReleaseFile(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	builder := realWeightsBuilder(root)
+	pullRelease(t, root, "pulled", LineageNode{WeightsSHA256: strings.Repeat("a", 64)})
+	if _, err := builder.Train(t.Context(), "pulled", preparedFixture(t, releaseStage("more"))); err != nil {
+		t.Fatal(err)
+	}
+	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "pulled"}, Stages: []Stage{releaseStage("child")}}
+	child, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, releaseStage("child"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "pulled", filepath.FromSlash(ReleaseBOMPath))); err != nil {
+		t.Fatal(err)
+	}
+	compose.Stages = append(compose.Stages, releaseStage("again"))
+	extended, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, releaseStage("child")), preparedFixture(t, releaseStage("again"))})
+	if err != nil {
+		t.Fatalf("extend: %v", err)
+	}
+	if extended.Model.Parent.LineageSHA256 != child.Model.Parent.LineageSHA256 {
+		t.Fatalf("pin changed from %s to %s", child.Model.Parent.LineageSHA256, extended.Model.Parent.LineageSHA256)
 	}
 }
 

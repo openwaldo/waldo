@@ -68,11 +68,18 @@ the node.
 - Nodes make it possible to tell whether two models started from the same
   weights by walking parents, like `git merge-base`; nothing walks them yet.
 - The upgrade is one-way for fine-tunes: earlier WALDO versions refuse a model
-  whose parent pin records `lineage_sha256`, and archived composes that pin it.
-  They still read pulled, untrained, and from-scratch models, and ignore
-  `LINEAGE.json` and the kept release file. Fine-tunes and interrupted composes
-  from before lineage keep matching; their history starts at their parent's
-  weights hash or at their origin.
+  whose parent pin records `lineage_sha256`, and archived composes that pin it,
+  as an invalid model plan; one such model stops their `model list`,
+  `model rm`, and `lookaside cache` over the whole store. They still read
+  pulled, untrained, and from-scratch models, and ignore `LINEAGE.json` and the
+  kept release file.
+- Fine-tunes and interrupted composes from before lineage keep their pins
+  without lineage, so both versions still read and extend them; their history
+  starts at their parent's weights hash, and a `LINEAGE.json` beside one is
+  ignored.
+- A pin is checked against its base's history when its model is made. Models
+  already made keep the lineage they pinned, even if their base's recorded
+  history later shortens.
 - Lineage from a later WALDO never blocks this one: a `LINEAGE.json` or release
   of a later schema is left out, giving a shorter history. A later WALDO that
   changes either bumps its schema.

@@ -1332,12 +1332,11 @@ func pendingComposeMatchesRequest(root string, pending composeTransaction, reque
 	return reflect.DeepEqual(pending.Compose, normalized), nil
 }
 
-// asStored is requested as a compose stored before base pins recorded lineage,
-// so work interrupted then still resumes, as sameParent keeps such pins matching.
+// asStored is requested with the lineage pin stored keeps, as sameParent compares parents without it.
 func asStored(stored, requested Compose) Compose {
-	if stored.Base != nil && requested.Base != nil && stored.Base.LineageSHA256 == "" && requested.Base.LineageSHA256 != "" {
+	if stored.Base != nil && requested.Base != nil && stored.Base.LineageSHA256 != requested.Base.LineageSHA256 {
 		base := *requested.Base
-		base.LineageSHA256 = ""
+		base.LineageSHA256 = stored.Base.LineageSHA256
 		requested.Base = &base
 	}
 	return requested
@@ -1510,18 +1509,16 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		if compose.Base.ArtifactBytes != 0 && compose.Base.ArtifactBytes != initialization.Artifact.Bytes {
 			return Compose{}, nil, fmt.Errorf("compose base artifact has %d bytes, not requested %d", initialization.Artifact.Bytes, compose.Base.ArtifactBytes)
 		}
-		node, err := ModelLineage(base, initialization.SourceRunID)
-		if err != nil {
-			return Compose{}, nil, err
+		// A pin is checked against the base's history when the model it names is made.
+		if compose.Base.LineageSHA256 == "" {
+			node, err := ModelLineage(base, initialization.SourceRunID)
+			if err != nil {
+				return Compose{}, nil, err
+			}
+			if compose.Base.LineageSHA256, err = hashJSON(node); err != nil {
+				return Compose{}, nil, err
+			}
 		}
-		lineage, err := hashJSON(node)
-		if err != nil {
-			return Compose{}, nil, err
-		}
-		if compose.Base.LineageSHA256 != "" && compose.Base.LineageSHA256 != lineage {
-			return Compose{}, nil, fmt.Errorf("compose base lineage does not match the base model's recorded ancestry")
-		}
-		compose.Base.LineageSHA256 = lineage
 		compose.Base.RunID = initialization.SourceRunID
 		compose.Base.RunBOMSHA256 = pin.BOMSHA256
 		compose.Base.ArtifactSHA256 = initialization.Artifact.SHA256
@@ -1687,7 +1684,9 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 		if err := json.Unmarshal(data, &persisted); err != nil {
 			return Inspection{}, fmt.Errorf("read persisted compose for model %s: %w", destination, err)
 		}
-		if !reflect.DeepEqual(persisted, asStored(persisted, compose)) && transaction.ModelID == "" {
+		// An existing model keeps its own lineage pin, even where its base's history has since changed.
+		compose = asStored(persisted, compose)
+		if !reflect.DeepEqual(persisted, compose) && transaction.ModelID == "" {
 			return Inspection{}, fmt.Errorf("composing model %s has a different persisted compose", destination)
 		}
 		if !reflect.DeepEqual(persisted, compose) {
@@ -1897,15 +1896,15 @@ func composeOriginHash(compose Compose) string {
 	return compose.Base.OriginSHA256
 }
 
-// sameParent compares parent pins. Models created before parent pins recorded
-// lineage match on every other field, so they keep accepting new stages.
+// sameParent compares parent pins by the parent run, not its lineage, which is
+// checked when a model is made and may predate lineage or a base's later history.
 func sameParent(stored, wanted *ModelParent) bool {
-	if stored != nil && wanted != nil && stored.LineageSHA256 == "" {
-		legacy := *wanted
-		legacy.LineageSHA256 = ""
-		return reflect.DeepEqual(*stored, legacy)
+	if stored == nil || wanted == nil {
+		return stored == wanted
 	}
-	return reflect.DeepEqual(stored, wanted)
+	a, b := *stored, *wanted
+	a.LineageSHA256, b.LineageSHA256 = "", ""
+	return reflect.DeepEqual(a, b)
 }
 
 func composeParent(compose Compose) *ModelParent {
@@ -2082,6 +2081,9 @@ func (builder Builder) initializeFromRun(name string, compose Compose, base Insp
 	}
 	destination := filepath.Join(builder.Root, name)
 	if err := initializeModel(builder.Root, destination, plan, record, func(temporary string) error {
+		if lineage == nil {
+			return nil
+		}
 		return writeJSONAtomic(filepath.Join(temporary, LineageFile), lineage)
 	}); err != nil {
 		return Inspection{}, err

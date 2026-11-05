@@ -14,7 +14,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strings"
 )
@@ -145,30 +144,31 @@ func runLineage(inspection Inspection, start *LineageLink, held map[string]Linea
 func startingLineage(inspection Inspection) (*LineageLink, map[string]LineageNode, error) {
 	held := map[string]LineageNode{}
 	if parent := inspection.Model.Parent; parent != nil {
+		link := &LineageLink{WeightsSHA256: parent.Artifact.SHA256, LineageSHA256: parent.LineageSHA256}
+		// A pin from before lineage names no history, so no LINEAGE.json can add one.
+		if parent.LineageSHA256 == "" {
+			return link, held, nil
+		}
 		record, err := readLineageRecord(filepath.Join(inspection.Path, LineageFile))
 		if err != nil {
 			return nil, nil, err
 		}
 		// Without the file, the pinned hash still names the parent's history; it just isn't held.
 		if record == nil {
-			return &LineageLink{WeightsSHA256: parent.Artifact.SHA256, LineageSHA256: parent.LineageSHA256}, held, nil
+			return link, held, nil
 		}
-		// The parent node must be the one the pin names: by hash, or for a pin from before lineage, by weights and run.
 		digest, err := hashJSON(record.Parent)
 		if err != nil {
 			return nil, nil, err
 		}
-		if parent.LineageSHA256 != "" && digest != parent.LineageSHA256 {
+		if digest != parent.LineageSHA256 {
 			return nil, nil, fmt.Errorf("%s parent node %s is not the one the parent pin names, %s", LineageFile, digest, parent.LineageSHA256)
 		}
-		if record.Parent.WeightsSHA256 != parent.Artifact.SHA256 || !reflect.DeepEqual(record.Parent.Runs, []string{parent.RunBOMSHA256}) {
-			return nil, nil, fmt.Errorf("%s names weights %s from runs %v, not the parent pin's %s from run %s", LineageFile, record.Parent.WeightsSHA256, record.Parent.Runs, parent.Artifact.SHA256, parent.RunBOMSHA256)
-		}
-		link, err := holdChain(held, record.Parent, record.Ancestors)
+		start, err := holdChain(held, record.Parent, record.Ancestors)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", LineageFile, err)
 		}
-		return &link, held, nil
+		return &start, held, nil
 	}
 	if inspection.Origin == nil {
 		return nil, held, nil
@@ -313,8 +313,12 @@ func chain(node LineageNode, held map[string]LineageNode) []LineageNode {
 	return reached
 }
 
-// parentLineage is the LINEAGE.json of a model trained from base's run runID, as parent pins it.
+// parentLineage is the LINEAGE.json of a model trained from base's run runID,
+// checking the lineage parent pins is that run's; nil for a pin without lineage.
 func parentLineage(base Inspection, runID string, parent ModelParent) (*lineageRecord, error) {
+	if parent.LineageSHA256 == "" {
+		return nil, nil
+	}
 	node, ancestors, err := LineageHistory(base, runID)
 	if err != nil {
 		return nil, err
