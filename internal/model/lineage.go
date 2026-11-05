@@ -313,15 +313,21 @@ func chain(node LineageNode, held map[string]LineageNode) []LineageNode {
 	return reached
 }
 
-// parentLineage is the LINEAGE.json of a model trained from base's run runID,
-// whose weights must be the ones the model starts from.
-func parentLineage(base Inspection, runID, weights string) (*lineageRecord, error) {
+// baseLineage is the LINEAGE.json of a model trained from base's run runID, whose
+// parent node must hash to asserted when set.
+func baseLineage(base Inspection, runID, asserted string) (*lineageRecord, error) {
 	node, ancestors, err := LineageHistory(base, runID)
 	if err != nil {
 		return nil, err
 	}
-	if node.WeightsSHA256 != weights {
-		return nil, fmt.Errorf("base model %q's lineage names weights %s, not %s", base.Model.Name, node.WeightsSHA256, weights)
+	if asserted != "" {
+		digest, err := hashJSON(node)
+		if err != nil {
+			return nil, err
+		}
+		if digest != asserted {
+			return nil, fmt.Errorf("base model %q's lineage is %s, not requested %s", base.Model.Name, digest, asserted)
+		}
 	}
 	return &lineageRecord{Kind: lineageKind, Schema: 1, Parent: node, Ancestors: ancestors}, nil
 }

@@ -62,14 +62,18 @@ the node.
 - Hashes prove a history consistent, not true: anyone can write a consistent
   chain. Trust in what a node claims comes from signed records above it.
 - Fewer ancestors make a shorter history, not a different one: the chain ends at
-  the first node a model does not hold, where the link still names its hash. A
-  missing kept release file shortens a pulled model's history the same way; an
+  the first node a model does not hold, where the link still names its hash. An
   altered `LINEAGE.json` or kept release file is an error.
+- A pulled origin without its release's lineage, because the release file is
+  missing, unreadable, or of a later schema, is a root: a different node, so new
+  fine-tunes of it pin a different lineage than those of the same release
+  pulled with it.
 - Nodes make it possible to tell whether two models started from the same
   weights by walking parents, like `git merge-base`; nothing walks them yet.
 - The upgrade is one-way for fine-tunes: earlier WALDO versions refuse a model
-  whose parent pin records `lineage_sha256` as an invalid model plan; one such model stops their `model list`,
-  `model rm`, and `lookaside cache` over the whole store. They still read
+  whose parent pin records `lineage_sha256`, and composes that assert it, as an
+  invalid model plan; one such model stops their `model list`, `model rm`, and
+  `lookaside cache` over the whole store. They still read
   pulled, untrained, and from-scratch models, and ignore `LINEAGE.json` and the
   kept release file.
 - Fine-tunes from before lineage keep their pins without lineage, so both
@@ -80,8 +84,9 @@ the node.
   the model is made; composes carry one only when asserted, which must match.
   Models already made keep the lineage they pinned, even if their base's
   recorded history later shortens.
-- Lineage from a later WALDO never blocks this one: a `LINEAGE.json` or release
-  of a later schema is left out, giving a shorter history. A later WALDO that
+- Lineage from a later WALDO never blocks this one: a `LINEAGE.json` of a later
+  schema is left out, giving a shorter history, and a release of one leaves its
+  pulled origin a root. A later WALDO that
   changes either bumps its schema.
 - A WALDO-format export copies `LINEAGE.json` but does not sign it; release
   formats carry lineage in their signed `BOM.json`.

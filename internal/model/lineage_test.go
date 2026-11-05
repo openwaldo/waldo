@@ -439,6 +439,9 @@ func TestComposeRefusesAWrongLineagePin(t *testing.T) {
 	first := trainTwice(t, builder)
 	stage := testStage("child")
 	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first, LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
+	if _, err := builder.ResolveCompose(t.Context(), compose, false); err == nil {
+		t.Fatal("preflight accepted a wrong lineage pin")
+	}
 	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil || !strings.Contains(err.Error(), "not requested") {
 		t.Fatalf("wrong lineage pin: %v", err)
 	}
@@ -452,15 +455,13 @@ func legacyFineTune(t *testing.T, builder Builder) Compose {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Made by hand, as WALDO now always pins a new model's lineage.
 	legacy := resolved
-	base := *resolved.Base
-	base.LineageSHA256 = ""
-	legacy.Base = &base
 	p, err := Inspect(builder.Root, "p")
 	if err != nil {
 		t.Fatal(err)
 	}
-	initialization, err := resolveRunInitialization(p, base.RunID)
+	initialization, err := resolveRunInitialization(p, legacy.Base.RunID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,8 +585,8 @@ func TestChildOutlivesItsPulledBasesReleaseFile(t *testing.T) {
 	}
 }
 
-// A fine-tune compose interrupted before lineage was recorded, whose kept
-// transaction has no lineage pin, resumes with the same command.
+// A compose interrupted before its model was made, as a WALDO without lineage
+// left it, resumes with the same command and makes a model that pins its lineage.
 func TestComposeResumesATransactionFromBeforeLineage(t *testing.T) {
 	root := t.TempDir()
 	builder := realWeightsBuilder(root)
@@ -601,31 +602,19 @@ func TestComposeResumesATransactionFromBeforeLineage(t *testing.T) {
 	if _, err := interrupted.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil {
 		t.Fatal("interrupted compose finished")
 	}
-	// Rewrite the kept transaction and compose as a WALDO without lineage wrote them.
-	paths, err := filepath.Glob(filepath.Join(root, ".waldo-compose", "*", "COMPOSE.json"))
-	if err != nil || len(paths) != 1 {
-		t.Fatalf("pending transactions %v, %v", paths, err)
-	}
-	var transaction composeTransaction
-	if err := readJSON(paths[0], &transaction); err != nil {
+	// Transactions and composes carry no pin, so only the model to make differs.
+	if err := os.RemoveAll(filepath.Join(root, "child")); err != nil {
 		t.Fatal(err)
 	}
-	transaction.Compose.Base.LineageSHA256 = ""
-	if err := writeJSONAtomic(paths[0], transaction); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeJSONAtomic(filepath.Join(root, "child", "COMPOSE.json"), transaction.Compose); err != nil {
-		t.Fatal(err)
-	}
-	resolved, err := builder.ResolveCompose(t.Context(), compose, false)
+	child, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)})
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := builder.CheckComposeTarget("child", resolved); err != nil {
-		t.Fatalf("check before resuming: %v", err)
-	}
-	if _, err := builder.Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err != nil {
 		t.Fatalf("resume: %v", err)
+	}
+	if child.Model.Parent.LineageSHA256 == "" {
+		t.Fatal("resumed model has no lineage pin")
+	}
+	if _, err := os.Stat(filepath.Join(root, "child", LineageFile)); err != nil {
+		t.Fatal(err)
 	}
 }
 

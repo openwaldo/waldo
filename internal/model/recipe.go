@@ -120,7 +120,7 @@ type ComposeBase struct {
 	RunBOMSHA256   string `json:"run_bom_sha256,omitempty" yaml:"run_bom_sha256,omitempty"`
 	ArtifactSHA256 string `json:"artifact_sha256,omitempty" yaml:"artifact_sha256,omitempty"`
 	ArtifactBytes  int64  `json:"artifact_bytes,omitempty" yaml:"artifact_bytes,omitempty"`
-	// LineageSHA256 is resolved from a trained base model's lineage node and pinned with it.
+	// LineageSHA256 optionally asserts the base run's lineage node; the model's record holds the pin.
 	LineageSHA256 string `json:"lineage_sha256,omitempty" yaml:"lineage_sha256,omitempty"`
 }
 
