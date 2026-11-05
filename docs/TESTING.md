@@ -48,7 +48,16 @@ Individual end-to-end tests are available under `testing/e2e/`:
 ./testing/e2e/model-pytorch.sh
 ./testing/e2e/model-pytorch-memorization.sh
 ./testing/e2e/model-torchtitan.sh
+./testing/e2e/model-join.sh
 ./testing/e2e/model-torchtitan-multinode.sh
+```
+
+`model-join.sh` is opt-in because it trains for real on the configured index
+and keeps two test identities under `~/.waldo/join/e2e-*`; it needs an MLX
+Python on `PATH`:
+
+```bash
+WALDO_E2E_JOIN=1 uv run --with mlx sh ./testing/e2e/model-join.sh
 ```
 
 `model-torchtitan-multinode.sh` is opt-in and uses two GPUs on one Linux host

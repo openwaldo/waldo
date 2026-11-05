@@ -57,18 +57,27 @@ func List(root string, patterns []string) ([]Listing, error) {
 }
 
 func listingFromInspection(inspection Inspection) Listing {
-	listing := Listing{
+	return Listing{
 		Name: inspection.Model.Name, ID: inspection.Model.ID, Path: inspection.Path,
 		Parameters: inspection.Model.Forecast.ApproximateParameters,
 		Runs:       len(inspection.Model.Runs), Updated: inspection.Model.Updated,
+		State: State(inspection),
 	}
-	if inspection.Origin != nil {
-		listing.State = "downloaded"
-	}
+}
+
+// State is the model's newest run state, else "downloaded" or "merged" for an
+// origin, else empty for an untrained model.
+func State(inspection Inspection) string {
 	if len(inspection.Model.Runs) > 0 {
-		listing.State = string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
+		return string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
 	}
-	return listing
+	if inspection.Origin == nil {
+		return ""
+	}
+	if inspection.Origin.Merge != nil {
+		return "merged"
+	}
+	return "downloaded"
 }
 
 func matchesAny(name string, patterns []string) bool {
@@ -237,6 +246,15 @@ func verifyModelArtifacts(inspection Inspection) error {
 		}
 	}
 	return nil
+}
+
+// VerifyCompletedCompose verifies the artifacts a completed compose left: a
+// merge-only model's weights are its merged origin's, which Inspect verifies.
+func VerifyCompletedCompose(compose Compose, inspection Inspection) error {
+	if len(compose.Stages) == 0 && compose.Base != nil && len(compose.Base.Merge) > 0 && inspection.Origin != nil && inspection.Origin.Merge != nil {
+		return nil
+	}
+	return VerifyCurrentModelArtifacts(inspection)
 }
 
 // VerifyCurrentModelArtifacts verifies the published artifacts from the most

@@ -1086,6 +1086,38 @@ func TestStagePreflightReconstructsTheSamePartition(t *testing.T) {
 	}
 }
 
+func TestEvaluationSeedHoldsOutTheSameRecordsAcrossTrainingSeeds(t *testing.T) {
+	var texts []string
+	for index := 0; index < 40; index++ {
+		texts = append(texts, fmt.Sprintf("record %d", index))
+	}
+	inputs := []Input{writeTrainingShard(t, texts[:20]), writeTrainingShard(t, texts[20:])}
+	limit, fraction := 5, 0.5
+	heldOut := func(seed uint64, evaluationSeed *uint64) EvaluationSet {
+		t.Helper()
+		parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: seed,
+			EvaluationSelection: "lowest-sha256-v1", EvaluationFraction: &fraction, EvaluationMaxRecords: &limit, EvaluationSeed: evaluationSeed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		partition, err := NewRecordPartition(inputs, parameters)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return partition.Evaluation
+	}
+	// Without an evaluation seed, each training seed holds out its own records, as before.
+	if heldOut(1, nil).SHA256 == heldOut(2, nil).SHA256 {
+		t.Fatal("training seeds 1 and 2 held out the same records")
+	}
+	// With one, runs that shuffle differently hold out the same records.
+	nine := uint64(9)
+	first, second := heldOut(1, &nine), heldOut(2, &nine)
+	if first.SHA256 != second.SHA256 || first.Seed != 9 || first.Records != int64(limit) {
+		t.Fatalf("held out %+v and %+v", first, second)
+	}
+}
+
 func TestStagePreflightRecordsCorporaEliminatedByFilters(t *testing.T) {
 	filtered := writeTrainingRows(t, []shard.Row{{
 		SHA256: record.TextHash("filtered"), Kind: record.KindPretrain, Text: "filtered", Source: "fixture", License: "CC0-1.0", Lang: "fr", Tokens: 1,

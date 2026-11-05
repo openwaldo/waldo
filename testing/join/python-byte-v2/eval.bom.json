@@ -1,0 +1,193 @@
+{
+  "kind": "openwaldo-evaluation-bom",
+  "schema": 1,
+  "name": "python-programs-v1-eval",
+  "task": "program-output",
+  "split": "evaluation",
+  "corpus_bom_sha256": "19519ca0d4a1d9c3b893ef3e5355d9aa4d03ab657da61ca84dcca1cedbbc77bd",
+  "corpus_bom": {
+    "kind": "openwaldo-bom",
+    "schema": 1,
+    "subject": "corpus",
+    "index": {},
+    "paths": [
+      "post-train/sft/python-programs-v1-eval"
+    ],
+    "license_policy": {},
+    "manifests": [
+      {
+        "path": "post-train/sft/python-programs-v1-eval/python-programs-v1-eval.yaml",
+        "sha256": "6cf4c906f9356524870a95b50dd8bfd06cd076d3900f32c875c35b348d66477c",
+        "name": "python-programs-v1-eval",
+        "title": "Python Programs v1 (evaluation)",
+        "description": "The held-out prompt and response pairs of python-programs-v1, kept out of training to evaluate models trained on its training split.",
+        "license": "Apache-2.0",
+        "format": "parquet",
+        "record_schema": 1,
+        "record_kind": "conversation",
+        "converted_by": {
+          "tool": "waldo index ingest",
+          "version": "0.1.0-dev",
+          "profile": "canonical-text-schema-2@sha256:f2046e59ddcb870b96adbf03a33eaaff1df816d03438d23debdc03ebadc6979d",
+          "recipe": "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/conversation-v1",
+          "tokenizer": "tiktoken/cl100k_base"
+        },
+        "sources": [
+          {
+            "name": "Python Programs v1 (evaluation)",
+            "source": "Python Programs v1 (evaluation)",
+            "version": "a74ac333885ce06c364a5a0ed82b9f17d98f6185",
+            "input_formats": [
+              "jsonl"
+            ],
+            "license": "Apache-2.0",
+            "license_evidence": {
+              "declaration": "Apache License 2.0, declared in the repository LICENSE file.",
+              "url": "https://github.com/openwaldo/post-training-data/blob/a74ac333885ce06c364a5a0ed82b9f17d98f6185/LICENSE"
+            },
+            "url": "https://github.com/openwaldo/post-training-data/tree/a74ac333885ce06c364a5a0ed82b9f17d98f6185/data/sft/python-programs-v1",
+            "category": "synthetic",
+            "sha256": "e40a1c55f9ef220cacd02e2f00d5959df9ee54f3f1206de7291448d29a214c0a",
+            "content": {
+              "types": [
+                "question and answer pairs",
+                "source code",
+                "supervised fine-tuning"
+              ],
+              "languages": [
+                "en"
+              ],
+              "programming_languages": [
+                "Python"
+              ],
+              "selection": "All 218 deterministic prompt and response records in the python-programs-v1 evaluation split; the training split and generator script are excluded.",
+              "personal_data": "no",
+              "copyrighted": "yes",
+              "machine_generated": "yes"
+            },
+            "acquisition": {
+              "basis": "OpenWALDO project-authored, AI-assisted training material generated deterministically by a checked-in script in the project's Apache-licensed post-training repository.",
+              "synthetic": {
+                "model": "Anthropic Claude (claude-opus-5-5)",
+                "version": "2026-10-25",
+                "description": "Claude drafted the deterministic generator; the checked-in generator wraps task families and hashed value pools into whole-script prompt and response pairs whose Python answers are parsed before writing, and the resulting candidate data requires human review before release."
+              }
+            }
+          }
+        ],
+        "assessment": {
+          "email_addresses": {
+            "detector": "waldo/email-address-v1",
+            "records": 0
+          },
+          "repetitive_content": {
+            "detector": "waldo/gopher-ngram-repetition-v1",
+            "records": 0
+          },
+          "boilerplate_content": {
+            "detector": "waldo/gopher-structural-duplication-v1",
+            "records": 0
+          }
+        },
+        "redaction": {
+          "policy": "waldo/privacy-redaction-v1",
+          "names_retained": true,
+          "email_addresses": 0,
+          "ip_addresses": 0,
+          "phone_numbers": 0,
+          "mail_routing_headers": 0,
+          "credentials": 0
+        },
+        "totals": {
+          "shards": 1,
+          "docs": 218,
+          "tokens": 19806,
+          "bytes": 18122
+        },
+        "licenses": {
+          "Apache-2.0": {
+            "shards": 1,
+            "docs": 218,
+            "tokens": 19806,
+            "bytes": 18122
+          }
+        }
+      }
+    ],
+    "shards": [
+      {
+        "manifest": "post-train/sft/python-programs-v1-eval/python-programs-v1-eval.yaml",
+        "url": "file:///Users/mdagosta/.waldo/waldito/lookaside/e5/60/e560bafa94e93b0a4bdf197d3a0c3201daabdccfee518b4045d1b012f3f48000",
+        "sha256": "e560bafa94e93b0a4bdf197d3a0c3201daabdccfee518b4045d1b012f3f48000",
+        "format": "parquet",
+        "record_schema": 1,
+        "record_kind": "conversation",
+        "license": "Apache-2.0",
+        "sources": [
+          "Python Programs v1 (evaluation)"
+        ],
+        "converted_by": {
+          "tool": "waldo index ingest",
+          "version": "0.1.0-dev",
+          "profile": "canonical-text-schema-2@sha256:f2046e59ddcb870b96adbf03a33eaaff1df816d03438d23debdc03ebadc6979d",
+          "recipe": "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/conversation-v1",
+          "tokenizer": "tiktoken/cl100k_base"
+        },
+        "docs": 218,
+        "tokens": 19806,
+        "bytes": 18122,
+        "assessment": {
+          "email_addresses": {
+            "detector": "waldo/email-address-v1",
+            "records": 0
+          },
+          "repetitive_content": {
+            "detector": "waldo/gopher-ngram-repetition-v1",
+            "records": 0
+          },
+          "boilerplate_content": {
+            "detector": "waldo/gopher-structural-duplication-v1",
+            "records": 0
+          }
+        },
+        "redaction": {
+          "policy": "waldo/privacy-redaction-v1",
+          "names_retained": true,
+          "email_addresses": 0,
+          "ip_addresses": 0,
+          "phone_numbers": 0,
+          "mail_routing_headers": 0,
+          "credentials": 0
+        }
+      }
+    ],
+    "totals": {
+      "shards": 1,
+      "docs": 218,
+      "tokens": 19806,
+      "bytes": 18122
+    },
+    "licenses": {
+      "Apache-2.0": {
+        "shards": 1,
+        "docs": 218,
+        "tokens": 19806,
+        "bytes": 18122
+      }
+    }
+  },
+  "metrics": [
+    {
+      "name": "pass_rate",
+      "direction": "max",
+      "threshold": 0.9
+    }
+  ],
+  "contamination": {
+    "max_exact_records": 0,
+    "max_fuzzy_records": 0,
+    "fuzzy_ratio": 0.8,
+    "shingle_words": 13
+  },
+  "definition_sha256": "13c415f4a78c2ccff54536a8eca7ddaf1a896a6bd162d0b62ee8e3d3126e9dcc"
+}

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -19,7 +20,7 @@ import (
 	"github.com/openwaldo/waldo/internal/pytorchruntime"
 )
 
-const PyTorchRevision = "builtin-pytorch-worker-schema-1-r17"
+const PyTorchRevision = "builtin-pytorch-worker-schema-1-r18"
 
 //go:embed workers/pytorch.py
 var pyTorchWorker []byte
@@ -114,7 +115,7 @@ func (resolver PyTorchResolver) Resolve(ctx context.Context, request ResolveRequ
 		descriptor := backend.Descriptor()
 		execution := Execution{
 			Backend: descriptor.Identity, Framework: descriptor.Framework,
-			Runtime: fmt.Sprintf("%s; Python %s; PyTorch %s; device %s", candidate, facts.PythonVersion, facts.TorchVersion, facts.Device),
+			Runtime: fmt.Sprintf("%s; Python %s; PyTorch %s; device %s", filepath.Base(candidate), facts.PythonVersion, facts.TorchVersion, facts.Device),
 			Host:    Host{OS: hostOS, Architecture: hostArch}, Nodes: 1, WorldSize: 1,
 		}
 		if facts.Device == "cuda" && facts.Accelerator != "" {

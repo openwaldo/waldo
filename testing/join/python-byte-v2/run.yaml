@@ -1,0 +1,127 @@
+# python-byte-v2: python-byte-v1 continued from its round-3 merge at half the pre-training
+# learning rate. At 0.0006, 3 of v1's first 13 units diverged mid-round (round 4's py-c went from
+# loss 1.6 to 5.1 at step 140 and ended worse than it started); round 3 was the last merge whose
+# units all improved. Otherwise python-byte-v1's recipe: python-bpe-v1's with the byte tokenizer,
+# about 25M parameters, the same Python units, post-training data and gate.
+kind: waldo-model-compose
+schema: 1
+interaction:
+  template: user-assistant-v1
+architecture:
+  family: decoder-transformer
+  context_tokens: 1024           # bytes; the longest post-training program is 373
+  vocabulary_size: 259
+  hidden_size: 512
+  intermediate_size: 1536
+  layers: 8
+  attention_heads: 8
+  key_value_heads: 4
+  tie_embeddings: true
+  parameter_dtype: bfloat16
+  tokenizer:
+    name: byte
+    revision: builtin-byte-schema-1
+stages:
+  - name: pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: code/permissive
+    parameters:
+      profile: causal-pretrain-shuffled
+      steps: 1000               # a single-model baseline's budget; join sets each unit's
+      batch_size: 32
+      sequence_length: 1024      # 32,768 bytes per step; a 6.5M-byte round is ~199 steps
+      learning_rate: 0.0003     # v1's 0.0006 diverged in 3 of 13 units
+      warmup_steps: 20
+      weight_decay: 0.1
+      evaluation_selection: lowest-sha256-v1
+      evaluation_max_records: 256
+      evaluation_max_bytes: 4194304
+      shuffle_buffer_records: 1000000
+      shuffle_buffer_bytes: 4294967296
+  - name: sft
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    corpora:
+      - path: /Users/mdagosta/.waldo/waldito/index-local/post-train/sft/python-basics-v4
+      - path: /Users/mdagosta/.waldo/waldito/index-local/post-train/sft/python-programs-v1
+    parameters:
+      profile: causal-pretrain-shuffled
+      epochs: 4
+      batch_size: 16
+      sequence_length: 1024
+      learning_rate: 0.0003
+      weight_decay: 0.05
+      evaluation_fraction: 0.05
+join:
+  name: python-byte-v2
+  units:  # code-m0's Python repositories, balanced by tokens (~42M each)
+    py-a:
+      [ray-project/ray, langflow-ai/langflow, fastapi/fastapi, TheAlgorithms/Python,
+       openai/whisper, hiyouga/LlamaFactory, psf/requests, D4Vinci/Scrapling,
+       abi/screenshot-to-code, jingyaogong/minimind, nvbn/thefuck, microsoft/markitdown]
+    py-b:
+      [apache/superset, apache/airflow, d2l-ai/d2l-zh, PaddlePaddle/PaddleOCR, getredash/redash,
+       pandas-dev/pandas, scrapy/scrapy, exo-explore/exo, harry0703/MoneyPrinterTurbo,
+       pallets/flask, httpie/cli, deepseek-ai/DeepSeek-V3, xai-org/grok-1]
+    py-c:
+      [home-assistant/core, mem0ai/mem0, unslothai/unsloth, vllm-project/vllm, django/django,
+       streamlit/streamlit, unclecode/crawl4ai, langchain-ai/langchain, browser-use/browser-use,
+       Aider-AI/aider, 3b1b/manim, Z4nzu/hackingtool, TauricResearch/TradingAgents,
+       xinntao/Real-ESRGAN, sherlock-project/sherlock]
+  replicas: 2
+  closers: 2
+  claim_minutes: 150             # a pretraining unit is ~50 minutes at throttle 0.10
+  store: file:///Users/mdagosta/.waldo/join/local/store
+  identities:
+    mdagosta-bot-1:
+      key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFJyifP4+lkkqYkmgmfO9hEvAZb4yybXjgZlYKlsj1VG
+      hf: mdagosta
+    mdagosta-bot-2:
+      key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFTcqwpObmnREvS0Bf7MOPBp5tEmcELDjH4RjgEgv5N3
+      hf: mdagosta
+    mdagosta-bot-3:
+      key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILhHiQQELpu9eaeVegNKMAhBRIXG/ZPdn8yTht6wf6Oa
+      hf: mdagosta
+  base:
+    model: waldo-python-byte-v1-r0003-merge-acd24c8ab2cc
+    url: file:///Users/mdagosta/.waldo/join/local/store/python-byte-v1/mdagosta-bot-1/waldo-python-byte-v1-r0003-merge-acd24c8ab2cc
+    model_sha256: 296ce0f7c17aad73d547c32d7df8e339e443b4345066f209ec9fd940480aee8f
+    files:
+      architecture.py: 4ab702067e866ca668560bf94aeab2e5d19c9079eb1fde14456c6551b6a6c469
+      ATTRIBUTION.md: 83d25fc78fcc954bc6d6b09d884d08e5bbfd0070598668f711abdf9891713f2b
+      BOM.json: c2669ccf969988a8d8d08f86e3e74e1e94bd3fbbbdf96b7f3b79a1e0d1db1bcf
+      chat_template.jinja: 199bb752fb2d4346abab796528b1513fe40e6c9128a208dba9271a21ae73fb8b
+      config.json: cc83abd390e529f61c7222f2999d5626c4591d946f0a7c446859c1f78a840b2c
+      EU-BOM.json: 6a97ccc029b9f609b1250c3814910394e12e84b8ac7103c795cd0ad58ad89083
+      generation_config.json: 7d0cb9f30bf9cc9b1721c17a0f83782cb3e0abf4321bd3723e27341364e738c1
+      JOIN-ROUND.json: a76b0e0c6c09c453fb48beb4260888d4ea0a1744aa15d85bdddbb29e618aead7
+      model.safetensors: 296ce0f7c17aad73d547c32d7df8e339e443b4345066f209ec9fd940480aee8f
+      openwaldo_tokenizer.json: 133a72f1b6c85ab774d4fd8ea81d9877ffad4b65be9cdd837c746dea11c8d20b
+      provenance-07d0c1891af124dc6cae18e783e68bdd13bb775993543541c7e474c3882071fc.json: 8cfc8bf1722d02a9b1e99152652b8e974c6ac8b8850ce4205a405aaa540b94cc
+      provenance-24d8e36e1c25cb6449065ec356cfc6e6e0ed2d4c58516f1fd568096b226100fd.json: 8a642862f891bda65303fb66bb74c61cabce2380ae8e6085b2b328127cb5b9a9
+      provenance-81b1e8d0d47b9eee69f25be90b9ce135d2cf11b36db7950eea80c390127fda16.json: 6c9475afb8a646f94c7540f93e4292175c397957bf52f7cc91bf02b01fcad26d
+      README.md: 260176c16f569f3e86f6b9bb919479a2a8f3eb75e55e81b392e18b5f737db293
+      special_tokens_map.json: 3f330b24e998993152a876811568d84ae615ebd9500d61dc8020a47af2b357c6
+      tokenization_openwaldo.py: 7cc1e68b4fa4c92de105f88adfbd44f9742379ace79ca26a5ea76311b2544fa1
+      tokenizer_config.json: 99a1418b0df93567555d45667cd908e721ad97f866ac33ba1d5140764f978c4d
+      TRAINING-CLOSURE.json: 014a96fd15010a3ada427e50022f2065d435e69e9fac38d6301d7b91c40ea1cf
+  # v1's bootstrap and pretraining rounds 1-3 are behind the base; 9 more make v1's planned 12.
+  rounds: {pretrain: 9, tokens_per_round: 6500000, posttrain: 4, epochs_per_round: 4}
+  gates:
+    - after: posttrain
+      evaluation: eval.bom.json
+      evaluator: [python3, evaluate_python.py, --records, eval.jsonl, --limit, "120"]
+      extra_rounds: 4
+  min_steps_per_round: 150
+  replica_tolerance: 0.25
+  replica_floor: 0.01

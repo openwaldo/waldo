@@ -70,6 +70,12 @@ inputs, and lifecycle state.
 TorchTitan adapters. A backend receives an explicit request and returns
 observations; it does not own model persistence or corpus selection.
 
+`internal/join` contributes to distributed training runs kept in a git
+repository: it reads a run's plan and signed records, trains, verifies, and
+merges units through the model domain, and commits signed records. It runs the
+external `git`, `ssh-keygen`, `gh` (GitHub runs repositories), and `hf`
+(Hugging Face stores) commands; see [model join](MODEL-JOIN.md).
+
 `internal/inference` loads verified model artifacts for supported local
 runtimes and enforces generation stop sequences supplied by the interaction
 contract. Export conversion is split across `internal/modelexport`,

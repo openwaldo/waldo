@@ -110,7 +110,7 @@ func runModelComposeForecast(context Context, path string, stdout, progress io.W
 	if err != nil {
 		return err
 	}
-	compose, err = builder.ResolveCompose(context.Execution, compose, false)
+	compose, err = builder.ResolveCompose(context.Execution, "", compose, false)
 	if err != nil {
 		return err
 	}
@@ -569,11 +569,8 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 		return writeJSON(stdout, inspection)
 	}
 	state := "untrained"
-	if inspection.Origin != nil {
-		state = "downloaded"
-	}
-	if len(inspection.Model.Runs) > 0 {
-		state = string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
+	if current := model.State(inspection); current != "" {
+		state = current
 	}
 	var consumed int64
 	for _, run := range inspection.Runs {
@@ -604,7 +601,13 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 		}
 		fmt.Fprintf(stdout, "INTERACTION:   %s\n", label)
 	}
-	if inspection.Origin != nil {
+	if merge := originMerge(inspection); merge != nil {
+		parents := make([]string, 0, len(merge.Parents))
+		for _, parent := range merge.Parents {
+			parents = append(parents, parent.Model)
+		}
+		fmt.Fprintf(stdout, "ORIGIN:        %s of %s (merge)\n", merge.Method, strings.Join(parents, ", "))
+	} else if inspection.Origin != nil {
 		fmt.Fprintf(stdout, "ORIGIN:        %s@%s (%s)\n", inspection.Origin.Source.Repository, shortModelHash(inspection.Origin.Source.Revision), inspection.Origin.Source.Provider)
 	}
 	for position, pin := range inspection.Model.Runs {
@@ -748,6 +751,12 @@ func runModelTrainWithCluster(context Context, args []string, cluster training.C
 	composePath, err := trainingComposeInput(inputs)
 	if err != nil {
 		return err
+	}
+	if boolOption(context, "evaluate-only") {
+		if composePath == "" {
+			return fmt.Errorf("--evaluate-only needs a compose file that selects the held-out records")
+		}
+		return runModelEvaluate(context, name, composePath, cluster, stdout, stderr)
 	}
 	if composePath != "" {
 		if context.Command != nil && context.Command.Flags().Changed("epochs") {
@@ -1344,11 +1353,11 @@ func runCompletedComposeNoop(context Context, args []string, stdout, stderr io.W
 	if err != nil {
 		return false, err
 	}
-	compose, err = builder.ResolveCompose(context.Execution, compose, true)
+	name := args[0]
+	compose, err = builder.ResolveCompose(context.Execution, name, compose, true)
 	if err != nil {
 		return false, err
 	}
-	name := args[0]
 	if err := builder.CheckComposeTarget(name, compose); err != nil {
 		return false, err
 	}
@@ -1371,6 +1380,13 @@ func runCompletedComposeNoop(context Context, args []string, stdout, stderr io.W
 	return finishCompletedComposeNoop(context, name, composePath, compose, inspection, skipped, stdout, stderr)
 }
 
+// completesWithoutCompose reports whether a request with no stages left can
+// finish as a verified no-op. A pending merge-only compose cannot: only
+// Compose finishes its transaction.
+func completesWithoutCompose(pending bool, compose model.Compose) bool {
+	return !pending || compose.Base == nil || len(compose.Base.Merge) == 0
+}
+
 func finishCompletedComposeNoop(context Context, name, composePath string, requested model.Compose, inspection model.Inspection, skipped []model.SkippedCorpus, stdout, stderr io.Writer) (bool, error) {
 	for _, selected := range skipped {
 		fmt.Fprintf(stderr, "preflight/%s          skipped %s (already completed by this model)\n", selected.Stage, selected.Path)
@@ -1379,10 +1395,13 @@ func finishCompletedComposeNoop(context Context, name, composePath string, reque
 	if err != nil {
 		return false, err
 	}
+	if !completed && len(requested.Stages) == 0 {
+		return false, fmt.Errorf("model %q is no longer the merge compose %q describes; it has trained since, or was built from another base — use a new model name for this compose", name, composePath)
+	}
 	if !completed {
 		return false, fmt.Errorf("model %q previously trained every selected corpus path, but its completed run BOMs do not match compose %q; WALDO will not treat changed stages, filters, order, or training parameters as completed — use a new model name for this compose", name, composePath)
 	}
-	if err := model.VerifyCurrentModelArtifacts(inspection); err != nil {
+	if err := model.VerifyCompletedCompose(requested, inspection); err != nil {
 		return false, fmt.Errorf("verify completed model artifacts: %w", err)
 	}
 	if err := model.PersistCompletedCompose(inspection.Path, requested, filepath.Base(composePath)); err != nil {
@@ -1419,7 +1438,7 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 	if err != nil {
 		return err
 	}
-	compose, err = builder.ResolveCompose(context.Execution, compose, true)
+	compose, err = builder.ResolveCompose(context.Execution, name, compose, true)
 	if err != nil {
 		return err
 	}
@@ -1456,7 +1475,7 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 		for _, corpus := range skipped {
 			fmt.Fprintf(stderr, "preflight/%s          skipped %s (already completed by this model)\n", corpus.Stage, corpus.Path)
 		}
-		if len(compose.Stages) == 0 {
+		if len(compose.Stages) == 0 && completesWithoutCompose(pending, compose) {
 			_, err := finishCompletedComposeNoop(context, name, composePath, requestedCompose, inspection, skipped, stdout, io.Discard)
 			return err
 		}
@@ -1472,8 +1491,11 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 			objectives = append(objectives, stage.Objective)
 		}
 	}
-	if err := builder.CheckBackend(context.Execution, compose.Architecture, objectives); err != nil {
-		return err
+	// A merge-only compose trains nothing, so it needs no training backend.
+	if len(objectives) > 0 {
+		if err := builder.CheckBackend(context.Execution, compose.Architecture, objectives); err != nil {
+			return err
+		}
 	}
 	builder.PreparedCacheDirectory = filepath.Join(cache.Scratch(), "prepared")
 	builder.PreparedCacheMaxBytes = cache.MaxBytes()
@@ -1685,6 +1707,14 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 		if position < len(inspection.Runs) && inspection.Runs[position].State == model.RunComplete {
 			trainingBOMs = append(trainingBOMs, runBOM.CorpusBOM)
 		}
+	}
+	// Attribution, and with it the distributable licence review, covers the whole lineage.
+	inherited, err := model.InheritedClosure(inspection)
+	if err != nil {
+		return err
+	}
+	for _, ancestor := range inherited.Corpora {
+		trainingBOMs = append(trainingBOMs, ancestor.CorpusBOM)
 	}
 	attribution, err := corpus.AttributionNotice(trainingBOMs)
 	if err != nil {
@@ -2581,4 +2611,11 @@ func humanBytesUint(value uint64) string {
 		return humanBytes(int64(value))
 	}
 	return fmt.Sprintf("%d B", value)
+}
+
+func originMerge(inspection model.Inspection) *model.OriginMerge {
+	if inspection.Origin == nil {
+		return nil
+	}
+	return inspection.Origin.Merge
 }

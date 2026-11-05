@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -23,7 +24,7 @@ import (
 )
 
 const (
-	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r28"
+	TorchTitanRevision           = "builtin-torchtitan-worker-schema-1-r29"
 	recommendedTorchVersion      = "2.15.0.dev20260905+cu130"
 	recommendedTorchTitanVersion = "0.3.0"
 	recommendedTorchIndex        = "https://download.pytorch.org/whl/nightly/cu130"
@@ -323,7 +324,7 @@ func (resolver TorchTitanResolver) Resolve(ctx context.Context, request ResolveR
 	descriptor := backend.Descriptor()
 	execution := Execution{
 		Backend: descriptor.Identity, Framework: descriptor.Framework,
-		Runtime: fmt.Sprintf("%s; Python %s; TorchTitan %s; PyTorch %s", python, facts.PythonVersion, facts.TorchTitanVersion, facts.TorchVersion),
+		Runtime: fmt.Sprintf("%s; Python %s; TorchTitan %s; PyTorch %s", filepath.Base(python), facts.PythonVersion, facts.TorchTitanVersion, facts.TorchVersion),
 		Host:    Host{OS: hostOS, Architecture: hostArch}, Nodes: nodes, WorldSize: nodes * localProcs,
 	}
 	for node := 0; node < nodes; node++ {

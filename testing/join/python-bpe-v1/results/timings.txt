@@ -1,0 +1,4 @@
+experiment                                 runs first start (UTC) elapsed h wall h train h  Mtokens
+code-m0                                      43 2026-10-26 20:40     50.92  38.71   86.04    756.3
+python-bpe-v1                                84 2026-10-29 04:09     50.69  14.42   42.29    265.6
+total                                       127                              53.12  128.33   1021.9
