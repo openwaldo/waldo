@@ -1,0 +1,102 @@
+# python-byte-v3: python-byte-v2's recipe (v1's at half the pre-training learning rate), trained
+# from scratch on the restacked lineage and merge PRs, so every round runs on the vetted system.
+kind: waldo-model-compose
+schema: 1
+interaction:
+  template: user-assistant-v1
+architecture:
+  family: decoder-transformer
+  context_tokens: 1024           # bytes; the longest post-training program is 373
+  vocabulary_size: 259
+  hidden_size: 512
+  intermediate_size: 1536
+  layers: 8
+  attention_heads: 8
+  key_value_heads: 4
+  tie_embeddings: true
+  parameter_dtype: bfloat16
+  tokenizer:
+    name: byte
+    revision: builtin-byte-schema-1
+stages:
+  - name: pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: code/permissive
+    parameters:
+      profile: causal-pretrain-shuffled
+      steps: 1000               # a single-model baseline's budget; join sets each unit's
+      batch_size: 32
+      sequence_length: 1024      # 32,768 bytes per step; a 6.5M-byte round is ~199 steps
+      learning_rate: 0.0003     # v1's 0.0006 diverged in 3 of 13 units
+      warmup_steps: 20
+      weight_decay: 0.1
+      evaluation_selection: lowest-sha256-v1
+      evaluation_max_records: 256
+      evaluation_max_bytes: 4194304
+      shuffle_buffer_records: 1000000
+      shuffle_buffer_bytes: 4294967296
+  - name: sft
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    corpora:
+      - path: /Users/mdagosta/.waldo/waldito/index-local/post-train/sft/python-basics-v4
+      - path: /Users/mdagosta/.waldo/waldito/index-local/post-train/sft/python-programs-v1
+    parameters:
+      profile: causal-pretrain-shuffled
+      epochs: 4
+      batch_size: 16
+      sequence_length: 1024
+      learning_rate: 0.0003
+      weight_decay: 0.05
+      evaluation_fraction: 0.05
+join:
+  name: python-byte-v3
+  units:  # code-m0's Python repositories, balanced by tokens (~42M each)
+    py-a:
+      [ray-project/ray, langflow-ai/langflow, fastapi/fastapi, TheAlgorithms/Python,
+       openai/whisper, hiyouga/LlamaFactory, psf/requests, D4Vinci/Scrapling,
+       abi/screenshot-to-code, jingyaogong/minimind, nvbn/thefuck, microsoft/markitdown]
+    py-b:
+      [apache/superset, apache/airflow, d2l-ai/d2l-zh, PaddlePaddle/PaddleOCR, getredash/redash,
+       pandas-dev/pandas, scrapy/scrapy, exo-explore/exo, harry0703/MoneyPrinterTurbo,
+       pallets/flask, httpie/cli, deepseek-ai/DeepSeek-V3, xai-org/grok-1]
+    py-c:
+      [home-assistant/core, mem0ai/mem0, unslothai/unsloth, vllm-project/vllm, django/django,
+       streamlit/streamlit, unclecode/crawl4ai, langchain-ai/langchain, browser-use/browser-use,
+       Aider-AI/aider, 3b1b/manim, Z4nzu/hackingtool, TauricResearch/TradingAgents,
+       xinntao/Real-ESRGAN, sherlock-project/sherlock]
+  replicas: 2
+  closers: 2
+  claim_minutes: 150             # a pretraining unit is ~50 minutes at throttle 0.10
+  store: file:///Users/mdagosta/.waldo/join/local/store
+  identities:  # its own, so its models never share a store with v2's older binary
+    mdagosta-v3-1:
+      key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH0GWkN7CuMIMmtUdXPv0FwXS1/FV5+QDWwN4sZE3XvO
+      hf: mdagosta
+    mdagosta-v3-2:
+      key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBMPVqsT2u+JCZqNscjWN4XojNeSW4dbWYTkebfHMrcy
+      hf: mdagosta
+    mdagosta-v3-3:
+      key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINEF4Me8nuET6g633KtRMTFnKGIdh54Kp67pGbziAYpx
+      hf: mdagosta
+  # From scratch: round 0 bootstraps on every unit's sources, then 12 pretraining rounds of
+  # 6.5M bytes per unit, then post-training.
+  rounds: {bootstrap_tokens: 20000000, pretrain: 12, tokens_per_round: 6500000, posttrain: 4, epochs_per_round: 4}
+  gates:
+    - after: posttrain
+      evaluation: eval.bom.json
+      evaluator: [python3, evaluate_python.py, --records, eval.jsonl, --limit, "120"]
+      extra_rounds: 4
+  min_steps_per_round: 150
+  replica_tolerance: 0.25
+  replica_floor: 0.01
