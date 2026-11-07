@@ -8,13 +8,14 @@ package model
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/openwaldo/waldo/internal/corpus"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/openwaldo/waldo/internal/corpus"
 )
 
 // LINEAGE.json holds the documents behind a model by SHA-256 (ADR 0084).
@@ -182,8 +183,13 @@ type lineageWalk struct {
 	merged  map[string]bool
 	broken  map[string]bool
 	at      string
-	// runs are the run BOMs the walk passed through, in order: the training behind the weights.
-	runs []RunBOM
+	// runs are the run BOMs the walk passed through: the training behind the weights. origins are
+	// the pulls it passed through, nearest first; merged origins aren't among them.
+	runs    []RunBOM
+	origins []OriginBOM
+	// beyond counts the pulls the walk is inside: runs found there are the pulled model's maker's.
+	beyond   int
+	upstream []bool
 }
 
 func newLineageWalk(index *lineageIndex) *lineageWalk {
@@ -323,6 +329,7 @@ func (walk *lineageWalk) madeBy(digest, weights string) {
 		return
 	}
 	walk.runs = append(walk.runs, bom)
+	walk.upstream = append(walk.upstream, walk.beyond > 0)
 	if bom.Initialization == nil {
 		walk.ends[weights] = true
 		return
@@ -366,6 +373,11 @@ func (walk *lineageWalk) origin(digest, weights string) {
 	if weights != "" && pinned != weights {
 		walk.gap(digest, "origin-bom")
 		return
+	}
+	if !isMerge(&origin) {
+		walk.origins = append(walk.origins, origin)
+		walk.beyond++
+		defer func() { walk.beyond-- }()
 	}
 	for _, artifact := range origin.SourceArtifacts {
 		switch artifact.Role {
@@ -559,19 +571,50 @@ func fillLineage(root string, inspection Inspection, base *Inspection, warn func
 	return writeHistory(index, inspection, path)
 }
 
-// ReleaseLineage is the LINEAGE.json a release ships.
-// HistoryCorpusBOMs are the corpus BOMs behind a model's weights, by hash: its own runs' and every
-// ancestor's, through fine-tunes, merges and pulled releases, as far as its history reaches.
-func HistoryCorpusBOMs(root string, inspection Inspection) map[string]corpus.BOM {
-	walk := newLineageWalk(newLineageIndex(root, nil))
-	walk.model(inspection, inspection.BOM.CurrentRunID)
-	boms := map[string]corpus.BOM{}
-	for _, run := range walk.runs {
-		boms[run.CorpusBOMSHA256] = run.CorpusBOM
-	}
-	return boms
+// History is what a model's weights were made from, as far as its history reaches: the corpora
+// behind them, its own runs' and every ancestor's through fine-tunes, merges and pulled releases,
+// and the nearest pull it started from, which makes it a modification of that model.
+type History struct {
+	Corpora  map[string]HistoryCorpus // by corpus BOM hash
+	Upstream *OriginSource
 }
 
+// HistoryCorpus is a corpus BOM and the run that trained on it.
+type HistoryCorpus struct {
+	ModelID string
+	Model   string // the model's name when its plan is held, otherwise its ID
+	Run     string
+	Stage   string
+	BOM     corpus.BOM
+	// Upstream is training behind a pulled model, which its maker's summary describes.
+	Upstream bool
+}
+
+func TrainingHistory(root string, inspection Inspection) History {
+	walk := newLineageWalk(newLineageIndex(root, nil))
+	walk.model(inspection, inspection.BOM.CurrentRunID)
+	history := History{Corpora: map[string]HistoryCorpus{}}
+	for position, run := range walk.runs {
+		name := run.ModelID
+		var plan Plan
+		if data := walk.index.document(run.ModelID); data != nil && json.Unmarshal(data, &plan) == nil && plan.Name != "" {
+			name = plan.Name
+		}
+		// A corpus trained on this side of a pull, too, is this model's to describe.
+		upstream := walk.upstream[position]
+		if known, ok := history.Corpora[run.CorpusBOMSHA256]; ok && !known.Upstream {
+			continue
+		}
+		history.Corpora[run.CorpusBOMSHA256] = HistoryCorpus{ModelID: run.ModelID, Model: name, Run: run.ID, Stage: run.Stage, BOM: run.CorpusBOM, Upstream: upstream}
+	}
+	if len(walk.origins) > 0 {
+		source := walk.origins[0].Source
+		history.Upstream = &source
+	}
+	return history
+}
+
+// ReleaseLineage is the LINEAGE.json a release ships.
 func ReleaseLineage(root string, inspection Inspection, warn func(string)) ([]byte, error) {
 	index := newLineageIndex(root, warn)
 	walk := newLineageWalk(index)

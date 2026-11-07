@@ -245,6 +245,14 @@ describes the additional training content used for the modification and links
 to the original model's summary. Model lineage therefore cannot be reconstructed
 from corpus manifests alone.
 
+WALDO reads both from the model's history (`LINEAGE.json`): a model is modified
+when its history reaches a pulled model, and the nearest one supplies the
+original summary's URL; a model trained and merged entirely here is new. The
+report lists the corpora of the model's own runs and of the ancestors trained
+on this side of that pull, such as a merge's parents. What the pulled model's
+maker trained on stays out, for their summary to describe, though
+`ATTRIBUTION.md` still credits it.
+
 ## Export command
 
 The implemented audit UX is:

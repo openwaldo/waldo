@@ -1685,7 +1685,9 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return fmt.Errorf("load configured disclosure.provider: %w", err)
 	}
-	report, err := disclosure.BuildEUGPAIReport(inspection, &provider, disclosure.ReleaseFromModel(inspection), time.Now())
+	// The training behind the weights, through fine-tunes and merges, for both disclosures.
+	history := model.TrainingHistory(root, inspection)
+	report, err := disclosure.BuildEUGPAIReport(inspection, history, &provider, disclosure.ReleaseFromModel(inspection, history), time.Now())
 	if err != nil {
 		return err
 	}
@@ -1706,10 +1708,12 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 		}
 	}
 	// A fine-tune or merge also carries its ancestors' training data.
-	history := model.HistoryCorpusBOMs(root, inspection)
-	for _, digest := range slices.Sorted(maps.Keys(history)) {
-		if !attributed[digest] {
-			trainingBOMs = append(trainingBOMs, history[digest])
+	for _, digest := range slices.Sorted(maps.Keys(history.Corpora)) {
+		if used := history.Corpora[digest]; !attributed[digest] {
+			if _, err := corpus.ReviewDistributable(used.BOM); err != nil {
+				return fmt.Errorf("build training data attribution: ancestor %s run %s trained on a corpus that can't be redistributed: %w", used.Model, used.Run, err)
+			}
+			trainingBOMs = append(trainingBOMs, used.BOM)
 		}
 	}
 	attribution, err := corpus.AttributionNotice(trainingBOMs)

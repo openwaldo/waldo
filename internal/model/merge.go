@@ -154,8 +154,10 @@ func (walk *lineageWalk) mergeBase(tips map[string]string) error {
 			case walk.ends[weights]:
 				return fmt.Errorf("base.merge parent %q history starts at weights %s, above where the parents meet", name, short(weights))
 			case walk.merged[weights]:
+				// An earlier merge's parents are family when they reach any common ancestor:
+				// a merge of m1 = merge(left, right) with left meets at left, and right is still family.
 				for _, from := range walk.parents[weights] {
-					if !reachesAny(walk.ancestors(from), base) {
+					if !reachesAny(walk.ancestors(from), common) {
 						return fmt.Errorf("base.merge parent %q descends from a merge with a parent outside the family (weights %s)", name, short(from))
 					}
 				}

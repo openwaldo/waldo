@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/training"
 )
 
@@ -432,6 +433,52 @@ func TestFineTuneOfAPulledFineTuneKeepsItsHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	holdsRuns(t, modelHistory(root, tuned, tuned.BOM.CurrentRunID), base, child, tuned)
+}
+
+func TestTrainingBehindAPullIsItsMakers(t *testing.T) {
+	exporter := t.TempDir()
+	builder := lineageBuilder(exporter)
+	if _, err := builder.Initialize("base", lineageArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	// The maker trains on a corpus of its own, so its corpus BOM differs from the fine-tune's.
+	stage := lineageStage("maker")
+	prepared := preparedFixture(t, stage)
+	bom := prepared.BOM
+	bom.Manifests = append([]corpus.ManifestPin(nil), bom.Manifests...)
+	bom.Manifests[0].Title = "The maker's corpus"
+	own, err := PrepareStage(stage, bom, prepared.Inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.Train(context.Background(), "base", own); err != nil {
+		t.Fatal(err)
+	}
+	base, err := Inspect(exporter, "base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	pullRelease(t, root, releaseFiles(t, exporter, base, true, nil), nil)
+	tuned := fineTune(t, lineageBuilder(root), "pulled", "tuned", nil)
+	history := TrainingHistory(root, tuned)
+	if history.Upstream == nil {
+		t.Fatal("a fine-tune of a pull has no upstream")
+	}
+	mine, theirs := 0, 0
+	for _, used := range history.Corpora {
+		switch {
+		case used.ModelID == tuned.Model.ID && !used.Upstream:
+			mine++
+		case used.ModelID == base.Model.ID && used.Upstream:
+			theirs++
+		default:
+			t.Fatalf("%s's corpus is marked upstream=%t", used.Model, used.Upstream)
+		}
+	}
+	if mine == 0 || theirs == 0 {
+		t.Fatalf("history holds %d corpora of the fine-tune and %d of the pulled model's maker", mine, theirs)
+	}
 }
 
 func TestPullLinksAReleaseOfAnUntrainedOrigin(t *testing.T) {

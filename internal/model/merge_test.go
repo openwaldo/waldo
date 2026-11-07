@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/training"
 )
 
@@ -227,7 +228,6 @@ func TestMergeRefusesAGapAboveTheMergeBase(t *testing.T) {
 	}
 }
 
-// A release pulled and trained on meets the model it was exported from.
 func TestMergeAcceptsAGapAtTheMergeBase(t *testing.T) {
 	root := t.TempDir()
 	trainTwice(t, lineageBuilder(root), "base")
@@ -245,6 +245,7 @@ func TestMergeAcceptsAGapAtTheMergeBase(t *testing.T) {
 	}
 }
 
+// A release pulled and trained on meets the model it was exported from.
 func TestMergeFindsTheMergeBaseThroughARelease(t *testing.T) {
 	root := t.TempDir()
 	builder := lineageBuilder(root)
@@ -306,6 +307,34 @@ func TestMergeBaseOfACrissCrossIsBothParents(t *testing.T) {
 }
 
 // A merge above the merge-base with a parent from outside the family is refused.
+// One contributor's earlier model and the group's merge of it stay one family: merged
+// again, the merge meets at that model, and the merge's other parent still reaches the base.
+func TestAMergeMergesAgainWithItsOwnFamily(t *testing.T) {
+	for name, second := range map[string]func(*testing.T, Builder) (string, string){
+		"with a parent": func(*testing.T, Builder) (string, string) { return "m1", "left" },
+		"with a parent trained on": func(t *testing.T, builder Builder) (string, string) {
+			tune(t, builder, ComposeBase{Model: "left"}, "left2", "more")
+			return "m1", "left2"
+		},
+		"trained on, with a parent": func(t *testing.T, builder Builder) (string, string) {
+			tune(t, builder, ComposeBase{Model: "m1"}, "m1t", "sft")
+			return "m1t", "right"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			builder := family(t, root)
+			if _, err := builder.Compose(t.Context(), "m1", mergeOf("left", "right"), nil); err != nil {
+				t.Fatal(err)
+			}
+			first, other := second(t, builder)
+			if _, err := builder.Compose(t.Context(), "m2", mergeOf(first, other), nil); err != nil {
+				t.Fatalf("merge of %s and %s refused: %v", first, other, err)
+			}
+		})
+	}
+}
+
 func TestMergeRefusesAnOutsideParentAboveTheMergeBase(t *testing.T) {
 	walk := graph(map[string][]string{"a": {"base"}, "b": {"m"}, "m": {"base", "outsider"}}, "m")
 	if err := walk.mergeBase(map[string]string{"a": "a", "b": "b"}); err == nil || !strings.Contains(err.Error(), "outside the family") {
@@ -371,8 +400,6 @@ func TestMergeComposeKeepsItsRecordedMerge(t *testing.T) {
 	assertMerges(t, root, 1)
 }
 
-// A recorded merge belongs to the weights it averaged: once a parent's name
-// holds a different model, the compose no longer names that merge.
 func TestRecordedMergeNeedsADifferentParentForEachOne(t *testing.T) {
 	root := t.TempDir()
 	builder := family(t, root)
@@ -386,6 +413,8 @@ func TestRecordedMergeNeedsADifferentParentForEachOne(t *testing.T) {
 	}
 }
 
+// A recorded merge belongs to the weights it averaged: once a parent's name
+// holds a different model, the compose no longer names that merge.
 func TestRecordedMergeRefusesARecreatedParent(t *testing.T) {
 	root := t.TempDir()
 	builder := family(t, root)
@@ -590,16 +619,26 @@ func TestMergeComposeRefusesAMissingRecordedMerge(t *testing.T) {
 
 func TestAMergeCarriesItsParentsTrainingData(t *testing.T) {
 	root := t.TempDir()
-	builder := family(t, root)
-	want := map[string]bool{}
+	pullPlain(t, root, "base", mergeableFixture(t, lineageArchitecture(), 0))
+	builder := flipWeightsBuilder(root)
+	// Each parent trains on a corpus of its own, which only the walk through the merge can find.
+	parents := map[string]string{}
 	for _, name := range []string{"left", "right"} {
-		parent, err := Inspect(root, name)
+		stage := lineageStage(name)
+		compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "base"}, Stages: []Stage{stage}}
+		prepared := preparedFixture(t, stage)
+		bom := prepared.BOM
+		bom.Manifests = append([]corpus.ManifestPin(nil), bom.Manifests...)
+		bom.Manifests[0].Title = "Corpus of " + name
+		own, err := PrepareStage(stage, bom, prepared.Inputs)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, run := range parent.RunBOMs {
-			want[run.CorpusBOMSHA256] = true
+		parent, err := builder.Compose(t.Context(), name, compose, []PreparedStage{own})
+		if err != nil {
+			t.Fatal(err)
 		}
+		parents[parent.RunBOMs[0].CorpusBOMSHA256] = name
 	}
 	if _, err := builder.Compose(t.Context(), "merged", mergeOf("left", "right"), nil); err != nil {
 		t.Fatal(err)
@@ -610,11 +649,35 @@ func TestAMergeCarriesItsParentsTrainingData(t *testing.T) {
 		}
 	}
 	next := tune(t, builder, ComposeBase{Model: "merged"}, "next", "next")
-	history := HistoryCorpusBOMs(root, next)
-	for digest := range want {
-		if _, ok := history[digest]; !ok {
-			t.Fatalf("a model made from a merge lost a parent's corpus BOM %s; history holds %d", digest[:12], len(history))
+	history := TrainingHistory(root, next).Corpora
+	for digest, name := range parents {
+		if _, own := parents[next.RunBOMs[0].CorpusBOMSHA256]; own {
+			t.Fatal("the fine-tune of the merge trained on a parent's corpus; the test can't tell the walk from its own run")
 		}
+		if used, ok := history[digest]; !ok || used.Model != name {
+			t.Fatalf("a model made from a merge lost %s's corpus BOM %s: %+v", name, digest[:12], used)
+		}
+	}
+}
+
+func TestTrainingHistoryFindsThePullItStartedFrom(t *testing.T) {
+	root := t.TempDir()
+	builder := family(t, root)
+	if _, err := builder.Compose(t.Context(), "merged", mergeOf("left", "right"), nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"left", "merged"} {
+		inspection, err := Inspect(root, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if upstream := TrainingHistory(root, inspection).Upstream; upstream == nil || upstream.Repository != "org/tiny" {
+			t.Fatalf("%s's history doesn't reach the pulled base it started from: %+v", name, upstream)
+		}
+	}
+	scratch := trainTwice(t, lineageBuilder(t.TempDir()), "scratch")
+	if upstream := TrainingHistory(t.TempDir(), scratch).Upstream; upstream != nil {
+		t.Fatalf("a model trained from scratch has an upstream: %+v", upstream)
 	}
 }
 

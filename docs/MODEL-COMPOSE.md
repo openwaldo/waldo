@@ -291,8 +291,9 @@ commits, by weights hash, and finds the merge-base: the common ancestors no othe
 common ancestor descends from. Every step from each parent down to the
 merge-base must be in its history, with no gap and no model that starts there
 from scratch or from an outside release, and every earlier merge above it must
-have parents that reach it too: a family never merges in a model from outside
-it. Below the merge-base, gaps are only recorded. Merges accept byte-tokenizer
+have parents that reach a common ancestor too: a family never merges in a model
+from outside it, but a merge can merge again with its own parents. Below the
+merge-base, gaps are only recorded. Merges accept byte-tokenizer
 models with `bfloat16` or `float32` parameters.
 
 WALDO computes every new merge from the parents' weights and writes it as an

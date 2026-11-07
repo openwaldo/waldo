@@ -156,12 +156,15 @@ after execution.
 ### `ATTRIBUTION.md`
 
 Every model export includes a deterministic training-data attribution notice.
-It is generated only from the immutable corpus BOMs of completed runs and
-lists their declared licenses, recorded preservation obligations, source URLs,
-versions or source digests, upstream license declarations, and license-evidence
-URLs. Export fails if any recorded training corpus no longer passes WALDO's
-distributable policy. Imported models with no WALDO training runs instead point
-the reader to their origin BOM.
+It is generated from the immutable corpus BOMs behind the model's weights: its
+own completed runs, and every run in its history, through fine-tunes, merges,
+and pulled WALDO releases, as far as `LINEAGE.json` reaches. It lists their
+declared licenses, recorded preservation obligations, source URLs, versions or
+source digests, upstream license declarations, and license-evidence URLs.
+Export fails if any of those corpora no longer passes WALDO's distributable
+policy, naming the ancestor model and run when it is an ancestor's. Imported
+models with no WALDO training history instead point the reader to their origin
+BOM.
 
 ### Managed `MODEL-BOM.json`
 
