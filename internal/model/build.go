@@ -1689,6 +1689,11 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	if err != nil {
 		return Inspection{}, fmt.Errorf("inspect composing model %s: %w", destination, err)
 	}
+	if err := fillLineage(builder.Root, staged, base, func(message string) {
+		builder.report(Progress{Phase: "lineage", Message: message})
+	}); err != nil {
+		return Inspection{}, fmt.Errorf("record model history: %w", err)
+	}
 	architectureHash, err := canonicalHash(composeModelArchitecture(compose.Architecture))
 	if err != nil {
 		return Inspection{}, err
