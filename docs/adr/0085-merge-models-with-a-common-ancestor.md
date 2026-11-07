@@ -20,8 +20,8 @@ any other, and records how it was made.
   merge-base. It refuses the merge if any step above that point is a gap, or
   starts from random weights or a release pulled without its history.
 - `MERGE.json` (`waldo-model-merge`, schema 1) records the method and each
-  parent's run or origin, weights hash, license, and `share` (its weight). It
-  names no models or places.
+  parent's run or origin, weights hash, and `share` (its weight). It names no
+  models or places; licenses come from the parents' BOMs in their history.
 - The merged origin is kept under `<model.root>/.merges`. Its `LINEAGE.json`
   holds `MERGE.json` and every parent's history, so the parents can be deleted.
 - A compose with only a merge needs no training; with stages, training starts

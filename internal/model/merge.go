@@ -31,7 +31,6 @@ type MergeParent struct {
 	RunBOMSHA256    string  `json:"run_bom_sha256,omitempty"`
 	OriginBOMSHA256 string  `json:"origin_bom_sha256,omitempty"`
 	WeightsSHA256   string  `json:"weights_sha256"`
-	License         string  `json:"license,omitempty"`
 	Share           float64 `json:"share,omitempty"`
 }
 
@@ -93,7 +92,7 @@ func currentWeights(inspection Inspection) (string, MergeParent, error) {
 	if inspection.Origin != nil && inspection.BOM.CurrentOriginSHA256 != "" {
 		for _, artifact := range inspection.Origin.Artifacts {
 			if artifact.Role == "weights" {
-				return filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path)), MergeParent{OriginBOMSHA256: inspection.Model.OriginBOMSHA256, WeightsSHA256: artifact.SHA256, License: inspection.Origin.Source.License}, nil
+				return filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path)), MergeParent{OriginBOMSHA256: inspection.Model.OriginBOMSHA256, WeightsSHA256: artifact.SHA256}, nil
 			}
 		}
 	}
