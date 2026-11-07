@@ -435,7 +435,9 @@ func TestFineTuneOfAPulledFineTuneKeepsItsHistory(t *testing.T) {
 	holdsRuns(t, modelHistory(root, tuned, tuned.BOM.CurrentRunID), base, child, tuned)
 }
 
-func TestTrainingBehindAPullIsItsMakers(t *testing.T) {
+// A pulled WALDO release brings its recorded training along; only a pull whose history ends there
+// is an outside model.
+func TestAPulledReleasesTrainingIsHistory(t *testing.T) {
 	exporter := t.TempDir()
 	builder := lineageBuilder(exporter)
 	if _, err := builder.Initialize("base", lineageArchitecture()); err != nil {
@@ -462,22 +464,11 @@ func TestTrainingBehindAPullIsItsMakers(t *testing.T) {
 	pullRelease(t, root, releaseFiles(t, exporter, base, true, nil), nil)
 	tuned := fineTune(t, lineageBuilder(root), "pulled", "tuned", nil)
 	history := TrainingHistory(root, tuned)
-	if history.Upstream == nil {
-		t.Fatal("a fine-tune of a pull has no upstream")
+	if history.Upstream != nil {
+		t.Fatalf("a release whose whole history is recorded counts as an outside model: %+v", history.Upstream)
 	}
-	mine, theirs := 0, 0
-	for _, used := range history.Corpora {
-		switch {
-		case used.ModelID == tuned.Model.ID && !used.Upstream:
-			mine++
-		case used.ModelID == base.Model.ID && used.Upstream:
-			theirs++
-		default:
-			t.Fatalf("%s's corpus is marked upstream=%t", used.Model, used.Upstream)
-		}
-	}
-	if mine == 0 || theirs == 0 {
-		t.Fatalf("history holds %d corpora of the fine-tune and %d of the pulled model's maker", mine, theirs)
+	if _, ok := history.Corpora[base.RunBOMs[0].CorpusBOMSHA256]; !ok {
+		t.Fatal("the pulled release's maker's corpus isn't in the fine-tune's history")
 	}
 }
 

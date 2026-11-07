@@ -171,8 +171,7 @@ func LoadProvider(path string) (ProviderProfile, error) {
 	return profile, nil
 }
 
-// BuildEUGPAIReport describes the model's own runs and, from its history, its ancestors' corpora
-// short of any pulled model it modifies.
+// BuildEUGPAIReport describes the model's own runs and, from its history, its ancestors' corpora.
 func BuildEUGPAIReport(inspection model.Inspection, history model.History, provider *ProviderProfile, release ReleaseProfile, now time.Time) (EUGPAIReport, error) {
 	modelBOMHash, err := hashJSON(inspection.BOM)
 	if err != nil {
@@ -226,11 +225,11 @@ func BuildEUGPAIReport(inspection model.Inspection, history model.History, provi
 		entry.Uses++
 		entry.Stages = append(entry.Stages, runBOM.Stage)
 	}
-	// A fine-tune or merge also describes what its ancestors trained on, up to the model it
-	// modifies; that model's own training is its maker's summary to describe.
+	// A fine-tune or merge also describes what its ancestors trained on, as far as it's recorded,
+	// pulled WALDO releases included; a pulled model without that history is the one it modifies.
 	for _, digest := range slices.Sorted(maps.Keys(history.Corpora)) {
 		used := history.Corpora[digest]
-		if used.ModelID == inspection.Model.ID || used.Upstream {
+		if used.ModelID == inspection.Model.ID {
 			continue
 		}
 		entry := corpora[digest]
@@ -324,8 +323,8 @@ func (report *EUGPAIReport) addReleaseGaps(profile ReleaseProfile) {
 	}
 }
 
-// ReleaseFromModel calls a model a modification of the nearest pulled model in its history; a
-// model whose history pulls none, trained and merged here from scratch, is new.
+// ReleaseFromModel calls a model a modification of the nearest pulled model whose training its
+// history doesn't record; a model whose whole history is recorded is new.
 func ReleaseFromModel(inspection model.Inspection, history model.History) ReleaseProfile {
 	release := ReleaseProfile{
 		SummaryVersion: "1",

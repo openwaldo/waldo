@@ -183,13 +183,10 @@ type lineageWalk struct {
 	merged  map[string]bool
 	broken  map[string]bool
 	at      string
-	// runs are the run BOMs the walk passed through: the training behind the weights. origins are
-	// the pulls it passed through, nearest first; merged origins aren't among them.
+	// runs are the run BOMs the walk passed through: the training behind the weights. outside are
+	// the pulls where the history ends, nearest first: weights whose training isn't recorded.
 	runs    []RunBOM
-	origins []OriginBOM
-	// beyond counts the pulls the walk is inside: runs found there are the pulled model's maker's.
-	beyond   int
-	upstream []bool
+	outside []OriginBOM
 }
 
 func newLineageWalk(index *lineageIndex) *lineageWalk {
@@ -329,7 +326,6 @@ func (walk *lineageWalk) madeBy(digest, weights string) {
 		return
 	}
 	walk.runs = append(walk.runs, bom)
-	walk.upstream = append(walk.upstream, walk.beyond > 0)
 	if bom.Initialization == nil {
 		walk.ends[weights] = true
 		return
@@ -374,11 +370,6 @@ func (walk *lineageWalk) origin(digest, weights string) {
 		walk.gap(digest, "origin-bom")
 		return
 	}
-	if !isMerge(&origin) {
-		walk.origins = append(walk.origins, origin)
-		walk.beyond++
-		defer func() { walk.beyond-- }()
-	}
 	for _, artifact := range origin.SourceArtifacts {
 		switch artifact.Role {
 		case "source-bom":
@@ -390,6 +381,7 @@ func (walk *lineageWalk) origin(digest, weights string) {
 		}
 	}
 	walk.ends[pinned] = true
+	walk.outside = append(walk.outside, origin)
 }
 
 // merge walks a merged origin's MERGE.json to each parent's run or origin.
@@ -573,7 +565,7 @@ func fillLineage(root string, inspection Inspection, base *Inspection, warn func
 
 // History is what a model's weights were made from, as far as its history reaches: the corpora
 // behind them, its own runs' and every ancestor's through fine-tunes, merges and pulled releases,
-// and the nearest pull it started from, which makes it a modification of that model.
+// and the nearest pull whose training isn't recorded, which makes it a modification of that model.
 type History struct {
 	Corpora  map[string]HistoryCorpus // by corpus BOM hash
 	Upstream *OriginSource
@@ -586,29 +578,22 @@ type HistoryCorpus struct {
 	Run     string
 	Stage   string
 	BOM     corpus.BOM
-	// Upstream is training behind a pulled model, which its maker's summary describes.
-	Upstream bool
 }
 
 func TrainingHistory(root string, inspection Inspection) History {
 	walk := newLineageWalk(newLineageIndex(root, nil))
 	walk.model(inspection, inspection.BOM.CurrentRunID)
 	history := History{Corpora: map[string]HistoryCorpus{}}
-	for position, run := range walk.runs {
+	for _, run := range walk.runs {
 		name := run.ModelID
 		var plan Plan
 		if data := walk.index.document(run.ModelID); data != nil && json.Unmarshal(data, &plan) == nil && plan.Name != "" {
 			name = plan.Name
 		}
-		// A corpus trained on this side of a pull, too, is this model's to describe.
-		upstream := walk.upstream[position]
-		if known, ok := history.Corpora[run.CorpusBOMSHA256]; ok && !known.Upstream {
-			continue
-		}
-		history.Corpora[run.CorpusBOMSHA256] = HistoryCorpus{ModelID: run.ModelID, Model: name, Run: run.ID, Stage: run.Stage, BOM: run.CorpusBOM, Upstream: upstream}
+		history.Corpora[run.CorpusBOMSHA256] = HistoryCorpus{ModelID: run.ModelID, Model: name, Run: run.ID, Stage: run.Stage, BOM: run.CorpusBOM}
 	}
-	if len(walk.origins) > 0 {
-		source := walk.origins[0].Source
+	if len(walk.outside) > 0 {
+		source := walk.outside[0].Source
 		history.Upstream = &source
 	}
 	return history

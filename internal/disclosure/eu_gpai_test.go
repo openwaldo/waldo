@@ -61,11 +61,7 @@ func TestAMergeReportsItsAncestorsAndWhereItCameFrom(t *testing.T) {
 		Origin: &model.OriginBOM{Source: model.OriginSource{Provider: "merge", Revision: strings.Repeat("4", 64)}},
 	}
 	history := model.History{
-		Corpora: map[string]model.HistoryCorpus{
-			strings.Repeat("c", 64): {ModelID: strings.Repeat("5", 64), Model: "left", Run: "r1", Stage: "python", BOM: bom},
-			// What the pulled model's maker trained on is theirs to describe.
-			strings.Repeat("d", 64): {ModelID: strings.Repeat("6", 64), Model: "tiny", Run: "r0", Stage: "pretrain", BOM: bom, Upstream: true},
-		},
+		Corpora:  map[string]model.HistoryCorpus{strings.Repeat("c", 64): {ModelID: strings.Repeat("5", 64), Model: "left", Run: "r1", Stage: "python", BOM: bom}},
 		Upstream: &model.OriginSource{Provider: "huggingface", URL: "https://huggingface.co/org/tiny"},
 	}
 	release := ReleaseFromModel(merged, history)
@@ -79,7 +75,7 @@ func TestAMergeReportsItsAncestorsAndWhereItCameFrom(t *testing.T) {
 	if len(report.Training.UniqueCorpora) != 1 || report.Training.UniqueCorpora[0].Stages[0] != "ancestor left python" || hasGap(report.Gaps, "training.stages") {
 		t.Fatalf("the merge's report leaves out what its parents trained on: %+v", report.Training)
 	}
-	// Trained and merged here from scratch, with nothing pulled, it is a new model.
+	// With its whole history recorded, it is a new model.
 	if release := ReleaseFromModel(merged, model.History{Corpora: history.Corpora}); release.Origin != "new" {
 		t.Fatalf("a merge with no pull in its history is %q", release.Origin)
 	}
