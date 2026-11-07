@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -1697,9 +1698,18 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 	}
 	euBOM = append(euBOM, '\n')
 	trainingBOMs := make([]corpus.BOM, 0, len(inspection.RunBOMs))
+	attributed := map[string]bool{}
 	for position, runBOM := range inspection.RunBOMs {
 		if position < len(inspection.Runs) && inspection.Runs[position].State == model.RunComplete {
 			trainingBOMs = append(trainingBOMs, runBOM.CorpusBOM)
+			attributed[runBOM.CorpusBOMSHA256] = true
+		}
+	}
+	// A fine-tune or merge also carries its ancestors' training data.
+	history := model.HistoryCorpusBOMs(root, inspection)
+	for _, digest := range slices.Sorted(maps.Keys(history)) {
+		if !attributed[digest] {
+			trainingBOMs = append(trainingBOMs, history[digest])
 		}
 	}
 	attribution, err := corpus.AttributionNotice(trainingBOMs)

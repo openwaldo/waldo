@@ -8,6 +8,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/openwaldo/waldo/internal/corpus"
 	"maps"
 	"os"
 	"path/filepath"
@@ -181,6 +182,8 @@ type lineageWalk struct {
 	merged  map[string]bool
 	broken  map[string]bool
 	at      string
+	// runs are the run BOMs the walk passed through, in order: the training behind the weights.
+	runs []RunBOM
 }
 
 func newLineageWalk(index *lineageIndex) *lineageWalk {
@@ -319,6 +322,7 @@ func (walk *lineageWalk) madeBy(digest, weights string) {
 	if !walk.fetch(digest, "run-bom", &bom) {
 		return
 	}
+	walk.runs = append(walk.runs, bom)
 	if bom.Initialization == nil {
 		walk.ends[weights] = true
 		return
@@ -556,6 +560,18 @@ func fillLineage(root string, inspection Inspection, base *Inspection, warn func
 }
 
 // ReleaseLineage is the LINEAGE.json a release ships.
+// HistoryCorpusBOMs are the corpus BOMs behind a model's weights, by hash: its own runs' and every
+// ancestor's, through fine-tunes, merges and pulled releases, as far as its history reaches.
+func HistoryCorpusBOMs(root string, inspection Inspection) map[string]corpus.BOM {
+	walk := newLineageWalk(newLineageIndex(root, nil))
+	walk.model(inspection, inspection.BOM.CurrentRunID)
+	boms := map[string]corpus.BOM{}
+	for _, run := range walk.runs {
+		boms[run.CorpusBOMSHA256] = run.CorpusBOM
+	}
+	return boms
+}
+
 func ReleaseLineage(root string, inspection Inspection, warn func(string)) ([]byte, error) {
 	index := newLineageIndex(root, warn)
 	walk := newLineageWalk(index)

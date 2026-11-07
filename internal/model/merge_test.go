@@ -588,6 +588,36 @@ func TestMergeComposeRefusesAMissingRecordedMerge(t *testing.T) {
 	}
 }
 
+func TestAMergeCarriesItsParentsTrainingData(t *testing.T) {
+	root := t.TempDir()
+	builder := family(t, root)
+	want := map[string]bool{}
+	for _, name := range []string{"left", "right"} {
+		parent, err := Inspect(root, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, run := range parent.RunBOMs {
+			want[run.CorpusBOMSHA256] = true
+		}
+	}
+	if _, err := builder.Compose(t.Context(), "merged", mergeOf("left", "right"), nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"left", "right", "base"} {
+		if err := os.RemoveAll(filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	next := tune(t, builder, ComposeBase{Model: "merged"}, "next", "next")
+	history := HistoryCorpusBOMs(root, next)
+	for digest := range want {
+		if _, ok := history[digest]; !ok {
+			t.Fatalf("a model made from a merge lost a parent's corpus BOM %s; history holds %d", digest[:12], len(history))
+		}
+	}
+}
+
 func TestComposeFromAMergeAfterItsParentsAreDeleted(t *testing.T) {
 	root := t.TempDir()
 	builder := family(t, root)
