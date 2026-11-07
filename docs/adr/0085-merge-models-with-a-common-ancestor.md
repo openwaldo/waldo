@@ -17,7 +17,8 @@ WALDO averages their weights into a new origin, so a merged model starts like
 any other, and records how it was made.
 
 - WALDO finds where the parents' histories meet (ADR 0084), as git finds a
-  merge-base, and refuses the merge if any step above that point is a gap.
+  merge-base. It refuses the merge if any step above that point is a gap, or
+  starts from random weights or a release pulled without its history.
 - `MERGE.json` (`waldo-model-merge`, schema 1) records the method and each
   parent's run or origin, weights hash, license, and `share` (its weight). It
   names no models or places.
@@ -34,6 +35,4 @@ any other, and records how it was made.
 - A merge never invents a training run; changing the arithmetic needs a new
   method name.
 - Earlier merges in a history are checked by their documents, not recomputed.
-- A merge is refused when a parent's history above the merge-base starts from
-  random weights or from a release pulled without its history.
 - A merged model needs its `.merges` entry to be composed again.
