@@ -228,6 +228,23 @@ func TestMergeRefusesAGapAboveTheMergeBase(t *testing.T) {
 }
 
 // A release pulled and trained on meets the model it was exported from.
+func TestMergeAcceptsAGapAtTheMergeBase(t *testing.T) {
+	root := t.TempDir()
+	trainTwice(t, lineageBuilder(root), "base")
+	builder := flipWeightsBuilder(root)
+	tune(t, builder, ComposeBase{Model: "base"}, "left", "left")
+	tune(t, builder, ComposeBase{Model: "base"}, "right", "right")
+	// What's missing now is how the merge-base itself was made, which a merge only records.
+	for _, path := range []string{filepath.Join(root, "base"), filepath.Join(root, "left", lineageFile), filepath.Join(root, "right", lineageFile)} {
+		if err := os.RemoveAll(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := builder.Compose(t.Context(), "merged", mergeOf("left", "right"), nil); err != nil {
+		t.Fatalf("a gap at the merge-base refused the merge: %v", err)
+	}
+}
+
 func TestMergeFindsTheMergeBaseThroughARelease(t *testing.T) {
 	root := t.TempDir()
 	builder := lineageBuilder(root)
@@ -356,6 +373,19 @@ func TestMergeComposeKeepsItsRecordedMerge(t *testing.T) {
 
 // A recorded merge belongs to the weights it averaged: once a parent's name
 // holds a different model, the compose no longer names that merge.
+func TestRecordedMergeNeedsADifferentParentForEachOne(t *testing.T) {
+	root := t.TempDir()
+	builder := family(t, root)
+	if _, err := builder.Compose(t.Context(), "merged", mergeOf("base", "right"), nil); err != nil {
+		t.Fatal(err)
+	}
+	// base2 holds base's weights, so alone it could answer for base's place in the merge, but not for right's.
+	pullPlain(t, root, "base2", mergeableFixture(t, lineageArchitecture(), 0))
+	if _, err := builder.Compose(t.Context(), "merged", mergeOf("base", "base2"), nil); err == nil {
+		t.Fatal("a merge of base and right was taken for a merge of base and its copy")
+	}
+}
+
 func TestRecordedMergeRefusesARecreatedParent(t *testing.T) {
 	root := t.TempDir()
 	builder := family(t, root)

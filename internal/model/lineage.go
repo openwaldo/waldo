@@ -286,7 +286,9 @@ func (walk *lineageWalk) model(inspection Inspection, runID string) {
 	}
 }
 
+// parent walks a parent pin; what it finds is history of the parent's weights, not the child's.
 func (walk *lineageWalk) parent(parent ModelParent) {
+	defer walk.explain(parent.Artifact.SHA256)()
 	walk.plan(parent.ModelID)
 	if _, weights, ok := walk.anchoredRun(parent.ModelID, parent.RunID); ok && weights != parent.Artifact.SHA256 {
 		walk.gap(parent.Artifact.SHA256, "initialization")
@@ -297,9 +299,9 @@ func (walk *lineageWalk) parent(parent ModelParent) {
 
 // run walks from a run BOM that a pin names as modelID's runID.
 func (walk *lineageWalk) run(digest, modelID, runID, weights string) {
+	defer walk.explain(weights)()
 	var bom RunBOM
 	if walk.fetch(digest, "run-bom", &bom) && (bom.ModelID != modelID || bom.ID != runID) {
-		defer walk.explain(weights)()
 		walk.gap(digest, "run-bom")
 		return
 	}
@@ -383,21 +385,27 @@ func (walk *lineageWalk) merge(digest, weights string) {
 	walk.merged[weights] = true
 	for _, parent := range record.Parents {
 		walk.edge(weights, parent.WeightsSHA256)
-		switch {
-		case parent.RunBOMSHA256 != "":
-			var bom RunBOM
-			if walk.fetch(parent.RunBOMSHA256, "run-bom", &bom) {
-				if _, made, ok := walk.anchoredRun(bom.ModelID, bom.ID); ok && made != parent.WeightsSHA256 {
-					walk.gap(parent.WeightsSHA256, "merge")
-					continue
-				}
+		walk.mergeParent(parent)
+	}
+}
+
+// mergeParent walks how one merge parent's weights were made.
+func (walk *lineageWalk) mergeParent(parent MergeParent) {
+	defer walk.explain(parent.WeightsSHA256)()
+	switch {
+	case parent.RunBOMSHA256 != "":
+		var bom RunBOM
+		if walk.fetch(parent.RunBOMSHA256, "run-bom", &bom) {
+			if _, made, ok := walk.anchoredRun(bom.ModelID, bom.ID); ok && made != parent.WeightsSHA256 {
+				walk.gap(parent.WeightsSHA256, "merge")
+				return
 			}
-			walk.madeBy(parent.RunBOMSHA256, parent.WeightsSHA256)
-		case parent.OriginBOMSHA256 != "":
-			walk.origin(parent.OriginBOMSHA256, parent.WeightsSHA256)
-		default:
-			walk.gap(parent.WeightsSHA256, "merge")
 		}
+		walk.madeBy(parent.RunBOMSHA256, parent.WeightsSHA256)
+	case parent.OriginBOMSHA256 != "":
+		walk.origin(parent.OriginBOMSHA256, parent.WeightsSHA256)
+	default:
+		walk.gap(parent.WeightsSHA256, "merge")
 	}
 }
 

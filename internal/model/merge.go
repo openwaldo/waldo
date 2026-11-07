@@ -242,15 +242,34 @@ func (builder Builder) recordedMerge(name string, base ComposeBase) (*Inspection
 	if err != nil || record == nil || len(record.Parents) != len(base.Merge) {
 		return nil, mismatch
 	}
-	for _, declared := range base.Merge {
+	holds := make([][]bool, len(base.Merge))
+	for index, declared := range base.Merge {
 		current, err := Inspect(builder.Root, declared.Model)
 		if err != nil {
 			return nil, fmt.Errorf("resolve base.merge parent %q: %w", declared.Model, err)
 		}
-		if !slices.ContainsFunc(record.Parents, func(parent MergeParent) bool {
-			return parent.Share == declared.Weight && holdsWeights(current, parent.WeightsSHA256)
-		}) {
-			return nil, fmt.Errorf("base.merge parent %q no longer holds the weights model %q merged; use a new model name", declared.Model, name)
+		for _, parent := range record.Parents {
+			holds[index] = append(holds[index], parent.Share == declared.Weight && holdsWeights(current, parent.WeightsSHA256))
+		}
+	}
+	// Each declared parent must answer for a different recorded parent.
+	owner := slices.Repeat([]int{-1}, len(record.Parents))
+	var assign func(int, []bool) bool
+	assign = func(declared int, tried []bool) bool {
+		for recorded, held := range holds[declared] {
+			if held && !tried[recorded] {
+				tried[recorded] = true
+				if owner[recorded] < 0 || assign(owner[recorded], tried) {
+					owner[recorded] = declared
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for index, declared := range base.Merge {
+		if !assign(index, make([]bool, len(record.Parents))) {
+			return nil, fmt.Errorf("base.merge parent %q no longer holds weights model %q merged that no other parent does; use a new model name", declared.Model, name)
 		}
 	}
 	return &merged, nil
