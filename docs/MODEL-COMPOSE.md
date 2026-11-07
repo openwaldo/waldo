@@ -303,9 +303,9 @@ weights: float32 accumulation from +0 in parent order, rounded to nearest
 even, with subnormal results as IEEE float32 computes them; weights must be
 normal, finite float32 values, and a merge fails if the average overflows
 float32) and each parent by the run or origin BOM that made its weights, its
-weights hash, license, and weight, sorted by weights hash. It names no models
-or places, so everyone who merges the same parents writes the same bytes and
-the same weights. The merged origin's source is provider `merge` at that hash,
+weights hash, license, and `share` (its compose `weight`), sorted by weights
+hash. It names no models or places, so everyone who merges parents recorded
+the same way writes the same bytes and the same weights. The merged origin's source is provider `merge` at that hash,
 and its `LINEAGE.json` holds `MERGE.json` and every parent's history, so the
 parents can be deleted. A compose with `base.merge` may have no stages: the
 destination is then the merged model itself, usable for chat, export, or as

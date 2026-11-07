@@ -19,8 +19,8 @@ any other, and records how it was made.
 - WALDO finds where the parents' histories meet (ADR 0084), as git finds a
   merge-base, and refuses the merge if any step above that point is a gap.
 - `MERGE.json` (`waldo-model-merge`, schema 1) records the method and each
-  parent's run or origin, weights hash, license, and weight. It names no
-  models or places.
+  parent's run or origin, weights hash, license, and `share` (its weight). It
+  names no models or places.
 - The merged origin is kept under `<model.root>/.merges`. Its `LINEAGE.json`
   holds `MERGE.json` and every parent's history, so the parents can be deleted.
 - A compose with only a merge needs no training; with stages, training starts
@@ -28,11 +28,12 @@ any other, and records how it was made.
 
 ## Consequences
 
-- The same parents give the same `MERGE.json` and the same weights, so
-  independent merges compare byte for byte.
+- Parents recorded the same way, by the same run or origin BOM and weights,
+  give the same `MERGE.json` and the same weights, so independent merges of
+  them compare byte for byte.
 - A merge never invents a training run; changing the arithmetic needs a new
   method name.
 - Earlier merges in a history are checked by their documents, not recomputed.
-- Models trained from random weights, or pulled without history, can't be
-  merged, except copies of the same weights.
+- A merge is refused when a parent's history above the merge-base starts from
+  random weights or from a release pulled without its history.
 - A merged model needs its `.merges` entry to be composed again.
