@@ -1,0 +1,66 @@
+# Fresh 1B data-rebalance qualification. This candidate remains unnumbered
+# until every gate in README.md passes.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 2048
+  vocabulary_size: 32000
+  hidden_size: 2048
+  intermediate_size: 5632
+  layers: 22
+  attention_heads: 32
+  key_value_heads: 4
+  dropout: 0.0
+  qk_normalization: false
+  initialization: depth-scaled
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    artifact_path: tokenizer.json
+stages:
+  - name: general-base-1b-data-rebalance
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: core/common-pile/wikimedia
+        weight: 9
+      - path: core/common-pile/stackexchange
+        weight: 6
+      - path: core/synthetic/cosmopedia-v2
+        weight: 3
+      - path: core/common-pile/pressbooks
+        weight: 1
+      - path: core/common-pile/libretexts
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      tokens: 4845000000
+      batch_size: 8
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: false
+      compile: false
+      sequence_length: 2048
+      learning_rate: 0.0004
+      optimizer: adamw
+      schedule: cosine
+      seed: 42
+      weight_decay: 0.1
+      warmup_steps: 1000
+      checkpoint_every: 49286
+      # Six evenly spaced evaluations/checkpoints include the exact 2.5-TPP
+      # gate at step 147,858 without retaining redundant 12 GiB states.
+      evaluate_every: 49286
+      shuffle_buffer_records: 65536
+      shuffle_buffer_bytes: 2147483648
+      evaluation_selection: stratified-lowest-sha256-v1
+      evaluation_fraction: 0.01
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
