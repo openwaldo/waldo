@@ -125,8 +125,7 @@ func TestTorchTitanWorkerPartitionsGlobalBatchAcrossRanks(t *testing.T) {
 		`owner = self.sequence_number % self.world_size`,
 		`if owner == self.rank:`,
 		`if self.sequence_number % self.global_micro_batch_size == 0:`,
-		`torch.distributed.all_reduce(global_valid_tokens`,
-		`torch.distributed.all_reduce(global_loss_sum`,
+		`torch.distributed.all_reduce(global_metrics`,
 		`torch.distributed.all_gather_object(states, local)`,
 		`distinct sequences per micro-batch`,
 	} {
@@ -148,14 +147,34 @@ func TestPyTorchWorkerAccumulatesTokenNormalizedGradients(t *testing.T) {
 	source := string(pyTorchWorker)
 	for _, expected := range []string{
 		`self.optimizer.zero_grad(set_to_none=True)`,
-		`if self.accumulation_number < self.gradient_accumulation_steps and not final:`,
-		`parameter.grad.div_(self.accumulated_tokens)`,
+		`self.model.no_sync() if not synchronize_gradients else contextlib.nullcontext()`,
+		`if not final_accumulation:`,
+		`torch._foreach_div_(gradients, denominator)`,
+		`torch.nn.utils.clip_grad_norm_(parameters, math.inf, foreach=True)`,
+		`foreach=not self.distributed or self.parallelism_strategy == "data-parallel"`,
 		`self.optimizer.step()`,
 		`self.replay_micro_batches = self.resume["step"] * self.gradient_accumulation_steps`,
 	} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("PyTorch worker omits gradient accumulation behavior %q", expected)
 		}
+	}
+}
+
+func TestTorchTitanWorkerConsolidatesAccumulationMetrics(t *testing.T) {
+	source := string(pyTorchWorker)
+	for _, expected := range []string{
+		`self.accumulated_local_loss_sum.add_(detached_loss_sum)`,
+		`self.accumulated_local_valid_tokens.add_(detached_valid_tokens)`,
+		`global_metrics = torch.stack((self.accumulated_local_loss_sum, self.accumulated_local_valid_tokens))`,
+		`torch.distributed.all_reduce(global_metrics, op=torch.distributed.ReduceOp.SUM)`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("TorchTitan worker omits optimizer-boundary metric reduction %q", expected)
+		}
+	}
+	if strings.Contains(source, "all_reduce(global_valid_tokens") || strings.Contains(source, "all_reduce(global_loss_sum") {
+		t.Fatal("TorchTitan worker still reduces scalar metrics per microbatch")
 	}
 }
 

@@ -3,6 +3,7 @@
 # Copyright (c) 2026 Gregory M. Kurtzer
 # SPDX-License-Identifier: Apache-2.0
 
+import contextlib
 import datetime
 import hashlib
 import inspect
@@ -24,8 +25,8 @@ from torch.utils.checkpoint import checkpoint
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r17"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r28"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r18"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r29"
 IS_PRIMARY = True
 
 
@@ -70,6 +71,20 @@ def progress_due(step, target_steps, last_report, now, heartbeat_seconds):
     if step == 1 or step == target_steps or step % report_every == 0:
         return True
     return heartbeat_seconds > 0 and now - last_report >= heartbeat_seconds
+
+
+def normalize_and_validate_gradients(parameters, denominator):
+    """Apply global-token normalization and return the FP32 infinity norm."""
+    parameters = list(parameters)
+    gradients = [parameter.grad for parameter in parameters if parameter.grad is not None]
+    if not gradients:
+        return torch.zeros((), dtype=torch.float32)
+    if all(type(gradient) is torch.Tensor for gradient in gradients):
+        torch._foreach_div_(gradients, denominator)
+        return torch.nn.utils.clip_grad_norm_(parameters, math.inf, foreach=True)
+    for gradient in gradients:
+        gradient.div_(denominator)
+    return torch.nn.utils.clip_grad_norm_(parameters, math.inf)
 
 
 # Rates cover the window since training (re)started, not the whole run: a resume restores absolute
@@ -503,6 +518,8 @@ class Trainer:
         self.accumulation_number = 0
         self.accumulated_loss_sum = 0.0
         self.accumulated_tokens = 0
+        self.accumulated_local_loss_sum = None
+        self.accumulated_local_valid_tokens = None
         self.accumulated_consumption = {}
         self.accumulated_compute_seconds = 0.0
         self.last_report = self.started
@@ -601,6 +618,7 @@ class Trainer:
                 betas=(optimizer_parameters["beta1"], optimizer_parameters["beta2"]),
                 eps=optimizer_parameters["epsilon"],
                 weight_decay=optimizer_parameters["weight_decay"],
+                foreach=not self.distributed or self.parallelism_strategy == "data-parallel",
             )
         scaler_enabled = self.device.type == "cuda" and self.compute_dtype == torch.float16
         if scaler_enabled and self.distributed and self.parallelism_strategy != "data-parallel":
@@ -826,6 +844,8 @@ class Trainer:
             self.optimizer.zero_grad(set_to_none=True)
             self.accumulated_loss_sum = 0.0
             self.accumulated_tokens = 0
+            self.accumulated_local_loss_sum = None
+            self.accumulated_local_valid_tokens = None
             self.accumulated_consumption = {}
             self.accumulated_compute_seconds = 0.0
         tokens = torch.tensor([item[0] for item in self.batch], dtype=torch.long)
@@ -844,55 +864,65 @@ class Trainer:
         current_learning_rate = self.learning_rate(next_step)
         for group in self.optimizer.param_groups:
             group["lr"] = current_learning_rate
-        logits = self.forward_logits(self.model, inputs)
-        losses = functional.cross_entropy(logits.float().reshape(-1, logits.shape[-1]), targets.reshape(-1), reduction="none")
-        loss_sum = (losses.reshape_as(mask) * mask).sum()
-        local_valid_tokens = mask.sum()
-        if self.distributed:
-            global_valid_tokens = local_valid_tokens.detach().clone()
-            torch.distributed.all_reduce(global_valid_tokens, op=torch.distributed.ReduceOp.SUM)
-            # Distributed wrappers average gradients across ranks. Scaling the
-            # unnormalized local sum by world size yields the global token-loss
-            # sum; accumulated gradients are normalized once at optimizer step.
-            loss = loss_sum * self.world_size
+        final_accumulation = self.accumulation_number + 1 >= self.gradient_accumulation_steps or final
+        synchronize_gradients = not (
+            self.distributed and self.parallelism_strategy == "data-parallel" and not final_accumulation
+        )
+        synchronization = self.model.no_sync() if not synchronize_gradients else contextlib.nullcontext()
+        # DDP must see both the forward and backward inside no_sync(). The final
+        # accumulation backward synchronizes the complete accumulated gradient.
+        with synchronization:
+            logits = self.forward_logits(self.model, inputs)
+            losses = functional.cross_entropy(logits.float().reshape(-1, logits.shape[-1]), targets.reshape(-1), reduction="none")
+            loss_sum = (losses.reshape_as(mask) * mask).sum()
+            local_valid_tokens = mask.sum()
+            if self.distributed:
+                # DDP averages gradients across ranks. Scaling each local,
+                # unnormalized loss sum by world size makes the final reduced
+                # gradient the global token-loss sum. Normalize it once below.
+                loss = loss_sum * self.world_size
+            else:
+                loss = loss_sum
+            if self.scaler.is_enabled():
+                self.scaler.scale(loss).backward()
+            else:
+                loss.backward()
+        detached_loss_sum = loss_sum.detach().to(dtype=torch.float64)
+        detached_valid_tokens = local_valid_tokens.detach().to(dtype=torch.float64)
+        if self.accumulated_local_loss_sum is None:
+            self.accumulated_local_loss_sum = detached_loss_sum
+            self.accumulated_local_valid_tokens = detached_valid_tokens
         else:
-            global_valid_tokens = local_valid_tokens
-            loss = loss_sum
-        if self.scaler.is_enabled():
-            self.scaler.scale(loss).backward()
-        else:
-            loss.backward()
-        if self.distributed:
-            global_loss_sum = loss_sum.detach().clone()
-            torch.distributed.all_reduce(global_loss_sum, op=torch.distributed.ReduceOp.SUM)
-        else:
-            global_loss_sum = loss_sum.detach()
-        if not math.isfinite(float(global_loss_sum.cpu().item())):
-            raise NumericalIntegrityError(f"non-finite training loss at optimizer step {next_step}; no optimizer update was applied")
-        valid_tokens = int(global_valid_tokens.cpu().item())
-        if valid_tokens <= 0 and self.accumulated_tokens == 0:
-            raise ValueError("gradient accumulation micro-batch has no supervised token targets")
-        self.accumulated_loss_sum += float(global_loss_sum.cpu().item())
-        self.accumulated_tokens += valid_tokens
+            self.accumulated_local_loss_sum.add_(detached_loss_sum)
+            self.accumulated_local_valid_tokens.add_(detached_valid_tokens)
         for item in self.batch:
             for corpus, count in item[2].items():
                 self.accumulated_consumption[corpus] = self.accumulated_consumption.get(corpus, 0) + count
         self.batch = []
         self.accumulation_number += 1
         self.accumulated_compute_seconds += max(time.perf_counter() - step_started, 1e-9)
-        if self.accumulation_number < self.gradient_accumulation_steps and not final:
+        if not final_accumulation:
             self.last_step_finished = time.perf_counter()
             return
 
+        # Loss and token accounting do not affect backward. Reduce both once at
+        # the optimizer boundary instead of issuing two collectives per microbatch.
+        global_metrics = torch.stack((self.accumulated_local_loss_sum, self.accumulated_local_valid_tokens))
+        if self.distributed:
+            torch.distributed.all_reduce(global_metrics, op=torch.distributed.ReduceOp.SUM)
+        self.accumulated_loss_sum, accumulated_tokens = global_metrics.cpu().tolist()
+        self.accumulated_tokens = int(accumulated_tokens)
+        if not math.isfinite(self.accumulated_loss_sum):
+            raise NumericalIntegrityError(f"non-finite training loss at optimizer step {next_step}; no optimizer update was applied")
+        if self.accumulated_tokens <= 0:
+            raise ValueError("gradient accumulation optimizer step has no supervised token targets")
+
         if self.scaler.is_enabled():
             self.scaler.unscale_(self.optimizer)
-        for parameter in self.model.parameters():
-            if parameter.grad is not None:
-                parameter.grad.div_(self.accumulated_tokens)
         # Validate every optimizer update, not only progress-reporting steps.
         # A non-finite BF16 gradient can otherwise poison weights long before
         # the next checkpoint or held-out evaluation notices the failure.
-        gradient_norm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), math.inf).detach().cpu().item())
+        gradient_norm = float(normalize_and_validate_gradients(self.model.parameters(), self.accumulated_tokens).detach().cpu().item())
         if not math.isfinite(gradient_norm):
             raise NumericalIntegrityError(f"non-finite gradient norm at optimizer step {next_step}; no optimizer update was applied")
         update_started = time.perf_counter()
