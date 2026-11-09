@@ -266,6 +266,55 @@ def run(model_source, device_name):
         if float(step) != 1.0:
             raise AssertionError(f"AdamW step for {name} is {state['step']}, want 1")
 
+    # Production data parallelism uses foreach AdamW. CUDA fused AdamW remains
+    # benchmark-only until this same update contract passes on the target GPU.
+    optimizer_variants = [("foreach", {"foreach": True})]
+    if device.type == "cuda":
+        optimizer_variants.append(("fused", {"fused": True}))
+    baseline_parameters = {name: parameter.detach().clone() for name, parameter in model.named_parameters()}
+    for implementation, options in optimizer_variants:
+        candidate = module.DecoderLM(architecture).to(device=device, dtype=dtype)
+        candidate.load_state_dict(before, strict=True)
+        for name, parameter in candidate.named_parameters():
+            parameter.grad = optimizer_gradients[name].clone()
+        candidate_optimizer = torch.optim.AdamW(
+            candidate.parameters(),
+            lr=learning_rate,
+            betas=(beta1, beta2),
+            eps=epsilon,
+            weight_decay=weight_decay,
+            **options,
+        )
+        candidate_optimizer.step()
+        for name, parameter in candidate.named_parameters():
+            assert_close(
+                f"adamw_{implementation}_parameter/" + name,
+                parameter,
+                baseline_parameters[name],
+                update_tolerance,
+                relative_tolerance,
+                measurements,
+            )
+        # Optimizer state is part of runtime.pt. It must round-trip exactly for
+        # resume regardless of the execution implementation.
+        optimizer_payload = io.BytesIO()
+        torch.save(candidate_optimizer.state_dict(), optimizer_payload)
+        optimizer_payload.seek(0)
+        try:
+            reloaded_optimizer_state = torch.load(optimizer_payload, map_location=device, weights_only=True)
+        except TypeError:
+            reloaded_optimizer_state = torch.load(optimizer_payload, map_location=device)
+        reloaded_candidate_optimizer = torch.optim.AdamW(candidate.parameters(), **options)
+        reloaded_candidate_optimizer.load_state_dict(reloaded_optimizer_state)
+        for original_parameter, reloaded_parameter in zip(
+            candidate_optimizer.param_groups[0]["params"], reloaded_candidate_optimizer.param_groups[0]["params"]
+        ):
+            original_state = candidate_optimizer.state[original_parameter]
+            reloaded_state = reloaded_candidate_optimizer.state[reloaded_parameter]
+            for state_name in ("step", "exp_avg", "exp_avg_sq"):
+                if not torch.equal(original_state[state_name], reloaded_state[state_name]):
+                    raise AssertionError(f"{implementation} AdamW checkpoint state {state_name} changed on reload")
+
     model.eval()
     with torch.no_grad():
         post_update_logits = model(inputs)
@@ -323,7 +372,16 @@ def run(model_source, device_name):
             "masked_loss": measurements["masked_loss"],
             "gradients": max(value for name, value in measurements.items() if name.startswith("gradient/")),
             "adamw_parameters": max(value for name, value in measurements.items() if name.startswith("adamw_parameter/")),
-            "adamw_state": max(value for name, value in measurements.items() if name.startswith("adamw_") and not name.startswith("adamw_parameter/")),
+            "adamw_state": max(
+                value
+                for name, value in measurements.items()
+                if name.startswith("adamw_first_moment/") or name.startswith("adamw_second_moment/")
+            ),
+            "adamw_foreach_parameters": max(value for name, value in measurements.items() if name.startswith("adamw_foreach_parameter/")),
+            "adamw_fused_parameters": max(
+                (value for name, value in measurements.items() if name.startswith("adamw_fused_parameter/")),
+                default=0.0,
+            ),
             "save_reload_logits": measurements["save_reload_logits"],
             "checkpoint_save_reload_logits": measurements["checkpoint_save_reload_logits"],
             "post_update_logits": measurements["post_update_logits"],

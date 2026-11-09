@@ -33,6 +33,17 @@ echo "testing: independent PyTorch logits, loss, gradient, AdamW, and reload con
   --model-source "$repo_root/internal/pytorchruntime/model.py" \
   --device cpu
 
+echo "testing: distributed gradient, accumulation, sequence, and checkpoint conformance"
+master_port=$(
+  "$torch_python" -c 'import socket; listener = socket.socket(); listener.bind(("127.0.0.1", 0)); print(listener.getsockname()[1]); listener.close()'
+)
+"$torch_python" -m torch.distributed.run \
+  --master-addr=127.0.0.1 \
+  --master-port="$master_port" \
+  --nnodes=1 \
+  --nproc-per-node=2 \
+  "$script_dir/python/pytorch_distributed_conformance.py"
+
 if "$torch_python" -c 'import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)' >/dev/null 2>&1; then
   echo "testing: independent CUDA FP32 conformance"
   "$torch_python" "$script_dir/python/pytorch_conformance.py" \
