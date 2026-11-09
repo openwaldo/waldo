@@ -33,6 +33,8 @@ from torch.nn.parallel import DistributedDataParallel
 
 VARIANTS = (
     ("legacy-accum2", 2, False, False, "plain", False),
+    ("boundary-sync", 2, False, True, "plain", False),
+    ("foreach-sync", 2, False, True, "foreach", False),
     ("legacy-accum1", 1, False, False, "plain", False),
     ("no-sync", 2, True, False, "plain", False),
     ("boundary-scalars", 2, True, True, "plain", False),
