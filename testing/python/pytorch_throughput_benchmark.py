@@ -263,6 +263,17 @@ def run_variant(module, architecture_value, sequence_length, warmup, steps, vari
         }
         if not is_control and error > tolerance:
             raise AssertionError(f"{name} maximum weight error {error} exceeds {tolerance}")
+    # DDP retains reducer and process-group references through Python cycles.
+    # Release each 1B variant explicitly before constructing the next one;
+    # otherwise repeated large DDP construction can corrupt the following
+    # cross-rank parameter-shape verification on current PyTorch nightlies.
+    del optimizer
+    del execution_model
+    del model
+    del base
+    del batches
+    gc.collect()
+    torch.cuda.empty_cache()
     distributed.barrier()
     return result, state
 
