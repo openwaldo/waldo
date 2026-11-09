@@ -22,10 +22,12 @@ variants:
 7. compiled accumulation-1 execution.
 
 Each JSON result reports optimizer-step duration, tokens/sec, achieved
-TFLOP/sec, and forward, backward, communication, gradient-processing, and
-optimizer time. DDP communication is nested in backward, so the result also
-reports backward time with measured DDP communication removed. Input creation
-and host-to-device transfer are intentionally outside the timed region.
+TFLOP/sec, and forward, backward, scalar-communication, gradient-processing,
+and optimizer time. DDP gradient communication remains nested in backward.
+The benchmark intentionally does not install a custom DDP communication hook:
+doing so changes the reducer path being qualified and can alter gradient
+accumulation under `no_sync()`. Input creation and host-to-device transfer are
+outside the timed region.
 
 Every variant begins from identical weights and consumes identical sequences.
 Its final weights are compared with the legacy result. The benchmark fails if

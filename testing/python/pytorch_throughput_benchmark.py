@@ -91,26 +91,6 @@ def measured(call):
     return value, time.perf_counter() - started
 
 
-class CommunicationTimer:
-    """Measures DDP bucket all-reduces without changing their reduction result."""
-
-    def __init__(self, world_size):
-        self.world_size = world_size
-        self.seconds = 0.0
-
-    def hook(self, _, bucket):
-        started = time.perf_counter()
-        future = distributed.all_reduce(bucket.buffer(), async_op=True).get_future()
-
-        def complete(result):
-            value = result.value()[0]
-            value.div_(self.world_size)
-            self.seconds += time.perf_counter() - started
-            return value
-
-        return future.then(complete)
-
-
 def fixed_local_microbatches(step, accumulation, rank, world_size, sequence_length, vocabulary_size, device):
     global_microbatch = 8 // accumulation
     local_size = global_microbatch // world_size
@@ -221,19 +201,16 @@ def run_variant(module, architecture_value, sequence_length, warmup, steps, vari
         # incompatible with DDP static_graph on current PyTorch releases.
         static_graph=not use_no_sync,
     )
-    communication = CommunicationTimer(world_size)
-    model.register_comm_hook(communication, communication.hook)
     execution_model = torch.compile(model, dynamic=False) if compile_model else model
     optimizer = optimizer_for(model, gradient_mode)
     parameter_count = sum(parameter.numel() for parameter in model.parameters())
-    totals = {key: 0.0 for key in ("forward", "backward", "communication", "ddp_communication", "gradient_processing", "optimizer")}
+    totals = {key: 0.0 for key in ("forward", "backward", "communication", "gradient_processing", "optimizer")}
     measured_seconds = 0.0
     losses = []
     for step in range(warmup + steps):
         batches = fixed_local_microbatches(
             step, accumulation, rank, world_size, sequence_length, architecture_value["vocabulary_size"], torch.device(f"cuda:{local_rank}")
         )
-        communication_before = communication.seconds
         synchronize()
         started = time.perf_counter()
         loss, phases = train_step(
@@ -241,9 +218,6 @@ def run_variant(module, architecture_value, sequence_length, warmup, steps, vari
         )
         synchronize()
         step_seconds = time.perf_counter() - started
-        ddp_communication = communication.seconds - communication_before
-        phases["communication"] += ddp_communication
-        phases["ddp_communication"] = ddp_communication
         if step >= warmup:
             measured_seconds += step_seconds
             losses.append(loss)
@@ -265,12 +239,7 @@ def run_variant(module, architecture_value, sequence_length, warmup, steps, vari
         "optimizer_step_seconds": seconds_per_step,
         "tokens_per_second": tokens_per_step / seconds_per_step,
         "achieved_tflops": 6 * parameter_count * tokens_per_step / seconds_per_step / 1e12,
-        "phase_seconds_per_step": {
-            **{key: value / steps for key, value in totals.items()},
-            "backward_compute_excluding_ddp_communication": max(
-                0.0, (totals["backward"] - totals["ddp_communication"]) / steps
-            ),
-        },
+        "phase_seconds_per_step": {key: value / steps for key, value in totals.items()},
         "final_loss": losses[-1],
         "numerical_comparison": None,
     }
