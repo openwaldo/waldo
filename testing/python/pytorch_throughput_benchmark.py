@@ -217,7 +217,9 @@ def run_variant(module, architecture_value, sequence_length, warmup, steps, vari
         output_device=local_rank,
         broadcast_buffers=False,
         gradient_as_bucket_view=True,
-        static_graph=True,
+        # Match the worker: no_sync() on the first accumulation microbatch is
+        # incompatible with DDP static_graph on current PyTorch releases.
+        static_graph=not use_no_sync,
     )
     communication = CommunicationTimer(world_size)
     model.register_comm_hook(communication, communication.hook)

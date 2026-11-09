@@ -582,7 +582,11 @@ class Trainer:
                     output_device=local_rank,
                     broadcast_buffers=False,
                     gradient_as_bucket_view=True,
-                    static_graph=True,
+                    # PyTorch's static-graph reducer cannot begin its first
+                    # iteration inside no_sync(). Gradient accumulation does
+                    # exactly that, so only enable static_graph when every
+                    # backward pass synchronizes gradients.
+                    static_graph=self.gradient_accumulation_steps == 1,
                 )
             else:
                 from torch.distributed._composable.fsdp import fully_shard

@@ -148,6 +148,7 @@ func TestPyTorchWorkerAccumulatesTokenNormalizedGradients(t *testing.T) {
 	for _, expected := range []string{
 		`self.optimizer.zero_grad(set_to_none=True)`,
 		`self.model.no_sync() if not synchronize_gradients else contextlib.nullcontext()`,
+		`static_graph=self.gradient_accumulation_steps == 1`,
 		`if not final_accumulation:`,
 		`torch._foreach_div_(gradients, denominator)`,
 		`torch.nn.utils.clip_grad_norm_(parameters, math.inf, foreach=True)`,
