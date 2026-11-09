@@ -30,10 +30,14 @@ accumulation under `no_sync()`. Input creation and host-to-device transfer are
 outside the timed region.
 
 Every variant begins from identical weights and consumes identical sequences.
-Its final weights are compared with the legacy result. The benchmark fails if
-the FP32 master weights differ by more than `2e-5`, or `2e-4` for a different
-microbatch shape or compiled execution. These are qualification tolerances,
-not permission to change training semantics.
+The legacy path is run twice before any optimization. That repeated-legacy
+control measures the full-size BF16 workload's own nondeterminism. Optimized
+weights must remain within the larger of the nominal absolute tolerance
+(`2e-5`, or `2e-4` for a different microbatch shape or compiled execution) and
+125% of the observed repeated-legacy maximum error. The control and effective
+tolerance are printed in every comparison. This prevents the gate from
+rejecting an optimization for noise that also occurs when the unchanged path
+is repeated; it is not permission to exceed the measured control envelope.
 
 For a quick wiring check, add `--tiny --sequence-length 128`. Benchmark results
 must be recorded from the intended GPU topology; GPU utilization alone is not

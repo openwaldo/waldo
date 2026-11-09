@@ -184,7 +184,7 @@ def maximum_state_error(left, right):
     return max(float((left[name].double() - right[name].double()).abs().max()) for name in left)
 
 
-def run_variant(module, architecture_value, sequence_length, warmup, steps, variant, baseline):
+def run_variant(module, architecture_value, sequence_length, warmup, steps, variant, baseline, control_error):
     name, accumulation, use_no_sync, boundary_scalars, gradient_mode, compile_model = variant
     rank = distributed.get_rank()
     world_size = distributed.get_world_size()
@@ -248,14 +248,20 @@ def run_variant(module, architecture_value, sequence_length, warmup, steps, vari
     }
     if rank == 0 and baseline is not None:
         error = maximum_state_error(baseline, state)
-        tolerance = 2e-4 if compile_model or accumulation == 1 else 2e-5
+        nominal_tolerance = 2e-4 if compile_model or accumulation == 1 else 2e-5
+        tolerance = nominal_tolerance
+        if control_error is not None:
+            tolerance = max(tolerance, control_error * 1.25)
+        is_control = name == "legacy-repeat"
         result["numerical_comparison"] = {
             "baseline": "legacy-accum2",
             "maximum_weight_error": error,
+            "nominal_absolute_tolerance": nominal_tolerance,
             "absolute_tolerance": tolerance,
-            "passed": error <= tolerance,
+            "legacy_repeat_control": is_control,
+            "passed": None if is_control else error <= tolerance,
         }
-        if error > tolerance:
+        if not is_control and error > tolerance:
             raise AssertionError(f"{name} maximum weight error {error} exceeds {tolerance}")
     distributed.barrier()
     return result, state
@@ -282,15 +288,30 @@ def main():
     variants = [item for item in VARIANTS if item[0] in selected]
     if not variants or variants[0][0] != "legacy-accum2":
         raise RuntimeError("the selected variants must include legacy-accum2 as the numerical baseline")
+    if len(variants) > 1 and variants[1][0] != "legacy-repeat":
+        raise RuntimeError("optimized comparisons must include legacy-repeat immediately after legacy-accum2")
     module = load_model(arguments.model_source)
     architecture_value = architecture(arguments.tiny)
     baseline = None
+    control_error = None
     for variant in variants:
         result, state = run_variant(
-            module, architecture_value, arguments.sequence_length, arguments.warmup_steps, arguments.steps, variant, baseline
+            module,
+            architecture_value,
+            arguments.sequence_length,
+            arguments.warmup_steps,
+            arguments.steps,
+            variant,
+            baseline,
+            control_error,
         )
         if baseline is None:
             baseline = state
+        elif variant[0] == "legacy-repeat":
+            control_error = result["numerical_comparison"]["maximum_weight_error"] if rank == 0 else 0.0
+            control = torch.tensor(control_error, dtype=torch.float64, device=torch.device(f"cuda:{int(os.environ.get('LOCAL_RANK', rank))}"))
+            distributed.broadcast(control, src=0)
+            control_error = float(control.item())
         if rank == 0:
             print(json.dumps(result, sort_keys=True), flush=True)
         gc.collect()
