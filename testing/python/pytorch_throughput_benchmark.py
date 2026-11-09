@@ -319,10 +319,8 @@ def main():
         if baseline is None:
             baseline = state
         elif variant[0] == "legacy-repeat":
-            control_error = result["numerical_comparison"]["maximum_weight_error"] if rank == 0 else 0.0
-            control = torch.tensor(control_error, dtype=torch.float64, device=torch.device(f"cuda:{int(os.environ.get('LOCAL_RANK', rank))}"))
-            distributed.broadcast(control, src=0)
-            control_error = float(control.item())
+            if rank == 0:
+                control_error = result["numerical_comparison"]["maximum_weight_error"]
         if rank == 0:
             print(json.dumps(result, sort_keys=True), flush=True)
         gc.collect()
