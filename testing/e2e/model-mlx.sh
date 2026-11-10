@@ -295,8 +295,12 @@ hub_port=$("$mlx_python" -c 'import socket; s = socket.socket(); s.bind(("127.0.
 "$mlx_python" -m http.server "$hub_port" --bind 127.0.0.1 --directory "$hub" >/dev/null 2>&1 &
 hub_pid=$!
 until "$mlx_python" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$hub_port/api/models/e2e/mlx-smoke/revision/main')" 2>/dev/null; do sleep 0.2; done
-HF_ENDPOINT="http://127.0.0.1:$hub_port" HF_TOKEN= "$binary" model pull mlx-pulled huggingface://e2e/mlx-smoke@main >/dev/null
+HF_ENDPOINT="http://127.0.0.1:$hub_port" HF_TOKEN= "$binary" model pull mlx-pulled huggingface://e2e/mlx-smoke@main >/dev/null 2>"$work/pull.stderr"
 kill "$hub_pid"
+# The release ships its history, and the pull links it to the run that made it (ADR 0084).
+grep -q '"LINEAGE.json"' "$huggingface_export/BOM.json"
+[ -s "$models/mlx-pulled/LINEAGE.json" ]
+if grep -q gap "$work/pull.stderr"; then cat "$work/pull.stderr" >&2; exit 1; fi
 pulled_chat=$("$binary" --json model chat mlx-pulled "OpenWALDO" --max-tokens 2 --temperature 0 --seed 7)
 printf '%s\n' "$pulled_chat" | grep -Eq '"source_type"[[:space:]]*:[[:space:]]*"origin"'
 printf '%s\n' "$pulled_chat" | grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(eos|max_tokens)"'
