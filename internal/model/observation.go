@@ -101,7 +101,11 @@ func validateBackendObservation(runDirectory string, planned PlannedStage, obser
 		if !checkpointFound || !evaluationFound {
 			return fmt.Errorf("selected checkpoint does not match a persisted checkpoint and evaluation")
 		}
-		if selected.Value != best {
+		if planned.Parameters.ArtifactSelection == "final" {
+			if selected.Step != observation.Steps {
+				return fmt.Errorf("selected checkpoint step %d is not the final step %d that artifact_selection final requires", selected.Step, observation.Steps)
+			}
+		} else if selected.Value != best {
 			return fmt.Errorf("selected checkpoint heldout_loss %.6f is not the best eligible persisted value %.6f", selected.Value, best)
 		}
 	}

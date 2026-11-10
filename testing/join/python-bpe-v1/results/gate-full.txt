@@ -1,0 +1,2640 @@
+FAIL  count-0023
+  > write a python program with a main function that prints 1 through 72
+    def main():
+        for number in range(1, 33 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  count-0036
+  > write a python script that counts from 1 to 86
+    def main():
+        for number in range(1, 86 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  count-0048
+  > write a python script that counts from 1 to 89
+    def main():
+        for number in range(1, 89 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  count-0058
+  > write a python script that counts from 1 to 505
+    def main():
+        for number in range(1, 505 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  count-0068
+  > write a python script that counts from 1 to 886
+    def main():
+        for number in range(1, 886 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  count-0070
+  > write a python script that counts from 1 to 161
+    def main():
+        for number in range(1, 161 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  count-0077
+  > write a python program with a main function that prints 1 through 25
+    def main():
+        for number in range(1, 252 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  count-0084
+  > write a python script that counts from 1 to 4
+    def main():
+        for number in range(1, 48 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  count-0108
+  > write a python script that counts from 1 to 493
+    def main():
+        for number in range(1, 493 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  count-0113
+  > write a python program with a main function that prints 1 through 287
+    def main():
+        for number in range(1, 287 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  count-0114
+  > write a python script that counts from 1 to 369
+    def main():
+        for number in range(1, 369 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  count-0123
+  > write a python program with a main function that prints 1 through 874
+    def main():
+        for number in range(1, 861 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  count-0133
+  > write a python program with a main function that prints 1 through 477
+    def main():
+        for number in range(1, 477 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  count-0150
+  > write a python script that counts from 1 to 176
+    def main():
+        for number in range(1, 176 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0010
+  > write a python script that divides 9175 by 92 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 9175, 92
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0014
+  > write a python script that divides 1483 by 684 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 1483, 684
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  divide-0022
+  > write a python script that divides 260 by 703 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 260, 483
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0033
+  > write a python program with a main function that prints 6259 / 0, warning if the divisor is zero
+    import logging
+    
+    
+    def main():
+        a, b = 6259, 0
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0044
+  > write a python script that divides 7 by 8411 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 7, 8411
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0056
+  > write a python script that divides 41 by 382 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 41, 382
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0065
+  > write a python program with a main function that prints 8264 / 11, warning if the divisor is zero
+    import logging
+    
+    
+    def main():
+        a, b = 8264, 11
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0074
+  > write a python script that divides 593 by 0 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 593, 0
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0075
+  > write a python program with a main function that prints 6 / 53, warning if the divisor is zero
+    import logging
+    
+    
+    def main():
+        a, b = 6, 53
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0076
+  > write a python script that divides 86 by 6427 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 86, 6427
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0108
+  > write a python script that divides 3 by 7 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 3, 7
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0122
+  > write a python script that divides 828 by 404 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 828, 404
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  divide-0125
+  > write a python program with a main function that prints 52 / 54, warning if the divisor is zero
+    import logging
+    
+    
+    def main():
+        a, b = 52, 21
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0137
+  > write a python program with a main function that prints 605 / 68, warning if the divisor is zero
+    import logging
+    
+    
+    def main():
+        a, b = 605, 68
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0145
+  > write a python program with a main function that prints 241 / 90474, warning if the divisor is zero
+    import logging
+    
+    
+    def main():
+        a, b = 241, 90474
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0162
+  > write a python script that divides 69 by 2 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 69, 2
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0169
+  > write a python program with a main function that prints 57984 / 80, warning if the divisor is zero
+    import logging
+    
+    
+    def main():
+        a, b = 57984, 80
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0172
+  > write a python script that divides 73302 by 727 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 73302, 727
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0203
+  > write a python program with a main function that prints 3187 / 0, warning if the divisor is zero
+    import logging
+    
+    
+    def main():
+        a, b = 3187, 0
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  divide-0224
+  > write a python script that divides 73779 by 84 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 7377, 84
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0229
+  > write a python program with a main function that prints 35249 / 0, warning if the divisor is zero
+    import logging
+    
+    
+    def main():
+        a, b = 35249, 0
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0250
+  > write a python script that divides 29 by 64 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 29, 64
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  divide-0261
+  > write a python program with a main function that prints 59 / 96, warning if the divisor is zero
+    import logging
+    
+    
+    def main():
+        a, b = 59, 96
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  divide-0264
+  > write a python script that divides 37 by 84841 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 37, 84861
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  factorial-0001
+  > write a python program with a main function that computes 45 factorial
+    def main():
+        result = 1
+        for number in range(1, 45 + 1):
+            result *= number
+        print(result)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  factorial-0002
+  > write a python script that prints the factorial of 2
+    def main():
+        result = 1
+        for number in range(1, 2 + 1):
+            result *= number
+        print(result)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  factorial-0012
+  > write a python script that prints the factorial of 5
+    def main():
+        result = 1
+        for number in range(1, 5)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  factorial-0013
+  > write a python program with a main function that computes 72 factorial
+    def main():
+        result = 1
+        for number in range(1, 48 + 1):
+            result *= number
+        print(result)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  factorial-0022
+  > write a python script that prints the factorial of 18
+    def main():
+        result = 1
+        for number in range(1, 18 + 1):
+            result *= number
+        print(result)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  factorial-0028
+  > write a python script that prints the factorial of 63
+    def main():
+        result = 1
+        for number in range(1, 45 + 1):
+            result *= number
+        print(result)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  factorial-0030
+  > write a python script that prints the factorial of 77
+    def main():
+        result = 1
+        for number in range(1, 77 + 1):
+            result *= number
+        print(result)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  factorial-0056
+  > write a python script that prints the factorial of 17
+    def main():
+        result = 1
+        for number in range(1, 17 + 1):
+            result *= number
+        print(result)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  fibonacci-0010
+  > write a python script that prints the first 89 fibonacci numbers
+    def main():
+        a, b = 0, 1
+        for _ in range(89):
+            print(a)
+            a, b = b, a + b
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  fibonacci-0020
+  > write a python script that prints the first 41 fibonacci numbers
+    def main():
+        a, b = 0, 1
+        for _ in range(41):
+            print(a)
+            a, b = b, a + b
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  fibonacci-0022
+  > write a python script that prints the first 18 fibonacci numbers
+    def main():
+        a, b = 0, 1
+        for _ in range(18):
+            print(a)
+            a, b = b, a + b
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  fibonacci-0044
+  > write a python script that prints the first 71 fibonacci numbers
+    def main():
+        a, b = 0, 1
+        for _ in range(71):
+            print(a)
+            a, b = b, a + b
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  fibonacci-0060
+  > write a python script that prints the first 33 fibonacci numbers
+    def main():
+        a, b = 0, 1
+        for _ in range(33):
+            print(a)
+            a, b = b, a + b
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  greet-world-0000
+  > write a python script that prints Hello world
+    def main():
+        print("Hello, go, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0018
+  > write a python script that prints ylou world
+    def main():
+        print("ylou, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0055
+  > write a python program with a main function that prints Bkvbq world
+    def main():
+        print("Bkvbq, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  greet-world-0060
+  > write a python script that prints fit world
+    def main():
+        print("get, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  greet-world-0072
+  > write a python script that prints riibts world
+    def main():
+        print("Splibts, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  greet-world-0085
+  > write a python program with a main function that prints Qzdtdomqcxft world
+    def main():
+        print("Qzdt!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0103
+  > write a python program with a main function that prints Rtftmrpgoe world
+    def main():
+        print("Rtftmrpgoe, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0105
+  > write a python program with a main function that prints lbgociguetgr world
+    def main():
+        print("lbgociguetgr, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0107
+  > write a python program with a main function that prints BWPHECSN world
+    def main():
+        print("BWPHECSN, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0127
+  > write a python program with a main function that prints Waafzxrg world
+    def main():
+        print("Waafzxrg, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0141
+  > write a python program with a main function that prints deyxdqxn world
+    def main():
+        print("deyxdqxn, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  greet-world-0147
+  > write a python program with a main function that prints qjmaies world
+    def main():
+        print("qjmaics, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0166
+  > write a python script that prints Dzuivwhvc world
+    def main():
+        print("Dzuivwhvc, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0177
+  > write a python program with a main function that prints dznntwyij world
+    def main():
+        print("dznntwyij, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0197
+  > write a python program with a main function that prints KFZPEW world
+    def main():
+        print("KFZPEW, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  greet-world-0212
+  > write a python script that prints NWOFAIM world
+    def main():
+        print("NWOUW, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  greet-world-0219
+  > write a python program with a main function that prints klsbhrbgwqj world
+    def main():
+        print("klsbmbbgwqj, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  greet-world-0226
+  > write a python script that prints Szhgnzyl world
+    def main():
+        print("Szhgnzhl, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  greet-world-0238
+  > write a python script that prints Zmalxexp world
+    def main():
+        print("ZROxiv, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0246
+  > write a python script that prints ablkdovfuik world
+    def main():
+        print("ablkdovfuik, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  greet-world-0250
+  > write a python script that prints Cculuzi world
+    def main():
+        print("COCuzi, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  greet-world-0255
+  > write a python program with a main function that prints zbiklgxuegio world
+    def main():
+        print("zbiklgio, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0267
+  > write a python program with a main function that prints ysxrvmwp world
+    def main():
+        print("ysxrvmwp, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0271
+  > write a python program with a main function that prints Xlljrg world
+    def main():
+        print("Xlljrg, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0283
+  > write a python program with a main function that prints Nlubgbt world
+    def main():
+        print("Nlubgbt, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0287
+  > write a python program with a main function that prints ZABW world
+    def main():
+        print("ZABW, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0292
+  > write a python script that prints Uaesbahqsxv world
+    def main():
+        print("Uaesbahqsxv, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0298
+  > write a python script that prints Nlch world
+    def main():
+        print("Nlch, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0300
+  > write a python script that prints fcdlbhrzom world
+    def main():
+        print("fcdlbhrzom, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0303
+  > write a python program with a main function that prints hbewb world
+    def main():
+        print("hbewb, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0307
+  > write a python program with a main function that prints Ush world
+    def main():
+        print("Ush, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0315
+  > write a python program with a main function that prints nebfc world
+    def main():
+        print("nebfc, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  greet-world-0317
+  > write a python program with a main function that prints OQB world
+    def main():
+        print("OQB, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  hello-name-0005
+  > write a python program with a main function that says hello to Frank
+    def main():
+        print("Hello, flu!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  hello-name-0006
+  > write a python script that greets Grace
+    def main():
+        print("Hello, oduthon
+    def main():
+            print("Hello, oduthonct!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  hello-name-0011
+  > write a python program with a main function that says hello to Liam
+    def main():
+        print("Hello, owam!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0028
+  > write a python script that greets Fypd
+    def main():
+        print("Hello, Fypd!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0045
+  > write a python program with a main function that says hello to rkbcpqgkr
+    def main():
+        print("Hello, rkbcpqgkr!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  hello-name-0047
+  > write a python program with a main function that says hello to AXGUFWYSFJ
+    import logging
+    
+    
+    def main():
+        path = "Hello, AXGUFWYSFJ!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0056
+  > write a python script that greets CJZXXVEL
+    def main():
+        print("Hello, CJZXXVEL!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0097
+  > write a python program with a main function that says hello to Rnqv
+    def main():
+        print("Hello, Rnqv!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  hello-name-0110
+  > write a python script that greets UPKXNVEUQXUC
+    def main():
+        print("Hello, MOKXNVEUQXUC!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  hello-name-0136
+  > write a python script that greets Cvufs
+    def main():
+        print("Hello, Cvpms!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  hello-name-0144
+  > write a python script that greets rodnteh
+    def main():
+        print("Hello, ownteh!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0149
+  > write a python program with a main function that says hello to VXLHJH
+    def main():
+        print("Hello, VXLHJH!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0172
+  > write a python script that greets Tvuqqnar
+    def main():
+        print("Hello, Tvuqqnar!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  hello-name-0188
+  > write a python script that greets MNO
+    def main():
+        print("Hello, MAN!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0191
+  > write a python program with a main function that says hello to YPW
+    def main():
+        print("Hello, YPW!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  hello-name-0214
+  > write a python script that greets Oonrwmeklofy
+    def main():
+        print("Hello, Oonrwmeklon, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  hello-name-0221
+  > write a python program with a main function that says hello to DBUMSBYCN
+    ```python
+    def main():
+        print("Hello, DBUBSBYBNBYBYBNBYBNBYBNBYBNBYBNBYBNANBYBNANBYBNANBYBNANBYBNANBYBNANBYBNANBYBNANBYBNANBYBNANBYBNANBYBNANBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYBYANBYBYANBYBYBYANBYBYANBYBYANBYBYANBYBYANBYBYANBYANBYBYANBYBYANBYBYANBYBYANBYANBYANBYANBYANBYANBYANBYBYANBYBYANBYBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBYANBY
+
+pass  hello-name-0230
+  > write a python script that greets YZPLBE
+    def main():
+        print("Hello, YZPLBE!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0240
+  > write a python script that greets ewpescwipa
+    def main():
+        print("Hello, ewpescwipa!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0254
+  > write a python script that greets XAY
+    def main():
+        print("Hello, XAY!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  hello-name-0265
+  > write a python program with a main function that says hello to Goj
+    def main():
+        print("Hello, Filej!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0270
+  > write a python script that greets pwkymplz
+    def main():
+        print("Hello, pwkymplz!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0287
+  > write a python program with a main function that says hello to LBWXALL
+    def main():
+        print("Hello, LBWXALL!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0291
+  > write a python program with a main function that says hello to uqbcbygyce
+    def main():
+        print("Hello, uqbcbygyce!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0306
+  > write a python script that greets bklsgwtr
+    def main():
+        print("Hello, bklsgwtr!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  hello-name-0323
+  > write a python program with a main function that says hello to NUJNAQD
+    def main():
+        print("Hello, NUJNAQD!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0008
+  > write a python script that prints the absolute value of 42078 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = 42078
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  negative-0009
+  > write a python program with a main function that prints abs(8096), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = 886
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0013
+  > write a python program with a main function that prints abs(-365), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = -365
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0021
+  > write a python program with a main function that prints abs(712), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = 712
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0022
+  > write a python script that prints the absolute value of -394 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = -394
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0027
+  > write a python program with a main function that prints abs(-623), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = -623
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0044
+  > write a python script that prints the absolute value of 21936 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = 21936
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  negative-0049
+  > write a python program with a main function that prints abs(-54022), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = -54011
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  negative-0055
+  > write a python program with a main function that prints abs(-9663), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = -9633
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0080
+  > write a python script that prints the absolute value of -723 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = -723
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0084
+  > write a python script that prints the absolute value of -3868 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = -3868
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0104
+  > write a python script that prints the absolute value of -214 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = -214
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0144
+  > write a python script that prints the absolute value of 8480 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = 8480
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0154
+  > write a python script that prints the absolute value of -1845 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = -1845
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0168
+  > write a python script that prints the absolute value of -4663 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = -4663
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0196
+  > write a python script that prints the absolute value of -5659 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = -5659
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0229
+  > write a python program with a main function that prints abs(-3077), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = -3077
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0230
+  > write a python script that prints the absolute value of -2061 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = -2061
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0231
+  > write a python program with a main function that prints abs(-3807), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = -3807
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0239
+  > write a python program with a main function that prints abs(-9653), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = -9653
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0246
+  > write a python script that prints the absolute value of 380 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = 380
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0247
+  > write a python program with a main function that prints abs(-9013), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = -9013
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0252
+  > write a python script that prints the absolute value of -1497 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = -1497
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0268
+  > write a python script that prints the absolute value of 49771 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = 49771
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0272
+  > write a python script that prints the absolute value of -87929 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = -87929
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0273
+  > write a python program with a main function that prints abs(-4066), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = -4066
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0291
+  > write a python program with a main function that prints abs(716), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = 716
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0299
+  > write a python program with a main function that prints abs(176), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = 176
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0320
+  > write a python script that prints the absolute value of -42 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = -42
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0327
+  > write a python program with a main function that prints abs(42681), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = 42681
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0331
+  > write a python program with a main function that prints abs(-891), warning when the number is negative
+    import logging
+    
+    
+    def main():
+        value = -891
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  negative-0352
+  > write a python script that prints the absolute value of -2664 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = -2664
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0013
+  > write a python program with a main function that reads rzlwhakmg.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "rzlwhotmg.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0030
+  > write a python script that prints erjgcbcdjb.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "pythonjb.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0041
+  > write a python program with a main function that reads uclstx.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "ubtf.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0043
+  > write a python program with a main function that reads kvgw.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "kvgw.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0056
+  > write a python script that prints ghxsvt.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "ghxsvt.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0060
+  > write a python script that prints pnrwuoz.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "pnrwuoz.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0068
+  > write a python script that prints ixcvnafz.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "ixcvnafz.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0085
+  > write a python program with a main function that reads bznje.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "bznje.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0087
+  > write a python program with a main function that reads tmyaurwn.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "tmyaurwn.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0108
+  > write a python script that prints spf.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "auf.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0116
+  > write a python script that prints qaigjr.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "qaigjr.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0121
+  > write a python program with a main function that reads mbqfdnkre.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "mbqfdnkre.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0123
+  > write a python program with a main function that reads nrlgmnebum.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "nrgmnebum.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0140
+  > write a python script that prints fpcolti.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "fpftti.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0151
+  > write a python program with a main function that reads wfxohbcaqbi.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "wfxucbsmqbi.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0159
+  > write a python program with a main function that reads wsonesn.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "wvesn.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0163
+  > write a python program with a main function that reads krqyztze.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "krqyztze.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0164
+  > write a python script that prints elqhlmf.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "elqhlmf.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0170
+  > write a python script that prints nlp.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "nlp.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0179
+  > write a python program with a main function that reads fbvfeqm.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "fsbvfeqm.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0185
+  > write a python program with a main function that reads gfxri.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "gfxri.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0186
+  > write a python script that prints qcspofecb.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "qlspofldb.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0200
+  > write a python script that prints mslyqud.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "rlyqud.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0204
+  > write a python script that prints omcconzcsat.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "ucrozcsat.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0214
+  > write a python script that prints rjwiu.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "rjwiu.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0216
+  > write a python script that prints clbwbs.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "clbwbs.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0235
+  > write a python program with a main function that reads uivmjmdanb.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "ogdmjvtanb.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0255
+  > write a python program with a main function that reads tzvkqrkfexpl.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "tzvkfexpl.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0256
+  > write a python script that prints edxesxjvibhc.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "edxesxjvibhc.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0260
+  > write a python script that prints jcxq.txt and logs a warning if the file is missing
+    import logging
+    
+    
+    def main():
+        path = "jcxq.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0267
+  > write a python program with a main function that reads msdbjothpnm.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "udbjifp.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  read-file-0281
+  > write a python program with a main function that reads ajvfghxrgr.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "jvfghxrgr.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  read-file-0285
+  > write a python program with a main function that reads dsncswnvrwzx.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "dsncswnvrwzx.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  reverse-0002
+  > write a python script that reverses the string pbbvyaipcaxg
+    def main():
+        print("ppbvyaipcaxg"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  reverse-0024
+  > write a python script that reverses the string mwjeih
+    def main():
+        print("mwjeih"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  reverse-0037
+  > write a python program with a main function that prints enttavfz backwards
+    def main():
+        print("icwavfz"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  reverse-0050
+  > write a python script that reverses the string uvjay
+    def main():
+        print("uvgy"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  reverse-0054
+  > write a python script that reverses the string lpgqybgr
+    def main():
+        print("lazqybgr"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  reverse-0065
+  > write a python program with a main function that prints pcejqdgaikon backwards
+    def main():
+        print("pcejqdjiikon"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  reverse-0069
+  > write a python program with a main function that prints lsohfgeqcq backwards
+    def main():
+        print("lsohfgeqcq"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  reverse-0079
+  > write a python program with a main function that prints jnqpajjplnz backwards
+    def main():
+        print("jnqpajjplnz"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  reverse-0106
+  > write a python script that reverses the string eeejdbejxkk
+    def main():
+        print("qtejdbejxkkkp"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  reverse-0112
+  > write a python script that reverses the string yqtijqid
+    def main():
+        print("yqtijqid"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  reverse-0127
+  > write a python program with a main function that prints fcekhvb backwards
+    def main():
+        print("fcekhvb"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  reverse-0131
+  > write a python program with a main function that prints tuxujtaeksy backwards
+    def main():
+        print("tysujmkj::vici"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  reverse-0134
+  > write a python script that reverses the string pohfjvlx
+    def main():
+        print("emhfjvlx"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  reverse-0142
+  > write a python script that reverses the string lhazjauutf
+    def main():
+        print("lhazjauutf"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  reverse-0146
+  > write a python script that reverses the string dlrl
+    def main():
+        print("dlrl"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  reverse-0166
+  > write a python script that reverses the string rshzraa
+    def main():
+        print("rshzraa"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  reverse-0181
+  > write a python program with a main function that prints zxzqqkgb backwards
+    def main():
+        print("zxzqqpcb"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  reverse-0188
+  > write a python script that reverses the string kqepzi
+    def main():
+        print("kqepzi"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  reverse-0213
+  > write a python program with a main function that prints tkdzexru backwards
+    def main():
+        print("tkdzexau"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  reverse-0217
+  > write a python program with a main function that prints qoyfrnmcxd backwards
+    def main():
+        print("qoyfrnmcxd"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0029
+  > write a python program with a main function that prints the sum of 91 and 286
+    def main():
+        print(91 + 286)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  sum-0031
+  > write a python program with a main function that prints the sum of 5 and 2071
+    def main():
+        print(5 + 2061)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0065
+  > write a python program with a main function that prints the sum of 8264 and 11
+    def main():
+        print(8264 + 11)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  sum-0066
+  > write a python script that adds 6799 and 1502
+    def main():
+        print(6799 + 442)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0074
+  > write a python script that adds 593 and 67
+    def main():
+        print(593 + 67)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0083
+  > write a python program with a main function that prints the sum of 55035 and 80884
+    def main():
+        print(55035 + 80884)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0086
+  > write a python script that adds 28 and 7
+    def main():
+        print(28 + 7)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0115
+  > write a python program with a main function that prints the sum of 2756 and 80815
+    def main():
+        print(2756 + 80815)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0125
+  > write a python program with a main function that prints the sum of 9 and 54
+    def main():
+        print(9 + 54)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0152
+  > write a python script that adds 11879 and 21186
+    def main():
+        print(11879 + 21186)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0153
+  > write a python program with a main function that prints the sum of 752 and 9
+    def main():
+        print(752 + 9)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  sum-0154
+  > write a python script that adds 9384 and 300
+    def main():
+        print(9384 + 42)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0164
+  > write a python script that adds 3 and 9441
+    def main():
+        print(3 + 9441)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0170
+  > write a python script that adds 8803 and 4359
+    def main():
+        print(8803 + 4359)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0176
+  > write a python script that adds 153 and 36510
+    def main():
+        print(153 + 36510)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0186
+  > write a python script that adds 3367 and 67
+    def main():
+        print(3367 + 67)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0206
+  > write a python script that adds 6 and 2
+    def main():
+        print(6 + 2)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0225
+  > write a python program with a main function that prints the sum of 30 and 4
+    def main():
+        print(30 + 4)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0244
+  > write a python script that adds 35249 and 306
+    def main():
+        print(35249 + 306)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0249
+  > write a python program with a main function that prints the sum of 9518 and 4812
+    def main():
+        print(9518 + 4812)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  sum-0255
+  > write a python program with a main function that prints the sum of 8 and 36571
+    def main():
+        print(8 + 36561)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0258
+  > write a python script that adds 1218 and 61
+    def main():
+        print(1218 + 61)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  sum-0270
+  > write a python script that adds 33036 and 9
+    def main():
+        print(33036 + 9)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+152/218 programs matched (0 unscorable): pass_rate 0.6972

@@ -1,0 +1,11 @@
+{
+  "kind": "openwaldo-evaluation-results",
+  "schema": 1,
+  "evaluation_bom_sha256": "6c3600bee2e483fe790f878d0bad70fea792ad281031341d68ae9af1b463ebd7",
+  "results": [
+    {
+      "metric": "pass_rate",
+      "value": 0.16666666666666666
+    }
+  ]
+}

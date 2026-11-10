@@ -6,6 +6,8 @@
 package corpus
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -42,6 +44,7 @@ type RecordFilter struct {
 	Sources     *ValueFilter           `json:"sources,omitempty" yaml:"sources,omitempty"`
 	Metadata    map[string]ValueFilter `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 	Date        *DateFilter            `json:"date,omitempty" yaml:"date,omitempty"`
+	Slice       *SliceFilter           `json:"slice,omitempty" yaml:"slice,omitempty"`
 }
 
 // ExclusionFilter is the canonical deny-list form. A record is excluded when
@@ -56,6 +59,14 @@ type ValueFilter struct {
 	Include      []string `json:"include,omitempty" yaml:"include,omitempty"`
 	Exclude      []string `json:"exclude,omitempty" yaml:"exclude,omitempty"`
 	IncludeUnset bool     `json:"include_unset,omitempty" yaml:"include_unset,omitempty"`
+}
+
+// SliceFilter keeps slice Index of Count disjoint, deterministic slices of the
+// records, chosen by the SHA-256 of each record ID, so several parties can
+// train separate shares of one corpus and record exactly which share each used.
+type SliceFilter struct {
+	Index int `json:"index" yaml:"index"`
+	Count int `json:"count" yaml:"count"`
 }
 
 type DateFilter struct {
@@ -125,6 +136,9 @@ func (filter RecordFilter) Validate() error {
 			return err
 		}
 	}
+	if filter.Slice != nil && (filter.Slice.Count < 1 || filter.Slice.Index < 0 || filter.Slice.Index >= filter.Slice.Count) {
+		return fmt.Errorf("slice needs 0 <= index < count")
+	}
 	if filter.empty() {
 		return fmt.Errorf("record filter must declare at least one condition")
 	}
@@ -132,7 +146,7 @@ func (filter RecordFilter) Validate() error {
 }
 
 func (filter RecordFilter) empty() bool {
-	return filter.MainContent == nil && filter.Exclude == nil && filter.Licenses == nil && filter.Languages == nil && filter.Sources == nil && len(filter.Metadata) == 0 && filter.Date == nil
+	return filter.MainContent == nil && filter.Exclude == nil && filter.Licenses == nil && filter.Languages == nil && filter.Sources == nil && len(filter.Metadata) == 0 && filter.Date == nil && filter.Slice == nil
 }
 
 func (filter ExclusionFilter) Validate() error {
@@ -249,6 +263,12 @@ func (filter RecordFilter) Allows(record shard.RecordView) bool {
 	}
 	if !filter.allowsMetadata(record.Metadata) {
 		return false
+	}
+	if filter.Slice != nil {
+		digest := sha256.Sum256([]byte(record.ID))
+		if binary.BigEndian.Uint64(digest[:8])%uint64(filter.Slice.Count) != uint64(filter.Slice.Index) {
+			return false
+		}
 	}
 	return filter.Date == nil || filter.Date.Allows(record.Date)
 }

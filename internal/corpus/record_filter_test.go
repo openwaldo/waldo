@@ -7,6 +7,7 @@ package corpus
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -189,5 +190,43 @@ func TestContentAssessmentExclusionsCombineGlobalAndCorpusPolicy(t *testing.T) {
 	}
 	if got := policy.ContentAssessmentExclusions("science"); !reflect.DeepEqual(got, []string{"boilerplate_content"}) {
 		t.Fatalf("science assessment exclusions = %v", got)
+	}
+}
+
+func TestSliceFilterDividesRecordsDisjointly(t *testing.T) {
+	filters := make([]RecordFilter, 3)
+	for index := range filters {
+		filters[index] = RecordFilter{Slice: &SliceFilter{Index: index, Count: 3}}
+		if err := filters[index].Validate(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	counts := make([]int, 3)
+	for number := range 3000 {
+		record := shard.RecordView{ID: fmt.Sprintf("record-%d", number)}
+		matched := 0
+		for index, filter := range filters {
+			if filter.Allows(record) {
+				counts[index]++
+				matched++
+			}
+		}
+		if matched != 1 {
+			t.Fatalf("%s matched %d slices", record.ID, matched)
+		}
+	}
+	for index, count := range counts {
+		if count < 900 || count > 1100 {
+			t.Fatalf("slice %d holds %d of 3000 records", index, count)
+		}
+	}
+	// Counts are not limited to what one hash byte could divide.
+	if err := (RecordFilter{Slice: &SliceFilter{Index: 999, Count: 1000}}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []SliceFilter{{Count: 0}, {Index: 3, Count: 3}, {Index: -1, Count: 2}} {
+		if err := (RecordFilter{Slice: &bad}).Validate(); err == nil {
+			t.Fatalf("slice %+v accepted", bad)
+		}
 	}
 }

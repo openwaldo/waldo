@@ -1,0 +1,316 @@
+FAIL  trained-count-0023
+  > write a python program with a main function that prints 1 through 72
+    def main():
+        for number in range(1, 33 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-divide-0010
+  > write a python script that divides 9175 by 92 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 9175, 92
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-factorial-0001
+  > write a python program with a main function that computes 45 factorial
+    def main():
+        result = 1
+        for number in range(1, 45 + 1):
+            result *= number
+        print(result)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-fibonacci-0010
+  > write a python script that prints the first 89 fibonacci numbers
+    def main():
+        a, b = 0, 1
+        for _ in range(89):
+            print(a)
+            a, b = b, a + b
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  trained-greet-world-0000
+  > write a python script that prints Hello world
+    def main():
+        print("Hello, go, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  trained-hello-name-0005
+  > write a python program with a main function that says hello to Frank
+    def main():
+        print("Hello, flu!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-negative-0008
+  > write a python script that prints the absolute value of 42078 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = 42078
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  trained-read-file-0013
+  > write a python program with a main function that reads rzlwhakmg.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "rzlwhotmg.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  trained-reverse-0002
+  > write a python script that reverses the string pbbvyaipcaxg
+    def main():
+        print("ppbvyaipcaxg"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-sum-0029
+  > write a python program with a main function that prints the sum of 91 and 286
+    def main():
+        print(91 + 286)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-00-multiply
+  > write a python script that multiplies 12 and 7
+    def main():
+        print(7 + 7)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-01-subtract
+  > write a python script that subtracts 9 from 50
+    def main():
+        print(9 + 50)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-02-count-down
+  > write a python script that counts down from 5 to 1
+    def main():
+        for number in range(1, 3 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-03-evens
+  > write a python script that prints the even numbers from 2 to 10
+    def main():
+        for number in range(1, 10 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-04-squares
+  > write a python script that prints the first 10 square numbers
+    def main():
+        print(10 + 10)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-05-repeat
+  > write a python script that prints Hello world 3 times
+    def main():
+        print(9973 + 22)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-06-upper
+  > write a python script that prints the string apple in uppercase
+    def main():
+        print("icppercacy"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-07-length
+  > write a python script that prints the length of the string waldito
+    def main():
+        print("nmgito"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-08-remainder
+  > write a python script that prints the remainder of 17 divided by 5
+    def main():
+        print(17ed, 17):
+            print(a)
+            a, b = 17ed, 8
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-09-maximum
+  > write a python script that prints the largest of 3, 17 and 8
+    def main():
+        print(3 + 8)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-10-times-table
+  > write a python script that prints the multiplication table of 3 from 3 x 1 to 3 x 10
+    def main():
+        print(3 + 3)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-11-sum-range
+  > write a python script that sums the numbers from 1 to 100
+    def main():
+        print(3 + 1)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-12-average
+  > write a python script that prints the average of 4, 8 and 12
+    def main():
+        print(4 + 12)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-13-sort
+  > write a python script that sorts the list 5, 3, 9, 1
+    def main():
+        print(2 + 6)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-14-vowels
+  > write a python script that counts the vowels in the string banana
+    def main():
+        print("get"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-15-palindrome
+  > write a python script that checks whether racecar is a palindrome
+    def main():
+        print("EUOT, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-16-prime
+  > write a python script that checks whether 17 is a prime number
+    def main():
+        print(17 + 9)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-17-fizzbuzz
+  > write a python script that plays fizzbuzz from 1 to 15
+    def main():
+        for number in range(1, 15 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-18-words
+  > write a python script that prints each word of the sentence the quick brown fox on its own line
+    import logging
+    
+    
+    def main():
+        path = "toxcn.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-19-celsius
+  > write a python script that converts 100 degrees celsius to fahrenheit
+    def main():
+        print("tahmkheit"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+5/30 programs matched (0 unscorable): pass_rate 0.1667

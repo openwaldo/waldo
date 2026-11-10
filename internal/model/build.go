@@ -154,7 +154,7 @@ func (builder Builder) initialize(name string, architecture Architecture, intera
 		Architecture: plan.Architecture, Interaction: plan.Interaction, Forecast: plan.Forecast,
 		Created: formatTime(created), Updated: formatTime(created),
 	}
-	if err := initializeModel(builder.Root, modelPath, plan, record); err != nil {
+	if err := initializeModel(builder.Root, modelPath, plan, record, nil); err != nil {
 		return Inspection{}, err
 	}
 	builder.report(Progress{Phase: "model", Message: "persisted immutable model architecture and OpenWALDO BOM"})
@@ -1220,30 +1220,26 @@ func resolveInitialization(inspection Inspection) (*training.Initialization, err
 	return nil, nil
 }
 
+// realRun reports whether the run at position completed with real weights, judged by its pin.
+func realRun(inspection Inspection, position int) bool {
+	run := inspection.Runs[position]
+	return run.State == RunComplete && run.Observation != nil && !inspection.Model.Runs[position].Simulated
+}
+
 func resolveRunInitialization(inspection Inspection, requestedRunID string) (*training.Initialization, error) {
 	for index := len(inspection.Runs) - 1; index >= 0; index-- {
 		run := inspection.Runs[index]
 		if requestedRunID != "" && run.ID != requestedRunID {
 			continue
 		}
-		if run.State != RunComplete || run.Observation == nil || run.Observation.Simulated {
+		if !realRun(inspection, index) {
 			continue
 		}
 		for _, artifact := range run.Observation.Artifacts {
 			if artifact.Path != "artifacts/model.safetensors" {
 				continue
 			}
-			var pin RunPin
-			for _, candidate := range inspection.Model.Runs {
-				if candidate.ID == run.ID {
-					pin = candidate
-					break
-				}
-			}
-			if pin.ID == "" {
-				return nil, fmt.Errorf("initialize from run %s: model run pin is missing", run.ID)
-			}
-			path := filepath.Join(inspection.Path, "runs", runDirectoryName(pin), filepath.FromSlash(artifact.Path))
+			path := filepath.Join(inspection.Path, "runs", runDirectoryName(inspection.Model.Runs[index]), filepath.FromSlash(artifact.Path))
 			if err := VerifyArtifactFile(path, artifact); err != nil {
 				return nil, fmt.Errorf("initialize from run %s: %w", run.ID, err)
 			}
@@ -1303,7 +1299,7 @@ func (builder Builder) CheckComposeTarget(name string, compose Compose) error {
 		return nil
 	}
 	if _, err := os.Stat(filepath.Join(builder.Root, name)); os.IsNotExist(err) {
-		return nil
+		return checkNewModelLineage(builder.Root, compose)
 	} else if err != nil {
 		return err
 	}
@@ -1322,6 +1318,19 @@ func (builder Builder) CheckComposeTarget(name string, compose Compose) error {
 		return validateComposeCompatibility(target, compose)
 	}
 	return validateComposeTarget(target, compose)
+}
+
+// checkNewModelLineage reads the base lineage a new model will pin, so it fails before any corpus work.
+func checkNewModelLineage(root string, compose Compose) error {
+	if compose.Base == nil || compose.Base.RunID == "" {
+		return nil
+	}
+	base, err := Inspect(root, compose.Base.Model)
+	if err != nil {
+		return err
+	}
+	_, err = baseLineage(base, compose.Base.RunID, compose.Base.LineageSHA256)
+	return err
 }
 
 func pendingComposeMatchesRequest(root string, pending composeTransaction, requested Compose) (bool, error) {
@@ -1391,21 +1400,33 @@ func validateComposeCompatibility(target Inspection, compose Compose) error {
 	if compose.Base != nil && compose.Base.OriginSHA256 != "" && target.Model.OriginBOMSHA256 != compose.Base.OriginSHA256 {
 		return fmt.Errorf("compose base does not match existing model %q; use a new model name", target.Model.Name)
 	}
-	if compose.Base != nil && compose.Base.RunID != "" && !reflect.DeepEqual(target.Model.Parent, composeParent(compose)) {
+	if compose.Base != nil && compose.Base.RunID != "" && !sameParent(target.Model.Parent, composeParent(compose)) {
 		return fmt.Errorf("compose parent does not match existing model %q; use a new model name", target.Model.Name)
+	}
+	return checkLineagePin(target, compose)
+}
+
+// checkLineagePin refuses a compose asserting a lineage pin other than the model's own.
+func checkLineagePin(target Inspection, compose Compose) error {
+	if compose.Base == nil || compose.Base.LineageSHA256 == "" {
+		return nil
+	}
+	if target.Model.Parent == nil || target.Model.Parent.LineageSHA256 != compose.Base.LineageSHA256 {
+		return fmt.Errorf("compose base lineage does not match existing model %q; use a new model name", target.Model.Name)
 	}
 	return nil
 }
 
-// ResolveCompose resolves an inherited base architecture. When acquire is
-// true, external origin weights are acquired through the same importer used by
-// model pull and cached outside the visible managed-model namespace.
-func (builder Builder) ResolveCompose(ctx context.Context, compose Compose, acquire bool) (Compose, error) {
-	resolved, _, err := builder.resolveCompose(ctx, compose, acquire)
+// ResolveCompose resolves an inherited base architecture for the model name,
+// which may not exist yet. When acquire is true, external origin weights are
+// acquired through the same importer used by model pull and cached outside the
+// visible managed-model namespace.
+func (builder Builder) ResolveCompose(ctx context.Context, name string, compose Compose, acquire bool) (Compose, error) {
+	resolved, _, err := builder.resolveCompose(ctx, name, compose, acquire)
 	return resolved, err
 }
 
-func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acquire bool) (Compose, *Inspection, error) {
+func (builder Builder) resolveCompose(ctx context.Context, name string, compose Compose, acquire bool) (Compose, *Inspection, error) {
 	if err := compose.Validate(); err != nil {
 		return Compose{}, nil, err
 	}
@@ -1422,7 +1443,30 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		compose.Base.Source = "huggingface://" + repository + "@" + strings.ToLower(revision)
 	}
 	var base Inspection
-	if compose.Base.Model != "" {
+	recorded, err := builder.recordedMerge(name, *compose.Base)
+	if err != nil {
+		return Compose{}, nil, err
+	}
+	if recorded != nil {
+		base = *recorded
+	} else if len(compose.Base.Merge) > 0 {
+		if !acquire {
+			parents, _, err := builder.mergeParents(*compose.Base)
+			if err != nil {
+				return Compose{}, nil, err
+			}
+			if compose.Architecture != (Architecture{}) && !reflect.DeepEqual(compose.Architecture, parents[0].inspection.Model.Architecture) {
+				return Compose{}, nil, fmt.Errorf("compose architecture does not match the base.merge parents")
+			}
+			compose.Architecture = parents[0].inspection.Model.Architecture
+			return compose, nil, compose.Validate()
+		}
+		merged, err := builder.mergeOrigin(*compose.Base)
+		if err != nil {
+			return Compose{}, nil, err
+		}
+		base = merged
+	} else if compose.Base.Model != "" {
 		resolved, err := Inspect(builder.Root, compose.Base.Model)
 		if err != nil {
 			return Compose{}, nil, fmt.Errorf("resolve compose base model %q: %w", compose.Base.Model, err)
@@ -1510,7 +1554,7 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		if base.Origin == nil || base.BOM.CurrentOriginSHA256 == "" {
 			return Compose{}, nil, fmt.Errorf("compose base model has no complete real weights")
 		}
-		if compose.Base.RunID != "" || compose.Base.RunBOMSHA256 != "" || compose.Base.ArtifactSHA256 != "" || compose.Base.ArtifactBytes != 0 {
+		if compose.Base.RunID != "" || compose.Base.RunBOMSHA256 != "" || compose.Base.ArtifactSHA256 != "" || compose.Base.ArtifactBytes != 0 || compose.Base.LineageSHA256 != "" {
 			return Compose{}, nil, fmt.Errorf("origin compose base cannot assert managed-model run pins")
 		}
 		if compose.Base.OriginSHA256 != "" && compose.Base.OriginSHA256 != base.Model.OriginBOMSHA256 {
@@ -1534,7 +1578,7 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 func (builder Builder) Compose(ctx context.Context, name string, compose Compose, stages []PreparedStage) (Inspection, error) {
 	var base *Inspection
 	var err error
-	compose, base, err = builder.resolveCompose(ctx, compose, true)
+	compose, base, err = builder.resolveCompose(ctx, name, compose, true)
 	if err != nil {
 		return Inspection{}, err
 	}
@@ -1661,6 +1705,15 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	} else if err != nil {
 		return Inspection{}, err
 	}
+	if compose.Base != nil && compose.Base.LineageSHA256 != "" {
+		target, err := Inspect(builder.Root, name)
+		if err != nil {
+			return Inspection{}, err
+		}
+		if err := checkLineagePin(target, compose); err != nil {
+			return Inspection{}, err
+		}
+	}
 	composePath := filepath.Join(destination, "COMPOSE.json")
 	if data, err := os.ReadFile(composePath); err == nil {
 		var persisted Compose
@@ -1696,7 +1749,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	if staged.Model.ArchitectureSHA256 != architectureHash {
 		return Inspection{}, fmt.Errorf("composing model %s does not match the requested architecture", destination)
 	}
-	if transaction.ModelID == "" && (staged.Model.OriginBOMSHA256 != composeOriginHash(compose) || !reflect.DeepEqual(staged.Model.Parent, composeParent(compose))) {
+	if transaction.ModelID == "" && (staged.Model.OriginBOMSHA256 != composeOriginHash(compose) || !sameParent(staged.Model.Parent, composeParent(compose))) {
 		return Inspection{}, fmt.Errorf("composing model %s does not match the requested architecture or origin", destination)
 	}
 	if transaction.ModelID != "" && staged.Model.ID != transaction.ModelID {
@@ -1875,6 +1928,16 @@ func composeOriginHash(compose Compose) string {
 	return compose.Base.OriginSHA256
 }
 
+// sameParent compares parent pins by the parent run; checkLineagePin checks an asserted lineage.
+func sameParent(stored, wanted *ModelParent) bool {
+	if stored == nil || wanted == nil {
+		return stored == wanted
+	}
+	a, b := *stored, *wanted
+	a.LineageSHA256, b.LineageSHA256 = "", ""
+	return reflect.DeepEqual(a, b)
+}
+
 func composeParent(compose Compose) *ModelParent {
 	if compose.Base == nil || compose.Base.RunID == "" {
 		return nil
@@ -1882,7 +1945,8 @@ func composeParent(compose Compose) *ModelParent {
 	return &ModelParent{
 		Model: compose.Base.Model, ModelID: compose.Base.ModelID,
 		RunID: compose.Base.RunID, RunBOMSHA256: compose.Base.RunBOMSHA256,
-		Artifact: training.Artifact{Path: "base/model.safetensors", SHA256: compose.Base.ArtifactSHA256, Bytes: compose.Base.ArtifactBytes},
+		Artifact:      training.Artifact{Path: "base/model.safetensors", SHA256: compose.Base.ArtifactSHA256, Bytes: compose.Base.ArtifactBytes},
+		LineageSHA256: compose.Base.LineageSHA256,
 	}
 }
 
@@ -2026,6 +2090,17 @@ func (builder Builder) initializeFromRun(name string, compose Compose, base Insp
 	if initialization == nil {
 		return Inspection{}, fmt.Errorf("compose base model %q has no complete real weights", base.Model.Name)
 	}
+	// The pin records the lineage of the base run, here and nowhere else.
+	lineage, err := baseLineage(base, compose.Base.RunID, compose.Base.LineageSHA256)
+	if err != nil {
+		return Inspection{}, err
+	}
+	pinned := *compose.Base
+	pinned.LineageSHA256, err = hashJSON(lineage.Parent)
+	if err != nil {
+		return Inspection{}, err
+	}
+	compose.Base = &pinned
 	plan, err := composePlan(name, compose)
 	if err != nil {
 		return Inspection{}, err
@@ -2043,7 +2118,9 @@ func (builder Builder) initializeFromRun(name string, compose Compose, base Insp
 		Created: formatTime(now), Updated: formatTime(now), Parent: parent,
 	}
 	destination := filepath.Join(builder.Root, name)
-	if err := initializeModel(builder.Root, destination, plan, record); err != nil {
+	if err := initializeModel(builder.Root, destination, plan, record, func(temporary string) error {
+		return writeJSONAtomic(filepath.Join(temporary, lineageFile), lineage)
+	}); err != nil {
 		return Inspection{}, err
 	}
 	target := filepath.Join(destination, filepath.FromSlash(parent.Artifact.Path))
@@ -2072,7 +2149,26 @@ func (builder Builder) initializeFromOrigin(name string, compose Compose, base I
 		OriginArtifacts: append([]OriginArtifact(nil), base.Model.OriginArtifacts...),
 	}
 	destination := filepath.Join(builder.Root, name)
-	if err := initializeModel(builder.Root, destination, plan, record); err != nil {
+	// The origin's kept release BOM.json goes with it, checked against its pin.
+	release, err := keptReleaseBOM(base.Path, *base.Origin)
+	if err != nil {
+		return Inspection{}, err
+	}
+	// A merge's history goes with it too.
+	var lineage *lineageRecord
+	if base.Origin.Merge != nil {
+		if lineage, err = readLineageRecord(filepath.Join(base.Path, lineageFile)); err != nil {
+			return Inspection{}, err
+		}
+	}
+	if err := initializeModel(builder.Root, destination, plan, record, func(temporary string) error {
+		if lineage != nil {
+			if err := writeJSONAtomic(filepath.Join(temporary, lineageFile), lineage); err != nil {
+				return err
+			}
+		}
+		return writeReleaseBOM(temporary, release)
+	}); err != nil {
 		return Inspection{}, err
 	}
 	for _, artifact := range base.Origin.Artifacts {
@@ -2109,7 +2205,8 @@ func copyArtifactFile(source, destination string) error {
 	return errors.Join(copyErr, closeErr)
 }
 
-func initializeModel(root, destination string, plan Plan, record ModelRecord) error {
+// initializeModel creates the model with its records, and whatever prepare writes beside them, at once.
+func initializeModel(root, destination string, plan Plan, record ModelRecord, prepare func(temporary string) error) error {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
 	}
@@ -2131,6 +2228,11 @@ func initializeModel(root, destination string, plan Plan, record ModelRecord) er
 	}
 	if err := writeJSONAtomic(filepath.Join(temporary, "MODEL-BOM.json"), modelBOM(record)); err != nil {
 		return err
+	}
+	if prepare != nil {
+		if err := prepare(temporary); err != nil {
+			return err
+		}
 	}
 	if err := os.Rename(temporary, destination); err != nil {
 		return fmt.Errorf("create model %s: %w", record.Name, err)
