@@ -54,20 +54,22 @@ type Calibration struct {
 }
 
 type releaseBOM struct {
-	Kind         string               `json:"kind"`
-	Schema       int                  `json:"schema"`
-	Subject      string               `json:"subject"`
-	Format       string               `json:"format"`
-	ModelID      string               `json:"model_id"`
-	Name         string               `json:"name"`
-	Interaction  model.Interaction    `json:"interaction,omitzero"`
-	SourceType   string               `json:"source_type"`
-	SourceID     string               `json:"source_id"`
-	RunID        string               `json:"run_id,omitempty"`
-	SourceBOM    string               `json:"source_bom_sha256"`
-	Artifacts    []releaseArtifact    `json:"artifacts"`
-	Quantization *releaseQuantization `json:"quantization,omitempty"`
-	Generated    string               `json:"generated"`
+	Kind             string               `json:"kind"`
+	Schema           int                  `json:"schema"`
+	Subject          string               `json:"subject"`
+	Format           string               `json:"format"`
+	ModelID          string               `json:"model_id"`
+	Name             string               `json:"name"`
+	Interaction      model.Interaction    `json:"interaction,omitzero"`
+	SourceType       string               `json:"source_type"`
+	SourceID         string               `json:"source_id"`
+	RunID            string               `json:"run_id,omitempty"`
+	SourceBOM        string               `json:"source_bom_sha256"`
+	Lineage          model.LineageNode    `json:"lineage"`                     // the node of the weights this release was converted from
+	LineageAncestors []model.LineageNode  `json:"lineage_ancestors,omitempty"` // every node behind it the model held
+	Artifacts        []releaseArtifact    `json:"artifacts"`
+	Quantization     *releaseQuantization `json:"quantization,omitempty"`
+	Generated        string               `json:"generated"`
 }
 
 type releaseQuantization struct {
@@ -189,7 +191,11 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	if err != nil {
 		return "", err
 	}
-	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
+	lineage, ancestors, err := model.LineageHistory(inspection, artifacts.RunID)
+	if err != nil {
+		return "", err
+	}
+	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Lineage: lineage, LineageAncestors: ancestors, Artifacts: inventory, Generated: inspection.Model.Updated}
 	if err := writeJSON(filepath.Join(temporary, "BOM.json"), bom); err != nil {
 		return "", err
 	}

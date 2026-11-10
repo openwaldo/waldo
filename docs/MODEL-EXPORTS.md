@@ -191,6 +191,13 @@ inventory. Its schema-1 shape is:
   "source_id": "<selected run or origin identity>",
   "run_id": "<selected real run; omitted for an origin>",
   "source_bom_sha256": "<managed model BOM hash>",
+  "lineage": {
+    "weights_sha256": "<hash of the weights this release was converted from>",
+    "parents": [{"weights_sha256": "<parent weights hash>", "lineage_sha256": "<parent node hash>"}],
+    "runs": ["<run BOM hash, for weights a run trained>"],
+    "source_sha256": "<release hash, instead of runs, for a pulled origin's weights>"
+  },
+  "lineage_ancestors": [{"weights_sha256": "<ancestor weights hash>", "parents": [{"weights_sha256": "...", "lineage_sha256": "..."}], "runs": ["..."]}],
   "artifacts": [
     {
       "role": "weights",
@@ -212,7 +219,21 @@ inventory. Its schema-1 shape is:
 `source_bom_sha256` connects the derived representation to the managed model
 BOM from which it was produced. Each artifact path is relative to the package
 root. This makes a release relocatable without embedding a machine-specific
-model directory.
+model directory. `lineage` is the lineage node of the managed weights this
+release was converted from ([ADR 0084](adr/0084-record-model-lineage.md)), so
+its `weights_sha256` names no file in the release; a pull keeps it as the node
+its origin descends from, so the chain continues past publication.
+`lineage_ancestors` carries every node behind it the model held, so the history
+travels with the release without the models that made it. A pull keeps a
+release's lineage only when every reader reads it the same way and it belongs to
+the pulled weights: one JSON object (a UTF-8 byte-order mark is allowed) with no
+repeated or case-variant keys, `kind` `openwaldo-bom`, `subject`
+`model-release`, `schema` 1, nodes in WALDO's canonical form whose links name
+their nodes' weights, ancestors that are exactly the chain behind `lineage`, and
+`artifacts` listing every pulled weights file once, by hash and size, in an
+entry in WALDO's form (other entries need only be objects without repeated keys or a case-variant `path`). Otherwise
+the pull still succeeds, notes why the lineage was left out, and the origin is a
+root.
 
 The derived package currently records the source model BOM by hash rather than
 embedding the full `MODEL-BOM.json` and run tree. The hash makes substitution
