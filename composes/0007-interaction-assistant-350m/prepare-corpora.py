@@ -14,8 +14,48 @@ REVISION = "8d2454f2625a85d911cd7810816e489f0ebb1448"
 PREFIX = "data/sft/interaction-contract-v1/train/"
 
 
+# The published interaction-contract-v1 shard holds the two-turn prompt/response
+# projection that openwaldo/post-training-data provides for dialogue-pair
+# ingestion. Six categories also carry typed multi-turn messages, including
+# assistant tool calls with empty text content, which chat-messages rejects.
+PAIR_INPUT: dict[str, object] = {
+    "format": "jsonl",
+    "type": "dialogue-pair",
+    "fields": {"id": "id", "text": ["prompt"], "response": "response"},
+}
+
+# Every formatting row is already a plain user/assistant exchange.
+MESSAGES_INPUT: dict[str, object] = {
+    "format": "jsonl",
+    "type": "chat-messages",
+    "fields": {"id": "id", "meta": {"category": "category"}},
+    "messages": {
+        "role": "messages[].role",
+        "content": "messages[].content",
+    },
+}
+
+
+def pair_row(row: dict[str, object]) -> dict[str, object]:
+    return {
+        "id": row["id"],
+        "category": row["category"],
+        "prompt": row["prompt"],
+        "response": row["response"],
+    }
+
+
+def messages_row(row: dict[str, object]) -> dict[str, object]:
+    return {
+        "id": row["id"],
+        "category": row["category"],
+        "messages": row["messages"],
+    }
+
+
 def write_source(output: Path, corpus_id: str, title: str,
-                 description: str, records: list[dict[str, object]]) -> dict[str, object]:
+                 description: str, records: list[dict[str, object]],
+                 input_mapping: dict[str, object]) -> dict[str, object]:
     raw = output / "raw"
     raw.mkdir(parents=True, exist_ok=True)
     data = raw / "training.jsonl"
@@ -50,15 +90,7 @@ def write_source(output: Path, corpus_id: str, title: str,
                 "content": {"languages": ["en"]},
                 "license_evidence": {"declaration": "Apache-2.0"},
             },
-            "input": {
-                "format": "jsonl",
-                "type": "chat-messages",
-                "fields": {"id": "id", "meta": {"category": "category"}},
-                "messages": {
-                    "role": "messages[].role",
-                    "content": "messages[].content",
-                },
-            },
+            "input": input_mapping,
             "artifacts": [],
         }],
         "fetcher": {"name": "rung-0007-pinned-interaction-contract"},
@@ -97,25 +129,23 @@ def main() -> None:
         )
         for line in payload.splitlines():
             row = json.loads(line)
-            records.append({
-                "id": row["id"],
-                "category": row["category"],
-                "messages": row["messages"],
-            })
+            records.append(row)
 
     full = write_source(
         output / "interaction-contract-v1",
         "interaction-contract-v1",
         "OpenWALDO Interaction Contract v1",
         "Pinned supervised interaction-contract training split for rung 0007.",
-        records,
+        [pair_row(row) for row in records],
+        PAIR_INPUT,
     )
     formatting = write_source(
         output / "interaction-formatting-v1",
         "interaction-formatting-v1",
         "OpenWALDO Interaction Formatting v1",
         "Formatting-only subset of the pinned interaction-contract training split.",
-        [row for row in records if row["category"] == "formatting"],
+        [messages_row(row) for row in records if row["category"] == "formatting"],
+        MESSAGES_INPUT,
     )
     print(json.dumps({"full": full, "formatting": formatting}, indent=2))
 
