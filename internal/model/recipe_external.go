@@ -43,6 +43,7 @@ type ExternalCompose struct {
 	Stages       []ExternalStage      `json:"stages" yaml:"stages"`
 }
 type ExternalStage struct {
+	Execution    map[string]any                  `json:"execution,omitempty" yaml:"execution,omitempty"`
 	Name         string                          `json:"name" yaml:"name"`
 	Type         string                          `json:"type" yaml:"type"`
 	Objective    string                          `json:"objective" yaml:"objective"`
@@ -266,7 +267,7 @@ func (c ExternalCompose) ValidateSchemas(architecture, parameters, tokenizer *ap
 		return fmt.Errorf("tokenizer.configuration: %w", err)
 	}
 	for _, stage := range c.Stages {
-		if err := parameters.Validate(stage.Trainer); err != nil {
+		if _, err := parameters.ComposeParameters(stage.Trainer, stage.Execution); err != nil {
 			return fmt.Errorf("stage %s trainer: %w", stage.Name, err)
 		}
 	}

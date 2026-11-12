@@ -87,6 +87,10 @@ hashes = {{sha256 = "{hashlib.sha256(self.wheel).hexdigest()}"}}
         result, root, site = self.create()
         self.assertEqual(result['identity']['lock_sha256'], env.digest(self.lock))
         self.assertEqual(result['run']['installer'], 'pip')
+        self.assertNotIn('interpreter_sha256', result['identity'])
+        self.assertNotIn('platform_tag', result['identity'])
+        self.assertEqual(result['run']['interpreter_sha256'], env.digest(Path(sys.executable).resolve()))
+        self.assertEqual(result['run']['wheels'], ['sample-1.0-py3-none-any.whl'])
         self.assertFalse((site / 'pip').exists())
         completed = subprocess.run([str(root / 'bin/sample-cli')], capture_output=True, text=True, check=True)
         self.assertEqual(completed.stdout.strip(), 'working')
@@ -96,6 +100,23 @@ hashes = {{sha256 = "{hashlib.sha256(self.wheel).hexdigest()}"}}
             self.assertEqual(env.ensure(self.request, 'verify'), result)
         self.download.assert_not_called()
         self.assertEqual(len(list((self.temp / 'cache').iterdir())), 1)
+
+    def test_universal_cuda_lock_selects_both_platforms(self):
+        from pip._vendor.packaging.tags import cpython_tags, compatible_tags
+        lock = HELPER.parents[3] / 'examples/trainers/qwen3-hf/env/cuda/pylock.toml'
+        selections = {}
+        for machine in ('aarch64', 'x86_64'):
+            platforms = [f'manylinux_2_{v}_{machine}' for v in range(39, 4, -1)]
+            platforms += [f'manylinux2014_{machine}', f'manylinux2010_{machine}', f'manylinux1_{machine}', f'linux_{machine}']
+            tags = list(cpython_tags((3, 12), ['cp312'], platforms))
+            tags += list(compatible_tags((3, 12), 'cp312', platforms))
+            marker_env = env.default_environment() | {'platform_machine': machine, 'sys_platform': 'linux', 'python_version': '3.12', 'python_full_version': '3.12.3'}
+            with patch.object(env.sys, 'version_info', (3, 12, 3)), patch.object(env, 'sys_tags', return_value=iter(tags)), patch.object(env, 'default_environment', return_value=marker_env):
+                selected = env.parse_lock(lock.read_bytes())
+            self.assertIn(machine, selected['torch']['filename'])
+            self.assertTrue(all(p['filename'].endswith('.whl') for p in selected.values()))
+            selections[machine] = {k: v['version'] for k, v in selected.items()}
+        self.assertEqual(selections['aarch64'], selections['x86_64'])
 
     def test_mutations_fail(self):
         mutations = {

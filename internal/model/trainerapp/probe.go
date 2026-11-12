@@ -153,6 +153,14 @@ type Resolved struct {
 	Batch            Batch          `json:"batch"`
 }
 
+func (c *Client) ResolveCompose(ctx context.Context, architecture, recipe, execution map[string]any, data training.ExternalDataParameters, world World) (Resolved, error) {
+	parameters, err := c.parameters.ComposeParameters(recipe, execution)
+	if err != nil {
+		return Resolved{}, err
+	}
+	return c.Resolve(ctx, architecture, parameters, data, world)
+}
+
 // Resolve always performs both calls, including on a single-process host.
 // Only RecipeSHA256 enters identity; the full parameter hash is run evidence.
 func (c *Client) Resolve(ctx context.Context, architecture, parameters map[string]any, data training.ExternalDataParameters, world World) (Resolved, error) {
@@ -181,6 +189,12 @@ func (c *Client) Resolve(ctx context.Context, architecture, parameters map[strin
 		return zero, err
 	}
 	req.World.World = applaunch.World{Nodes: 1, ProcessesPerNode: 1, WorldSize: 1}
+	// Explicit decomposition may only fit the actual world. Re-resolve recipe
+	// inputs with automatic execution values for the identity invariance check.
+	req.Parameters, _, err = c.parameters.Split(p)
+	if err != nil {
+		return zero, err
+	}
 	single, err := c.resolve(ctx, req)
 	if err != nil {
 		return zero, fmt.Errorf("single-process resolve: %w", err)

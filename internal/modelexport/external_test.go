@@ -37,11 +37,11 @@ func externalExportFixtureAt(t *testing.T, artifactPath string) model.ExternalIn
 	}
 	schema := json.RawMessage(`{"type":"object"}`)
 	source := application.ResolvedSource{Source: application.Source{Repository: "https://example.invalid/repo", Commit: strings.Repeat("a", 40), Path: "."}, Tree: strings.Repeat("b", 40), ManifestSHA256: strings.Repeat("c", 64)}
-	environment := pythonenv.Identity{Name: "cpu", Kind: "python-lock", LockSHA256: strings.Repeat("d", 64), InterpreterVersion: "3.12.3", InterpreterSHA256: strings.Repeat("e", 64), PlatformTag: "linux"}
+	environment := pythonenv.Identity{Name: "cpu", Kind: "python-lock", LockSHA256: strings.Repeat("d", 64), InterpreterVersion: "3.12.3"}
 	empty := map[string]any{}
 	token := tokenizerapp.Identity{Source: source, Environment: environment, Configuration: json.RawMessage(`{}`), ConfigurationSHA256: hash(empty), SchemaSHA256: application.Digest(schema)}
 	token.Probe.Schemas.Configuration = schema
-	plan := model.ExternalPlan{Kind: "waldo-model-plan", Schema: 2, Name: "fixture", Identity: model.ExternalIdentity{Trainer: source, Environment: environment, Tokenizer: token, Architecture: empty, ArchitectureSHA256: hash(empty), ArchitectureSchemaSHA256: application.Digest(schema), ParametersSchemaSHA256: application.Digest(schema), Determinism: "required", Stages: []model.ExternalStageIdentity{{Name: "train", Type: "pre-training", Objective: "causal-language-modeling", CorpusBOMSHA256: hash(corpus.BOM{}), Data: training.ExternalDataParameters{Steps: 1, GlobalBatchSequences: 1, SequenceLength: 2}, Recipe: empty, RecipeSHA256: hash(empty)}}}}
+	plan := model.ExternalPlan{Kind: "waldo-model-plan", Schema: 2, Name: "fixture", Identity: model.ExternalIdentity{Trainer: source, Environment: environment, Tokenizer: token, Architecture: empty, ArchitectureSHA256: hash(empty), ArchitectureSchemaSHA256: application.Digest(schema), ParametersSchemaSHA256: application.Digest(schema), Stages: []model.ExternalStageIdentity{{Name: "train", Type: "pre-training", Objective: "causal-language-modeling", CorpusBOMSHA256: hash(corpus.BOM{}), Data: training.ExternalDataParameters{Steps: 1, GlobalBatchSequences: 1, SequenceLength: 2}, Recipe: empty, RecipeSHA256: hash(empty)}}}}
 	resolved := trainerapp.Resolved{Parameters: empty, Recipe: empty, Execution: empty, ParametersSHA256: hash(empty), RecipeSHA256: hash(empty), Batch: trainerapp.Batch{MicroBatchSequences: 1, AccumulationSteps: 1, WorldSize: 1}}
 	directory := filepath.Join(t.TempDir(), "model")
 	schemas := []byte(`{"kind":"waldo-trainer-schemas","schema":1,"architecture":` + string(schema) + `,"parameters":` + string(schema) + `,"tokenizer":` + string(schema) + `}`)
@@ -50,6 +50,12 @@ func externalExportFixtureAt(t *testing.T, artifactPath string) model.ExternalIn
 		t.Fatal(err)
 	}
 	run := model.ExternalRunBOM{Kind: "openwaldo-bom", Schema: 2, Subject: "training-run", ID: "train", Stage: "train", ModelID: id, Identity: plan.Identity, Resolved: resolved, Probe: trainerapp.Probe{Schemas: trainerapp.Schemas{Architecture: schema, Parameters: schema}}, Launches: []applaunch.Evidence{{Profile: "single-process"}}}
+	run.Determinism = "required"
+	run.TrainerHost.ExecutionEvidence = pythonenv.ExecutionEvidence{InterpreterSHA256: strings.Repeat("e", 64), PlatformTag: "linux-aarch64", Wheels: []string{}}
+	run.TokenizerHost = run.TrainerHost
+	run.Launches[0].Launcher = "python"
+	run.Launches[0].World = applaunch.World{Nodes: 1, ProcessesPerNode: 1, WorldSize: 1}
+	run.ExecutionConfig = trainerapp.ExecutionConfig{Profile: "single-process", Launcher: "python", World: run.Launches[0].World, Parameters: run.Resolved.Execution, Determinism: run.Determinism, TrainerEnvironment: run.TrainerHost.ExecutionEvidence, TokenizerEnvironment: run.TokenizerHost.ExecutionEvidence}
 	runPath := "runs/train/RUN-BOM.json"
 	if _, err = model.WriteExternalRunBOM(directory, filepath.Join(directory, runPath), run); err != nil {
 		t.Fatal(err)

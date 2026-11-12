@@ -76,5 +76,5 @@ Only global rank zero emits protocol events/completion and publishes files.
 Aggregate loss denominators and corpus consumption across all ranks, preserve
 each rank's RNG state in private checkpoint state, and restore the verified
 bundle on every node. Do not average per-rank mean losses when supervised-token
-counts differ. The Qwen3 reference supports DDP with the `cuda-amd64` lock for
+counts differ. The Qwen3 reference supports DDP with the universal `cuda` lock for
 x86_64 and `cuda` for aarch64.

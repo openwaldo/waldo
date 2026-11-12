@@ -197,12 +197,71 @@ func checkRoles(s *jsonschema.Schema, inherited string, architecture bool, seen 
 		}
 		inherited = role
 	}
+	for key, child := range s.Properties {
+		if waldoOwnedParameter(key) && (inherited == "execution" || hasExecutionRole(child, map[*jsonschema.Schema]bool{})) {
+			return fmt.Errorf("WALDO-owned parameter %s cannot be execution-only", key)
+		}
+	}
 	for _, child := range schemaChildren(s) {
 		if err := checkRoles(child, inherited, architecture, seen); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func hasExecutionRole(s *jsonschema.Schema, seen map[*jsonschema.Schema]bool) bool {
+	if s == nil || seen[s] {
+		return false
+	}
+	seen[s] = true
+	if declaredRole(s) == "execution" {
+		return true
+	}
+	for _, child := range schemaChildren(s) {
+		if hasExecutionRole(child, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+func waldoOwnedParameter(key string) bool {
+	switch key {
+	case "data", "profile", "tokens", "epochs", "steps", "sequence_length", "global_batch_sequences", "seed", "checkpoint_every", "evaluate_every", "shuffle_buffer_records", "shuffle_buffer_bytes", "evaluation_fraction", "evaluation_selection", "evaluation_max_records", "evaluation_max_bytes", "order", "evaluation", "requested_tokens", "planned_token_capacity":
+		return true
+	}
+	return false
+}
+
+// ComposeParameters checks the identity/execution boundary before resolve.
+// Schema defaults are not injected; omitted values remain the trainer's job.
+func (s *ParameterSchema) ComposeParameters(recipe, execution map[string]any) (map[string]any, error) {
+	merged := map[string]any{}
+	for key, value := range recipe {
+		merged[key] = value
+	}
+	for key, value := range execution {
+		if _, exists := merged[key]; exists {
+			return nil, fmt.Errorf("parameter %s occurs in both trainer and execution", key)
+		}
+		merged[key] = value
+	}
+	r, e, err := s.Split(merged)
+	if err != nil {
+		return nil, err
+	}
+	for key := range recipe {
+		if _, exists := e[key]; exists {
+			return nil, fmt.Errorf("execution parameter %s belongs in stage execution, not trainer", key)
+		}
+	}
+	for key := range execution {
+		if _, exists := r[key]; exists {
+			return nil, fmt.Errorf("identity parameter %s belongs in stage trainer, not execution", key)
+		}
+	}
+	return merged, nil
 }
 func schemaChildren(s *jsonschema.Schema) []*jsonschema.Schema {
 	out := []*jsonschema.Schema{s.Ref, s.Not, s.If, s.Then, s.Else, s.PropertyNames, s.UnevaluatedProperties, s.Contains, s.Items2020, s.UnevaluatedItems, s.ContentSchema}

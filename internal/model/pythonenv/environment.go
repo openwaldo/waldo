@@ -26,11 +26,16 @@ type Identity struct {
 	Kind               string `json:"kind"`
 	LockSHA256         string `json:"lock_sha256"`
 	InterpreterVersion string `json:"interpreter_version"`
-	InterpreterSHA256  string `json:"interpreter_sha256"`
-	PlatformTag        string `json:"platform_tag"`
+}
+
+type ExecutionEvidence struct {
+	InterpreterSHA256 string   `json:"interpreter_sha256"`
+	PlatformTag       string   `json:"platform_tag"`
+	Wheels            []string `json:"wheels"`
 }
 
 type RunEvidence struct {
+	ExecutionEvidence
 	CachePath        string                        `json:"cache_path"`
 	Installer        string                        `json:"installer"`
 	InstallerVersion string                        `json:"installer_version"`

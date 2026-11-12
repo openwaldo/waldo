@@ -16,7 +16,7 @@ if [ "$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)" -lt 2 ]; the
   exit 1
 fi
 case $(uname -m) in
-  x86_64) environment=cuda-amd64 ;;
+  x86_64) environment=cuda ;;
   aarch64) environment=cuda ;;
   *) echo 'unsupported CUDA test architecture' >&2; exit 1 ;;
 esac

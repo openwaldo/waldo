@@ -106,13 +106,17 @@ stages:
 | `trainer`, `tokenizer` | WALDO | Pinned source (`repository`, full `commit`, `path`), named `environment`, `determinism` (trainer) or `configuration` (tokenizer). |
 | `architecture` | trainer schema | Opaque to WALDO; hashed into the plan and validated by the trainer's probe schema. |
 | stage `data` | WALDO | Budget (`tokens`, `epochs` or `steps`), `sequence_length`, `global_batch_sequences`, `seed`, shuffle, held-out selection, checkpoint and evaluation cadence. Trainers never read the index or Parquet; they receive token IDs only. |
-| stage `trainer` | trainer schema | Opaque recipe parameters. `resolve` completes defaults and chooses execution values (micro-batch, accumulation); micro-batch x accumulation x world size must equal `global_batch_sequences`. |
+| stage `trainer` | trainer schema | Recipe inputs only, completed by `resolve`; precision, optimizer, schedule and seeds remain identity. |
+| stage `execution` | trainer schema | Optional execution inputs, annotated `x-waldo-role: execution` in the probe schema. Excluded from identity; micro-batch x accumulation x world size must equal `global_batch_sequences`. |
 
 Identity: the plan hash covers the trainer and tokenizer sources (repository,
 commit, tree hash, path, manifest hash), the selected environment (lock hash,
 interpreter), resolved configuration, architecture and corpus BOMs. Execution
-parameters and host facts (GPU, driver, CUDA, kernel) are recorded only in the
-run BOM. A changed identity requires a new model name. Protocol-1 finite-epoch
+parameters, `trainer.determinism`, interpreter digest, platform tag, selected
+wheels and host facts (GPU, driver, CUDA, kernel) are recorded only in the run
+BOM. Misplaced recipe/execution inputs fail before resolve. The same specification
+has the same identity on different hardware; weights have separate artifact
+digests. Resume requires the same execution config; see [ADR 0089](adr/0089-portable-external-plan-identity.md). A changed identity requires a new model name. Protocol-1 finite-epoch
 budgets must fill every declared supervised batch slot; otherwise the command
 fails before launching the trainer.
 

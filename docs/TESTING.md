@@ -171,3 +171,22 @@ mismatches before secondary readiness, sequence ownership, micro-batch boundarie
 and resumed sequence positions. The existing hostfile transport tests exercise
 SSH staging and stage readiness; they do not constitute a physical multi-node
 GPU qualification.
+
+## External plan identity qualification
+
+`testing/external-plan` resolves one external stage against a supplied immutable
+corpus BOM, materializes and verifies its shards, probes the pinned applications,
+and computes the same plan as the lifecycle without creating a model or launching
+train. It uses `ExternalOptions.PlanOnly` and emits the complete plan and SHA-256.
+The model name and exact corpus BOM are required inputs to reproduce the hash.
+
+```sh
+go run ./testing/external-plan -compose examples/trainers/qwen3-hf/compose.tinystories.yaml \
+  -name waldo-qwen3-tinystories -corpus-bom corpus-bom.json \
+  -cache /absolute/application-cache -python /usr/bin/python3
+```
+
+The Qwen3 conformance harness compares micro-batch 4/accumulation 1 with
+micro-batch 1/accumulation 4 on CPU, using unequal target-token masks over three
+steps. Absolute and relative tolerances are `1e-5`; its result reports the actual
+maximum delta. This is a synthetic numerical test, not a corpus training run.

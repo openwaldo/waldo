@@ -153,7 +153,9 @@ WALDO does not remove `required`, inject defaults, or weaken the schema.
 
 `ValidateSchemas` checks all opaque sections after probe. `ParameterSchema.Split`
 validates a complete resolve result and separates recipe values from execution
-values. Execution overrides in a stage remain execution values. The trainer
+values. Stage `trainer` accepts only recipe inputs; stage `execution` accepts only
+execution inputs. `ComposeParameters` rejects misplaced keys and duplicate keys.
+WALDO-owned data properties cannot be annotated execution-only. The trainer
 protocol client validates batch topology and world shape and compares
 recipe results across world shapes. Lifecycle callers must record execution
 values only in the run BOM.
@@ -221,7 +223,8 @@ covered only by the interpreter realpath executable digest, not hashed file by
 file (known PoC limit).
 
 `pythonenv.Result.Identity` exposes name, kind, lock SHA-256, interpreter version
-and executable digest, and platform tag to the future external BOM builder.
+only. Executable digest, platform tag and sorted selected wheel filenames are
+`Result.Run.ExecutionEvidence`, excluded from both trainer and tokenizer identity.
 `Result.Run` holds the cache path, original installer/version and fresh host
 observations: kernel, NVIDIA GPU models/drivers, CUDA driver capability and CUDA
 toolkit version. Missing tooling/query results are recorded as unavailable;

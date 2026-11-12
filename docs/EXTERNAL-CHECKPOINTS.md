@@ -11,7 +11,8 @@ BOM: its SHA-256 and trainer, tokenizer and selected environment identity hashes
 The run BOM must pin the stage, resolved corpus BOMs, parameters, evaluation set
 and execution evidence. Supply an absolute `Begin.CheckpointDirectory`, reserved
 for WALDO's durable bundles, separate from the trainer's output directories.
-These two Go fields are not sent to the trainer.
+Also supply `Begin.ExecutionConfig` from verified run evidence. These Go fields
+are not sent as separate trainer inputs; the checkpoint manifest records them.
 
 Every checkpoint event is reconciled against WALDO's cumulative per-corpus
 supervised-target counts at that exact optimizer step. A temporary disk ledger
@@ -28,15 +29,18 @@ SHA-256. The sink must persist this reference independently in lifecycle state
 before considering a checkpoint accepted. A sink error stops the process; a
 bundle without a persisted reference is not an accepted resume point.
 
-## Manifest schema 1
+## Manifest schema 2
 
 `CheckpointManifest` is the authoritative Go type. Its JSON fields are:
 
-- `kind: waldo-trainer-checkpoint`, `schema: 1`;
+- `kind: waldo-trainer-checkpoint`, `schema: 2`;
+- `plan_sha256`: portable training specification identity;
 - `identity`: run BOM, trainer, tokenizer and environment SHA-256 hashes;
 - `begin_sha256`: hash of the normalized begin request excluding paths/resume;
 - `parameters_sha256`: complete resolved parameter hash;
 - `execution`: schema-role-split resolved execution parameters;
+- `execution_config`: profile, launcher, world, execution parameters, determinism,
+  trainer/tokenizer interpreter digests, platform tags and selected wheel filenames;
 - `world`: complete launch world shape;
 - `step`, `tokens`, and WALDO-derived `consumption` keyed by logical corpus;
 - `files`: role, relative path, SHA-256, byte size and format for every member.
@@ -51,7 +55,10 @@ invalid consumption and incompatible pins fail closed.
 
 Call `LoadCheckpoint(begin, reference)` using the saved lifecycle reference.
 It verifies the manifest hash, exact begin/run identity and world, and every
-file. Set the returned value as `Begin.Resume`; arbitrary resume JSON fails.
+file. Exact execution config differences fail with the differing field names.
+GPU model, driver, CUDA and kernel observations may change; immutable per-attempt
+run BOMs retain both segments. Schema-1 external checkpoints cannot resume under
+this contract. Set the returned value as `Begin.Resume`; arbitrary resume JSON fails.
 `Train` repeats verification before launching and checks the execution split.
 The protocol resume object contains `step`, `tokens`, `checkpoint_manifest` and
 `paths` (manifest-relative filenames mapped to verified absolute bundle paths).

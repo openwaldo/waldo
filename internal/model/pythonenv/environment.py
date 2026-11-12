@@ -336,7 +336,10 @@ def verify(root, identity, expected):
     completed = subprocess.run([str(python), "-I", "-S", "-c", "import sys; print('.'.join(map(str, sys.version_info[:3])))"], capture_output=True, text=True, check=True)
     if completed.stdout.strip() != identity["interpreter_version"]:
         fail("wrong interpreter: version mismatch")
-    return {"identity": identity, "run": {"cache_path": str(root), "installer": "pip", "installer_version": receipt["installer_version"]}}
+    return {"identity": {k: v for k, v in identity.items() if k not in ("interpreter_sha256", "platform_tag")},
+            "run": {"cache_path": str(root), "installer": "pip", "installer_version": receipt["installer_version"],
+                    "interpreter_sha256": identity["interpreter_sha256"], "platform_tag": identity["platform_tag"],
+                    "wheels": sorted(p["filename"] for p in expected.values())}}
 
 
 def ensure(request, action="ensure"):

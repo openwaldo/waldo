@@ -824,3 +824,24 @@ Repeat the original command to resume from the newest verified checkpoint.
 `model continue` restores a single-node external run's recorded process count;
 for a multi-node run it requires repeating the original hostfile command.
 Topology and resolved execution parameters cannot change during resume.
+
+## Portable external identity and execution segments
+
+[ADR 0089](adr/0089-portable-external-plan-identity.md) separates the external
+training specification from execution. Plan identity includes environment name,
+kind, lock digest and interpreter version for both trainer and tokenizer.
+Interpreter digest, platform tag, selected wheels, determinism, launch/world
+shape and resolved execution parameters belong to run provenance. Artifact
+hashes identify weights; equal plan hashes do not promise equal weights.
+
+Resume compares the plan and exact execution config and names differing fields
+before train launch. GPU model, driver, CUDA and kernel are observed per attempt
+but not enforced. `RUN-BOM.json` remains the immutable checkpoint anchor;
+`RUN-BOM-ATTEMPT-*.json` records each execution segment. `RUN.json` references the
+segments, and completed model/export BOM run entries authenticate them through
+`segments` (path, SHA-256, bytes). Export includes those files.
+
+Bitwise reproducibility requires the same plan/config and required determinism;
+statistical reproducibility uses the same plan and explicitly stated held-out
+NLL/bits-per-byte tolerances. Neither claim is verified by this PoC. Native
+identities and resume contracts are unchanged.

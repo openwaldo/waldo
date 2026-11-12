@@ -1,7 +1,7 @@
 # Demo recipe: Qwen3 from scratch on TinyStories for local vLLM inference.
 # 9,156 x 32 x 512 = 150,011,904 tokens (~3 hours on GB10).
 # Artifacts are used locally; this is not a distributable model release.
-# For another GPU platform select its pinned manifest environment.
+# The cuda lock covers Linux aarch64 and x86_64; adjust stage execution for GPU memory.
 kind: waldo-model-compose
 schema: 2
 trainer:
@@ -46,6 +46,7 @@ stages:
       init_seed: 42
       bf16: true
       warmup_steps: 300
+    execution:
       attn_implementation: sdpa
       per_device_train_batch_size: 8
       gradient_accumulation_steps: 4

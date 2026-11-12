@@ -93,6 +93,11 @@ func ExportExternal(ctx context.Context, inspection model.ExternalInspection, de
 		if err = copyFile(run.BOM.Path, run.BOM.Path); err != nil {
 			return "", err
 		}
+		for _, segment := range run.Segments {
+			if err = copyFile(segment.Path, segment.Path); err != nil {
+				return "", err
+			}
+		}
 		for _, a := range run.Artifacts {
 			target := a.Path
 			// The last stage is directly loadable from the package root; earlier

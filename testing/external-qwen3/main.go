@@ -112,7 +112,7 @@ func run() error {
 		}
 		micro := 4
 		if alternate {
-			micro = 2
+			micro = 1
 		}
 		parameters := map[string]any{}
 		for k, v := range compose.Stages[0].Trainer {
@@ -123,7 +123,11 @@ func run() error {
 		if err != nil {
 			return trainerapp.ConformanceAttempt{}, err
 		}
-		begin := trainerapp.Begin{Paths: trainerapp.Paths{Artifacts: filepath.Join(dir, "artifacts"), Checkpoints: filepath.Join(dir, "checkpoints"), Scratch: dir}, ModelID: "qwen3-qualification", RunID: name, Stage: "pretrain", Objective: "causal-language-modeling", Data: data, Architecture: architecture, ArchitectureSHA256: hash(architecture), Parameters: resolution.Parameters, ParametersSHA256: resolution.ParametersSHA256, Batch: resolution.Batch, Tokenizer: spec, Determinism: "required", World: world, CheckpointDirectory: filepath.Join(dir, "durable"), CheckpointIdentity: trainerapp.CheckpointIdentity{RunBOMSHA256: hash(name), TrainerSHA256: hash(resolved), TokenizerSHA256: hash(tokenizer.Identity()), EnvironmentSHA256: hash(env.Identity)}}
+		launch, err := applaunch.Prepare(applaunch.Request{Source: resolved, Environment: env, Scratch: dir, World: world, Command: "train"})
+		if err != nil {
+			return trainerapp.ConformanceAttempt{}, err
+		}
+		begin := trainerapp.Begin{ExecutionConfig: trainerapp.ExecutionConfig{Profile: launch.Profile, Launcher: launch.Launcher, TrainerEnvironment: env.Run.ExecutionEvidence, TokenizerEnvironment: tokenEnv.Run.ExecutionEvidence}, Paths: trainerapp.Paths{Artifacts: filepath.Join(dir, "artifacts"), Checkpoints: filepath.Join(dir, "checkpoints"), Scratch: dir}, ModelID: "qwen3-qualification", RunID: name, Stage: "pretrain", Objective: "causal-language-modeling", Data: data, Architecture: architecture, ArchitectureSHA256: hash(architecture), Parameters: resolution.Parameters, ParametersSHA256: resolution.ParametersSHA256, Batch: resolution.Batch, Tokenizer: spec, Determinism: "required", World: world, CheckpointDirectory: filepath.Join(dir, "durable"), CheckpointIdentity: trainerapp.CheckpointIdentity{RunBOMSHA256: hash(name), TrainerSHA256: hash(resolved), TokenizerSHA256: hash(tokenizer.Identity()), EnvironmentSHA256: hash(env.Identity)}}
 		sourceAt := func(start int64) trainerapp.SequenceSource {
 			return func(ctx context.Context, consume func(training.PreparedSequence) error) error {
 				for i := start; i < steps*4; i++ {

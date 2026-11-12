@@ -25,7 +25,7 @@ func externalBOMFixture(t *testing.T) (ExternalPlan, []byte, ExternalRunBOM) {
 	tok := json.RawMessage(`{ "type":"object", "x-extra": true }`)
 	schemas := []byte(`{"kind":"waldo-trainer-schemas","schema":1,"architecture":` + string(arch) + `,"parameters":` + string(params) + `,"tokenizer":` + string(tok) + `}`)
 	source := application.ResolvedSource{Source: application.Source{Repository: "https://example.invalid/trainer", Commit: strings.Repeat("a", 40), Path: "."}, Tree: strings.Repeat("b", 40), ManifestSHA256: strings.Repeat("c", 64)}
-	env := pythonenv.Identity{Name: "cpu", Kind: "python-lock", LockSHA256: strings.Repeat("d", 64), InterpreterVersion: "3.12.3", InterpreterSHA256: strings.Repeat("e", 64), PlatformTag: "linux-aarch64"}
+	env := pythonenv.Identity{Name: "cpu", Kind: "python-lock", LockSHA256: strings.Repeat("d", 64), InterpreterVersion: "3.12.3"}
 	tokenizer := tokenizerapp.Identity{Source: source, Environment: env, Configuration: json.RawMessage(`{}`), ConfigurationSHA256: application.Digest([]byte(`{}`)), SchemaSHA256: application.Digest(tok)}
 	tokenizer.Probe.Schemas.Configuration = tok
 	tokenizer.Probe.Name = "test"
@@ -36,11 +36,16 @@ func externalBOMFixture(t *testing.T) (ExternalPlan, []byte, ExternalRunBOM) {
 	rh, _ := externalHash(recipe)
 	architecture := map[string]any{"width": float64(16)}
 	ah, _ := externalHash(architecture)
-	p := ExternalPlan{Kind: "waldo-model-plan", Schema: 2, Name: "external", Identity: ExternalIdentity{Trainer: source, Environment: env, Tokenizer: tokenizer, Architecture: architecture, ArchitectureSHA256: ah, ArchitectureSchemaSHA256: application.Digest(arch), ParametersSchemaSHA256: application.Digest(params), Determinism: "best-effort", Stages: []ExternalStageIdentity{{Name: "train", Type: "pre-training", Objective: "causal-language-modeling", CorpusBOMSHA256: ch, Data: training.ExternalDataParameters{Steps: 2, GlobalBatchSequences: 2, SequenceLength: 4}, Recipe: recipe, RecipeSHA256: rh}}}}
+	p := ExternalPlan{Kind: "waldo-model-plan", Schema: 2, Name: "external", Identity: ExternalIdentity{Trainer: source, Environment: env, Tokenizer: tokenizer, Architecture: architecture, ArchitectureSHA256: ah, ArchitectureSchemaSHA256: application.Digest(arch), ParametersSchemaSHA256: application.Digest(params), Stages: []ExternalStageIdentity{{Name: "train", Type: "pre-training", Objective: "causal-language-modeling", CorpusBOMSHA256: ch, Data: training.ExternalDataParameters{Steps: 2, GlobalBatchSequences: 2, SequenceLength: 4}, Recipe: recipe, RecipeSHA256: rh}}}}
 	id, _ := p.SHA256()
 	resolved := trainerapp.Resolved{Parameters: map[string]any{"rate": 0.1, "micro": float64(2)}, Recipe: recipe, Execution: map[string]any{"micro": float64(2)}, RecipeSHA256: rh, Batch: trainerapp.Batch{MicroBatchSequences: 2, AccumulationSteps: 1, WorldSize: 1}}
 	resolved.ParametersSHA256, _ = externalHash(resolved.Parameters)
 	r := ExternalRunBOM{Kind: "openwaldo-bom", Schema: 2, Subject: "training-run", ID: "run", ModelID: id, Stage: "train", Identity: p.Identity, CorpusBOM: corpusBOM, Resolved: resolved, Probe: trainerapp.Probe{Schemas: trainerapp.Schemas{Architecture: arch, Parameters: params}}, Launches: []applaunch.Evidence{{Profile: "single-process", Launcher: "python", Environment: []string{"HOME=/scratch"}}}}
+	r.Determinism = "required"
+	r.TrainerHost.ExecutionEvidence = pythonenv.ExecutionEvidence{InterpreterSHA256: strings.Repeat("e", 64), PlatformTag: "linux-aarch64", Wheels: []string{}}
+	r.TokenizerHost = r.TrainerHost
+	r.Launches[0].World = applaunch.World{Nodes: 1, ProcessesPerNode: 1, WorldSize: 1}
+	r.ExecutionConfig = trainerapp.ExecutionConfig{Profile: "single-process", Launcher: "python", World: r.Launches[0].World, Parameters: r.Resolved.Execution, Determinism: r.Determinism, TrainerEnvironment: r.TrainerHost.ExecutionEvidence, TokenizerEnvironment: r.TokenizerHost.ExecutionEvidence}
 	return p, schemas, r
 }
 func TestExternalBOMRoundTrip(t *testing.T) {
@@ -228,8 +233,6 @@ func TestExternalPlanRejectsTamperedPins(t *testing.T) {
 		"architecture schema pin":    func(p *ExternalPlan) { p.Identity.ArchitectureSchemaSHA256 = strings.Repeat("f", 64) },
 		"tokenizer environment lock": func(p *ExternalPlan) { p.Identity.Tokenizer.Environment.LockSHA256 = "not-a-digest" },
 		"tokenizer source tree":      func(p *ExternalPlan) { p.Identity.Tokenizer.Source.Tree = "HEAD" },
-		"interpreter digest":         func(p *ExternalPlan) { p.Identity.Environment.InterpreterSHA256 = "python3" },
-		"determinism":                func(p *ExternalPlan) { p.Identity.Determinism = "sometimes" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -284,7 +287,6 @@ func TestExternalIdentitySensitivityCoversAllInputs(t *testing.T) {
 		"architecture":            func(p *ExternalPlan) { p.Identity.Architecture["width"] = float64(32) },
 		"architecture schema":     func(p *ExternalPlan) { p.Identity.ArchitectureSchemaSHA256 = strings.Repeat("f", 64) },
 		"tokenizer schema":        func(p *ExternalPlan) { p.Identity.Tokenizer.SchemaSHA256 = strings.Repeat("f", 64) },
-		"determinism":             func(p *ExternalPlan) { p.Identity.Determinism = "required" },
 		"interaction":             func(p *ExternalPlan) { p.Identity.Interaction.Template = "chatml-v1" },
 		"recipe content":          func(p *ExternalPlan) { p.Identity.Stages[0].Recipe["rate"] = 0.2 },
 		"data seed":               func(p *ExternalPlan) { p.Identity.Stages[0].Data.Seed = 7 },
@@ -298,6 +300,61 @@ func TestExternalIdentitySensitivityCoversAllInputs(t *testing.T) {
 		mutate(&clone)
 		if got, _ := clone.SHA256(); got == original {
 			t.Errorf("%s did not alter identity", name)
+		}
+	}
+}
+
+func TestExternalPortablePlanAndRunEvidence(t *testing.T) {
+	p, _, r := externalBOMFixture(t)
+	p.Identity.Stages[0].Data.GlobalBatchSequences = 32
+	p.Identity.Stages[0].Recipe = map[string]any{"bf16": true, "learning_rate": 0.0003}
+	p.Identity.Stages[0].RecipeSHA256, _ = externalHash(p.Identity.Stages[0].Recipe)
+	want, _ := p.SHA256()
+	var hashes []string
+	for i, platform := range []string{"linux-aarch64", "linux-x86_64"} {
+		r.Identity = p.Identity
+		r.ModelID = want
+		r.TrainerHost.ExecutionEvidence = pythonenv.ExecutionEvidence{PlatformTag: platform, InterpreterSHA256: strings.Repeat(string(rune('a'+i)), 64), Wheels: []string{"torch-" + platform + ".whl"}}
+		r.TokenizerHost = r.TrainerHost
+		r.Determinism = []string{"required", "off"}[i]
+		r.Resolved.Execution = map[string]any{"per_device_train_batch_size": 8, "gradient_accumulation_steps": []int{4, 1}[i], "attn_implementation": []string{"sdpa", "eager"}[i]}
+		r.Resolved.Batch = trainerapp.Batch{MicroBatchSequences: 8, AccumulationSteps: []int64{4, 1}[i], WorldSize: []int64{1, 4}[i]}
+		h, _ := externalHash(r)
+		hashes = append(hashes, h)
+		got, _ := (ExternalPlan{Kind: p.Kind, Schema: p.Schema, Name: p.Name, Identity: r.Identity}).SHA256()
+		if got != want {
+			t.Fatal("hardware or execution changed plan")
+		}
+		raw, _ := json.Marshal(r)
+		for _, key := range []string{"interpreter_sha256", "platform_tag", "wheels", "determinism", "attn_implementation"} {
+			if !strings.Contains(string(raw), key) {
+				t.Fatalf("missing run evidence %s", key)
+			}
+		}
+	}
+	if hashes[0] == hashes[1] {
+		t.Fatal("run evidence did not change")
+	}
+	raw, _ := json.Marshal(p)
+	for _, key := range []string{"interpreter_sha256", "platform_tag", "wheels", "determinism", "attn_implementation", "gradient_accumulation_steps"} {
+		if strings.Contains(string(raw), key) {
+			t.Fatalf("execution leaked: %s", key)
+		}
+	}
+	for _, key := range []string{"bf16", "learning_rate"} {
+		var changed ExternalPlan
+		if err := json.Unmarshal(raw, &changed); err != nil {
+			t.Fatal(err)
+		}
+		if key == "bf16" {
+			changed.Identity.Stages[0].Recipe[key] = false
+		} else {
+			changed.Identity.Stages[0].Recipe[key] = 0.01
+		}
+		changed.Identity.Stages[0].RecipeSHA256, _ = externalHash(changed.Identity.Stages[0].Recipe)
+		got, _ := changed.SHA256()
+		if got == want {
+			t.Fatalf("identity field %s ignored", key)
 		}
 	}
 }

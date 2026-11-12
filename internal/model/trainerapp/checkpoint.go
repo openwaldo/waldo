@@ -33,6 +33,8 @@ type CheckpointReference struct {
 	SHA256 string `json:"sha256"`
 }
 type CheckpointManifest struct {
+	PlanSHA256       string             `json:"plan_sha256,omitempty"`
+	ExecutionConfig  *ExecutionConfig   `json:"execution_config,omitempty"`
 	Kind             string             `json:"kind"`
 	Schema           int                `json:"schema"`
 	Identity         CheckpointIdentity `json:"identity"`
@@ -135,7 +137,8 @@ func (c *Client) commitCheckpoint(b Begin, checkpoint Checkpoint, consumption ma
 	if err != nil {
 		return ref, err
 	}
-	m := CheckpointManifest{Kind: "waldo-trainer-checkpoint", Schema: 1, Identity: b.CheckpointIdentity, BeginSHA256: beginDigest(b), ParametersSHA256: b.ParametersSHA256, Execution: execution, World: b.World, Step: checkpoint.Step, Tokens: total, Consumption: consumption, Files: checkpoint.Artifacts}
+	config := b.executionConfig(execution)
+	m := CheckpointManifest{Kind: "waldo-trainer-checkpoint", Schema: 2, PlanSHA256: b.ModelID, ExecutionConfig: &config, Identity: b.CheckpointIdentity, BeginSHA256: beginDigest(b), ParametersSHA256: b.ParametersSHA256, Execution: execution, World: b.World, Step: checkpoint.Step, Tokens: total, Consumption: consumption, Files: checkpoint.Artifacts}
 	root, err := os.OpenRoot(b.Paths.Checkpoints)
 	if err != nil {
 		return ref, err
@@ -232,7 +235,20 @@ func LoadCheckpoint(b Begin, ref CheckpointReference) (*Resume, error) {
 	if err := strict(raw, &m); err != nil {
 		return nil, err
 	}
-	if m.Kind != "waldo-trainer-checkpoint" || m.Schema != 1 || m.Identity != b.CheckpointIdentity || m.BeginSHA256 != beginDigest(b) || m.ParametersSHA256 != b.ParametersSHA256 || !sameCheckpointWorld(m.World, b.World) {
+	if m.Kind != "waldo-trainer-checkpoint" || m.Schema != 2 || m.ExecutionConfig == nil {
+		return nil, fmt.Errorf("checkpoint requires schema 2 identity plus execution config; legacy checkpoints cannot resume")
+	}
+	if m.PlanSHA256 == "" || m.PlanSHA256 != b.ModelID {
+		return nil, fmt.Errorf("checkpoint plan_sha256 mismatch")
+	}
+	execution := map[string]any{}
+	for key := range m.Execution {
+		execution[key] = b.Parameters[key]
+	}
+	if err := CheckExecution(*m.ExecutionConfig, b.executionConfig(execution)); err != nil {
+		return nil, err
+	}
+	if m.Identity != b.CheckpointIdentity || m.BeginSHA256 != beginDigest(b) || m.ParametersSHA256 != b.ParametersSHA256 || !sameCheckpointWorld(m.World, b.World) {
 		return nil, fmt.Errorf("checkpoint run BOM, parameters or world mismatch")
 	}
 	if err := m.Identity.validate(); err != nil {

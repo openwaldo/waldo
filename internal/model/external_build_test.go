@@ -306,16 +306,15 @@ func TestExternalSecondaryRejectsPinsBeforeReadiness(t *testing.T) {
 }
 
 // ComposeExternal builds the plan identity from the compose; WALDO-owned data
-// and determinism changes must fork it, so reusing a model name is refused
+// changes must fork it, so reusing a model name is refused
 // before any run state changes.
-func TestExternalComposeIdentityTracksDeterminismAndData(t *testing.T) {
+func TestExternalComposeIdentityTracksData(t *testing.T) {
 	b, c, o := externalLifecycleFixture(t)
 	if _, err := b.ComposeExternal(t.Context(), "model", c, o); err != nil {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*ExternalCompose){
-		"determinism": func(c *ExternalCompose) { c.Trainer.Determinism = "best-effort" },
-		"data seed":   func(c *ExternalCompose) { c.Stages[0].Data.Seed = 43 },
+		"data seed": func(c *ExternalCompose) { c.Stages[0].Data.Seed = 43 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := c
@@ -362,5 +361,77 @@ func TestExternalLifecycleRejectsTamperedRunBOMOnResume(t *testing.T) {
 	b.Progress = nil
 	if _, err = b.ComposeExternal(t.Context(), "tampered", c, o); err == nil || !strings.Contains(err.Error(), "identity digest mismatch") {
 		t.Fatalf("tampered run BOM resumed: %v", err)
+	}
+}
+
+func TestExternalResumeRecordsChangedHostSegments(t *testing.T) {
+	b, c, o := externalLifecycleFixture(t, func(code string) string {
+		return strings.ReplaceAll(strings.ReplaceAll(code, "name='cpu'", "name=os.environ.get('CUDA_VISIBLE_DEVICES', 'cpu')"), "driver='unavailable'", "driver=os.environ.get('CUDA_VISIBLE_DEVICES', 'unavailable')")
+	})
+	t.Setenv("CUDA_VISIBLE_DEVICES", "first-device-driver")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	b.Progress = func(p Progress) {
+		if p.Training != nil && p.Training.Kind == "checkpoint" {
+			cancel()
+		}
+	}
+	if _, err := b.ComposeExternal(ctx, "segments", c, o); err == nil {
+		t.Fatal("expected interruption")
+	}
+	c.Trainer.Determinism = "off"
+	if _, err := b.ComposeExternal(t.Context(), "segments", c, o); err == nil || !strings.Contains(err.Error(), "determinism") {
+		t.Fatalf("resume determinism: %v", err)
+	}
+	c.Trainer.Determinism = "required"
+	t.Setenv("CUDA_VISIBLE_DEVICES", "second-device-driver")
+	b.Progress = nil
+	out, err := b.ComposeExternal(t.Context(), "segments", c, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segments := out.BOM.Runs[0].Segments
+	if len(segments) != 2 {
+		t.Fatalf("segments=%d", len(segments))
+	}
+	for i, want := range []string{"first-device-driver", "second-device-driver"} {
+		var segment ExternalRunBOM
+		if err := readJSON(filepath.Join(out.Path, segments[i].Path), &segment); err != nil {
+			t.Fatal(err)
+		}
+		if segment.Probe.Driver != want || segment.Probe.Devices[0].Name != want {
+			t.Fatalf("segment %d: %+v", i, segment.Probe)
+		}
+		if segment.ModelID != out.Model.ID {
+			t.Fatal("segment plan identity differs")
+		}
+	}
+}
+
+func TestExternalPlanOnlyDeterminismIsNotIdentity(t *testing.T) {
+	b, c, o := externalLifecycleFixture(t)
+	o.PlanOnly = true
+	first, err := b.ComposeExternal(t.Context(), "planned", c, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Trainer.Determinism = "off"
+	second, err := b.ComposeExternal(t.Context(), "planned", c, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Model.ID != second.Model.ID {
+		t.Fatal("determinism forked plan")
+	}
+	if _, err := os.Stat(filepath.Join(b.Root, "planned")); !os.IsNotExist(err) {
+		t.Fatal("plan-only created model state")
+	}
+	o.PlanOnly = false
+	actual, err := b.ComposeExternal(t.Context(), "planned", c, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual.Model.ID != first.Model.ID || actual.RunBOMs[0].Determinism != "off" {
+		t.Fatal("plan-only differs from training identity")
 	}
 }

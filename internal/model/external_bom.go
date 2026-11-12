@@ -29,7 +29,6 @@ type ExternalIdentity struct {
 	ArchitectureSHA256       string                     `json:"architecture_sha256"`
 	ArchitectureSchemaSHA256 string                     `json:"architecture_schema_sha256"`
 	ParametersSchemaSHA256   string                     `json:"parameters_schema_sha256"`
-	Determinism              string                     `json:"determinism"`
 	Interaction              Interaction                `json:"interaction,omitzero"`
 	Stages                   []ExternalStageIdentity    `json:"stages"`
 }
@@ -55,23 +54,25 @@ type ExternalPlan struct {
 // ExternalRunBOM embeds the same immutable identity and separates actual
 // execution parameters, launch allowlists and host observations from it.
 type ExternalRunBOM struct {
-	Hosts          []string                       `json:"hosts,omitempty"`
-	DataPlane      string                         `json:"data_plane,omitempty"`
-	Initialization *training.WorkerInitialization `json:"initialization,omitempty"`
-	Kind           string                         `json:"kind"`
-	Schema         int                            `json:"schema"`
-	Subject        string                         `json:"subject"`
-	ID             string                         `json:"id"`
-	ModelID        string                         `json:"model_id"`
-	Stage          string                         `json:"stage"`
-	Identity       ExternalIdentity               `json:"identity"`
-	CorpusBOM      corpus.BOM                     `json:"corpus_bom"`
-	Resolved       trainerapp.Resolved            `json:"resolved"`
-	EvaluationSet  training.EvaluationSet         `json:"evaluation_set"`
-	TrainerHost    pythonenv.RunEvidence          `json:"trainer_host"`
-	TokenizerHost  pythonenv.RunEvidence          `json:"tokenizer_host"`
-	Probe          trainerapp.Probe               `json:"probe"`
-	Launches       []applaunch.Evidence           `json:"launches"`
+	ExecutionConfig trainerapp.ExecutionConfig     `json:"execution_config"`
+	Determinism     string                         `json:"determinism"`
+	Hosts           []string                       `json:"hosts,omitempty"`
+	DataPlane       string                         `json:"data_plane,omitempty"`
+	Initialization  *training.WorkerInitialization `json:"initialization,omitempty"`
+	Kind            string                         `json:"kind"`
+	Schema          int                            `json:"schema"`
+	Subject         string                         `json:"subject"`
+	ID              string                         `json:"id"`
+	ModelID         string                         `json:"model_id"`
+	Stage           string                         `json:"stage"`
+	Identity        ExternalIdentity               `json:"identity"`
+	CorpusBOM       corpus.BOM                     `json:"corpus_bom"`
+	Resolved        trainerapp.Resolved            `json:"resolved"`
+	EvaluationSet   training.EvaluationSet         `json:"evaluation_set"`
+	TrainerHost     pythonenv.RunEvidence          `json:"trainer_host"`
+	TokenizerHost   pythonenv.RunEvidence          `json:"tokenizer_host"`
+	Probe           trainerapp.Probe               `json:"probe"`
+	Launches        []applaunch.Evidence           `json:"launches"`
 }
 
 type ExternalModelBOM struct {
@@ -86,6 +87,7 @@ type ExternalModelBOM struct {
 	Runs       []ExternalBOMRun `json:"runs"`
 }
 type ExternalBOMRun struct {
+	Segments  []training.Artifact   `json:"segments,omitempty"`
 	ID        string                `json:"id"`
 	BOM       training.Artifact     `json:"bom"`
 	Artifacts []trainerapp.Artifact `json:"artifacts"`
@@ -135,7 +137,7 @@ func hexDigest(s string, n int) bool {
 	return true
 }
 func checkEnvironment(e pythonenv.Identity) error {
-	if e.Name == "" || e.Kind != "python-lock" || e.InterpreterVersion == "" || e.PlatformTag == "" || !hexDigest(e.LockSHA256, 64) || !hexDigest(e.InterpreterSHA256, 64) {
+	if e.Name == "" || e.Kind != "python-lock" || e.InterpreterVersion == "" || !hexDigest(e.LockSHA256, 64) {
 		return fmt.Errorf("incomplete environment identity")
 	}
 	return nil
@@ -159,9 +161,6 @@ func (p ExternalPlan) ValidateSchemas(raw []byte) error {
 	}
 	if err := checkEnvironment(i.Tokenizer.Environment); err != nil {
 		return err
-	}
-	if i.Determinism != "required" && i.Determinism != "best-effort" && i.Determinism != "off" {
-		return fmt.Errorf("invalid determinism")
 	}
 	var schemas struct {
 		Kind         string          `json:"kind"`
@@ -322,6 +321,25 @@ func WriteExternalRunBOM(directory, path string, run ExternalRunBOM) (string, er
 	if run.Kind != "openwaldo-bom" || run.Schema != 2 || run.Subject != "training-run" || run.ID == "" || run.ModelID != id || !sameExternalJSON(run.Identity, p.Identity) {
 		return "", fmt.Errorf("run does not match external plan")
 	}
+	if run.Determinism != "required" && run.Determinism != "best-effort" && run.Determinism != "off" {
+		return "", fmt.Errorf("invalid run determinism")
+	}
+	config := run.ExecutionConfig
+	if config.Determinism != run.Determinism || !sameExternalJSON(config.Parameters, run.Resolved.Execution) || !sameExternalJSON(config.TrainerEnvironment, run.TrainerHost.ExecutionEvidence) || !sameExternalJSON(config.TokenizerEnvironment, run.TokenizerHost.ExecutionEvidence) || int64(config.World.WorldSize) != run.Resolved.Batch.WorldSize {
+		return "", fmt.Errorf("run execution config differs from recorded parameters/environment/world")
+	}
+	launchMatched := false
+	for _, launch := range run.Launches {
+		launchMatched = launchMatched || (launch.Profile == config.Profile && launch.Launcher == config.Launcher && launch.World == config.World)
+	}
+	if !launchMatched || (config.Profile != "single-process" && config.Profile != "distributed") || (config.Launcher != "python" && config.Launcher != "torchrun") {
+		return "", fmt.Errorf("run execution config lacks matching launch evidence")
+	}
+	for _, env := range []pythonenv.ExecutionEvidence{config.TrainerEnvironment, config.TokenizerEnvironment} {
+		if !hexDigest(env.InterpreterSHA256, 64) || env.PlatformTag == "" || env.Wheels == nil {
+			return "", fmt.Errorf("incomplete run environment evidence")
+		}
+	}
 	var stage *ExternalStageIdentity
 	for n := range p.Identity.Stages {
 		if p.Identity.Stages[n].Name == run.Stage {
@@ -396,6 +414,14 @@ func WriteExternalModelBOM(directory string, exported bool, runs []ExternalBOMRu
 		// Reuse rooted publication checks for run JSON as well as released tensors.
 		if err := verifyExternalRunFile(directory, r.BOM, p, id, r.ID); err != nil {
 			return bom, err
+		}
+		for _, segment := range r.Segments {
+			if !filepath.IsLocal(segment.Path) {
+				return bom, fmt.Errorf("invalid segment path")
+			}
+			if err := verifyExternalRunFile(directory, segment, p, id, r.ID); err != nil {
+				return bom, err
+			}
 		}
 		if err := trainerapp.VerifyPublished(directory, r.Artifacts); err != nil {
 			return bom, err

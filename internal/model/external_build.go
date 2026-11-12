@@ -4,6 +4,7 @@ package model
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -20,6 +21,9 @@ import (
 // ExternalOptions contains machine-local policy and resolved corpus inputs.
 // Applications receive only prepared tokens, never these input paths.
 type ExternalOptions struct {
+	// PlanOnly performs source/environment/data resolution, but never writes model
+	// or run state or launches train. Used by identity qualification tooling.
+	PlanOnly              bool
 	NodeLaunches          map[string][]applaunch.Evidence
 	PreparedCacheMaxBytes int64
 	Hosts                 []string
@@ -34,6 +38,7 @@ type ExternalOptions struct {
 }
 
 type ExternalAttempt struct {
+	BOM          *training.Artifact   `json:"bom,omitempty"`
 	NodeLaunches []applaunch.Evidence `json:"node_launches,omitempty"`
 	Started      string               `json:"started"`
 	Finished     string               `json:"finished,omitempty"`
@@ -141,6 +146,16 @@ func InspectExternal(root, name string) (ExternalInspection, error) {
 				return out, err
 			}
 		}
+		for _, attempt := range r.Attempts {
+			if attempt.BOM != nil {
+				if !filepath.IsLocal(attempt.BOM.Path) {
+					return out, fmt.Errorf("invalid segment path")
+				}
+				if err := verifyExternalRunFile(out.Path, *attempt.BOM, p, id, r.ID); err != nil {
+					return out, err
+				}
+			}
+		}
 		out.Runs = append(out.Runs, r)
 		out.RunBOMs = append(out.RunBOMs, bom)
 	}
@@ -160,6 +175,11 @@ func InspectExternal(root, name string) (ExternalInspection, error) {
 			return out, err
 		}
 		ref := ExternalBOMRun{ID: r.ID, BOM: training.Artifact{Path: filepath.Join("runs", r.ID, "RUN-BOM.json"), SHA256: application.Digest(raw), Bytes: int64(len(raw))}}
+		for _, attempt := range r.Attempts {
+			if attempt.BOM != nil {
+				ref.Segments = append(ref.Segments, *attempt.BOM)
+			}
+		}
 		for _, a := range r.Complete.Artifacts {
 			a.Path = filepath.Join("runs", r.ID, "artifacts", a.Path)
 			ref.Artifacts = append(ref.Artifacts, a)
@@ -377,7 +397,7 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 	if err != nil {
 		return zero, err
 	}
-	plan := ExternalPlan{Kind: "waldo-model-plan", Schema: 2, Name: name, Identity: ExternalIdentity{Trainer: sources.Trainer, Environment: trainerEnv.Identity, Tokenizer: codec.Identity(), Architecture: c.Architecture, ArchitectureSHA256: archHash, ArchitectureSchemaSHA256: client.SchemaHashes()["architecture"], ParametersSchemaSHA256: client.SchemaHashes()["parameters"], Determinism: c.Trainer.Determinism, Interaction: c.Interaction}}
+	plan := ExternalPlan{Kind: "waldo-model-plan", Schema: 2, Name: name, Identity: ExternalIdentity{Trainer: sources.Trainer, Environment: trainerEnv.Identity, Tokenizer: codec.Identity(), Architecture: c.Architecture, ArchitectureSHA256: archHash, ArchitectureSchemaSHA256: client.SchemaHashes()["architecture"], ParametersSchemaSHA256: client.SchemaHashes()["parameters"], Interaction: c.Interaction}}
 	var stages []externalPreparedStage
 	var resolutions []trainerapp.Resolved
 	for _, s := range c.Stages {
@@ -386,7 +406,7 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 		if err != nil {
 			return zero, fmt.Errorf("stage %s: %w", s.Name, err)
 		}
-		p.resolved, err = client.Resolve(ctx, c.Architecture, s.Trainer, p.data, trainerapp.World{World: world})
+		p.resolved, err = client.ResolveCompose(ctx, c.Architecture, s.Trainer, s.Execution, p.data, trainerapp.World{World: world})
 		if err != nil {
 			return zero, err
 		}
@@ -406,6 +426,12 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 	id, err := plan.SHA256()
 	if err != nil {
 		return zero, err
+	}
+	if o.PlanOnly {
+		if err := plan.ValidateSchemas(schemas); err != nil {
+			return zero, err
+		}
+		return ExternalInspection{Plan: plan, Model: ExternalModelRecord{Kind: "waldo-model", Schema: 2, ID: id, Name: name}}, nil
 	}
 	if _, err = os.Stat(directory); os.IsNotExist(err) {
 		if _, err = WriteExternalPlan(directory, plan, schemas, resolutions); err != nil {
@@ -478,7 +504,9 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 		if err != nil {
 			return zero, err
 		}
-		bom := ExternalRunBOM{Hosts: o.Hosts, DataPlane: training.DataPlaneNodeLocal, Initialization: initialization, Kind: "openwaldo-bom", Schema: 2, Subject: "training-run", ID: s.Name, ModelID: id, Stage: s.Name, Identity: plan.Identity, CorpusBOM: p.bom, Resolved: p.resolved, EvaluationSet: p.partition.Evaluation, TrainerHost: trainerEnv.Run, TokenizerHost: tokenEnv.Run, Probe: current.Probe(), Launches: append(append(current.Evidence(), evidence, tokenEvidence), o.NodeLaunches[s.Name]...)}
+		executionConfig := trainerapp.ExecutionConfig{Profile: evidence.Profile, Launcher: evidence.Launcher, World: world, Parameters: p.resolved.Execution, Determinism: c.Trainer.Determinism, TrainerEnvironment: trainerEnv.Run.ExecutionEvidence, TokenizerEnvironment: tokenEnv.Run.ExecutionEvidence}
+		bom := ExternalRunBOM{ExecutionConfig: executionConfig, Determinism: c.Trainer.Determinism, Hosts: o.Hosts, DataPlane: training.DataPlaneNodeLocal, Initialization: initialization, Kind: "openwaldo-bom", Schema: 2, Subject: "training-run", ID: s.Name, ModelID: id, Stage: s.Name, Identity: plan.Identity, CorpusBOM: p.bom, Resolved: p.resolved, EvaluationSet: p.partition.Evaluation, TrainerHost: trainerEnv.Run, TokenizerHost: tokenEnv.Run, Probe: current.Probe(), Launches: append(append(current.Evidence(), evidence, tokenEvidence), o.NodeLaunches[s.Name]...)}
+		segmentBOM := bom
 		record := ExternalRunRecord{Kind: "waldo-model-run", Schema: 2, ID: s.Name, ModelID: id, Stage: s.Name, State: RunPlanned, Initialization: initialization}
 		recordPath := filepath.Join(runDir, "RUN.json")
 		if err = readJSON(recordPath, &record); err == nil {
@@ -492,7 +520,10 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 			if err = checkExternalHash(saved, record.BOMSHA256); err != nil {
 				return zero, err
 			}
-			// Host probe values may vary; the resolved execution and evaluation pins may not.
+			// Host probe values may vary; the exact execution config may not.
+			if err := trainerapp.CheckExecution(saved.ExecutionConfig, executionConfig); err != nil {
+				return zero, err
+			}
 			if !sameExternalJSON(saved.Hosts, o.Hosts) || saved.Resolved.Batch.WorldSize != int64(world.WorldSize) || !sameExternalJSON(saved.Identity, plan.Identity) || !sameExternalJSON(saved.Resolved, p.resolved) || !sameExternalJSON(saved.EvaluationSet, p.partition.Evaluation) || !sameExternalJSON(saved.Initialization, initialization) || !sameExternalJSON(record.Initialization, initialization) {
 				return zero, fmt.Errorf("external resume execution or evaluation pins changed")
 			}
@@ -511,7 +542,7 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 		} else {
 			return zero, err
 		}
-		begin := trainerapp.Begin{Paths: trainerapp.Paths{Artifacts: filepath.Join(runDir, "artifacts"), Checkpoints: filepath.Join(runDir, "checkpoints"), Scratch: request.Scratch}, ModelID: id, RunID: s.Name, Stage: s.Name, Objective: s.Objective, Data: p.data, Architecture: c.Architecture, ArchitectureSHA256: archHash, Parameters: p.resolved.Parameters, ParametersSHA256: p.resolved.ParametersSHA256, Batch: p.resolved.Batch, Tokenizer: codec.Spec(), EvaluationSet: p.partition.Evaluation, Initialization: record.Initialization, Determinism: c.Trainer.Determinism, World: world, CheckpointDirectory: filepath.Join(runDir, "bundles"), PriorCheckpoints: record.Checkpoints, PriorEvaluations: record.Evaluations}
+		begin := trainerapp.Begin{ExecutionConfig: executionConfig, Paths: trainerapp.Paths{Artifacts: filepath.Join(runDir, "artifacts"), Checkpoints: filepath.Join(runDir, "checkpoints"), Scratch: request.Scratch}, ModelID: id, RunID: s.Name, Stage: s.Name, Objective: s.Objective, Data: p.data, Architecture: c.Architecture, ArchitectureSHA256: archHash, Parameters: p.resolved.Parameters, ParametersSHA256: p.resolved.ParametersSHA256, Batch: p.resolved.Batch, Tokenizer: codec.Spec(), EvaluationSet: p.partition.Evaluation, Initialization: record.Initialization, Determinism: c.Trainer.Determinism, World: world, CheckpointDirectory: filepath.Join(runDir, "bundles"), PriorCheckpoints: record.Checkpoints, PriorEvaluations: record.Evaluations}
 		trainerHash, _ := externalHash(sources.Trainer)
 		envHash, _ := externalHash(trainerEnv.Identity)
 		begin.CheckpointIdentity = trainerapp.CheckpointIdentity{RunBOMSHA256: record.BOMSHA256, TrainerSHA256: trainerHash, TokenizerSHA256: codec.Identity().SHA256(), EnvironmentSHA256: envHash}
@@ -552,7 +583,21 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 				return zero, err
 			}
 			started := b.clock()()
-			record.Attempts = append(record.Attempts, ExternalAttempt{NodeLaunches: o.NodeLaunches[s.Name], Started: formatTime(started), Launch: evidence, Probe: current.Probe()})
+			segmentPath := filepath.Join("runs", s.Name, fmt.Sprintf("RUN-BOM-ATTEMPT-%d-%s.json", len(record.Attempts)+1, rand.Text()))
+			_, err = WriteExternalRunBOM(directory, filepath.Join(directory, segmentPath), segmentBOM)
+			if err != nil {
+				return zero, err
+			}
+			segmentInfo, err := os.Stat(filepath.Join(directory, segmentPath))
+			if err != nil {
+				return zero, err
+			}
+			segmentRaw, err := os.ReadFile(filepath.Join(directory, segmentPath))
+			if err != nil {
+				return zero, err
+			}
+			segment := training.Artifact{Path: segmentPath, SHA256: application.Digest(segmentRaw), Bytes: segmentInfo.Size()}
+			record.Attempts = append(record.Attempts, ExternalAttempt{BOM: &segment, NodeLaunches: o.NodeLaunches[s.Name], Started: formatTime(started), Launch: evidence, Probe: current.Probe()})
 			if err = writeJSONAtomic(recordPath, record); err != nil {
 				return zero, err
 			}
@@ -614,6 +659,11 @@ func (b Builder) ComposeExternal(ctx context.Context, name string, c ExternalCom
 			return zero, err
 		}
 		ref := ExternalBOMRun{ID: record.ID, BOM: training.Artifact{Path: filepath.Join("runs", s.Name, "RUN-BOM.json"), SHA256: application.Digest(runBytes), Bytes: int64(len(runBytes))}}
+		for _, attempt := range record.Attempts {
+			if attempt.BOM != nil {
+				ref.Segments = append(ref.Segments, *attempt.BOM)
+			}
+		}
 		for _, a := range record.Complete.Artifacts {
 			original := a
 			a.Path = filepath.Join("runs", s.Name, "artifacts", a.Path)

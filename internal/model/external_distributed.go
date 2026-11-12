@@ -68,7 +68,7 @@ func RunExternalSecondary(ctx context.Context, plan ExternalNodePlan, o External
 	if err != nil {
 		return err
 	}
-	resolved, err := client.Resolve(ctx, plan.Compose.Architecture, plan.Stage.Trainer, prepared.data, trainerapp.World{World: o.World})
+	resolved, err := client.ResolveCompose(ctx, plan.Compose.Architecture, plan.Stage.Trainer, plan.Stage.Execution, prepared.data, trainerapp.World{World: o.World})
 	if err != nil {
 		return err
 	}
@@ -76,6 +76,16 @@ func RunExternalSecondary(ctx context.Context, plan ExternalNodePlan, o External
 		return fmt.Errorf("secondary resolved trainer parameters mismatch")
 	}
 	begin := plan.Begin
+	begin.ExecutionConfig = plan.BOM.ExecutionConfig
+	localConfig := plan.BOM.ExecutionConfig
+	localConfig.TrainerEnvironment = env.Run.ExecutionEvidence
+	localConfig.TokenizerEnvironment = tokenEnv.Run.ExecutionEvidence
+	localConfig.World = o.World
+	localConfig.Parameters = resolved.Execution
+	localConfig.Determinism = plan.Compose.Trainer.Determinism
+	if err := trainerapp.CheckExecution(plan.BOM.ExecutionConfig, localConfig); err != nil {
+		return err
+	}
 	begin.CheckpointIdentity = plan.CheckpointIdentity
 	begin.CheckpointDirectory = plan.CheckpointDirectory
 	// Verify the primary checkpoint against its original begin before changing

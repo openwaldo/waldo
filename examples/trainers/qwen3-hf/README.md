@@ -61,8 +61,8 @@ spellings or receives inserted BOS/EOS tokens.
 All manifests require Python **3.12.3**. The host interpreter needs pip and venv
 for WALDO's managed environment creation. The `cpu` lock includes cross-platform
 wheel alternatives; the CPU qualification below was run on Linux aarch64.
-`cuda` pins Linux aarch64 CUDA 13.0 wheels for the GB10; `cuda-amd64` pins
-x86_64 CUDA 13.0 wheels. Both are also available to the tokenizer when sharing
+`cuda` is one universal Linux aarch64/x86_64 CUDA 13.0 lock.
+It is also available to the tokenizer when sharing
 the trainer environment is useful. `tokenizer` contains the
 codec without PyTorch. WALDO installs hash-verified wheels and revalidates the
 read-only environment inventory. The locks are authoritative; `requirements.in`
@@ -137,10 +137,30 @@ CUDA runs above completed successfully.
 ## Two-GPU qualification
 
 The CLI lifecycle was exercised on two RTX 4060 Ti 16 GB GPUs on Linux x86_64,
-with Python 3.12.3 and the `cuda-amd64` lock: uninterrupted training, interruption
+with Python 3.12.3 and the former architecture-specific lock (now merged into `cuda`): uninterrupted training, interruption
 after a verified checkpoint, same-run resume, byte-identical published weights,
 completed no-ops, and verified export passed. Reproduce it with the opt-in
 `testing/e2e/model-external-distributed.sh` described in `docs/TESTING.md`.
 This does not claim cross-world-size determinism or physical multi-node
 qualification. Hostfile preflight retains the native requirement for matching
 runtime and accelerator topology on every node.
+
+## Portable plan identity
+
+The stage `trainer` block contains identity-bearing recipe inputs (`bf16`, `fp16`,
+optimizer, learning rate, schedule, seeds and warmup). Put execution overrides in
+stage `execution`: `per_device_train_batch_size`, `gradient_accumulation_steps`,
+`attn_implementation`, `gradient_checkpointing`, `torch_compile`, `logging_steps`
+and `report_to`. The probe schema declares these with `x-waldo-role: execution`;
+WALDO rejects values in the wrong block. Compilation remains disabled until
+numerically qualified. Global batch size stays in `data` and must equal
+micro-batch × accumulation × world size.
+
+`trainer.determinism` is retained but excluded from plan identity. Interpreter
+bytes, platform, selected wheels and hardware observations are run evidence;
+Python version and the universal lock digest are identity. Resume requires the
+same plan and exact execution config, including determinism and environment
+evidence. GPU/driver/CUDA/kernel changes are recorded per attempt, not enforced.
+Equal plans describe equivalent specifications, not necessarily identical weights;
+weights are identified by artifact digest. See ADR 0089 for the unverified
+bitwise/statistical reproducibility claim levels.

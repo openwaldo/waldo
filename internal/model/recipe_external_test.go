@@ -116,11 +116,15 @@ func TestExternalComposeProbeSchemas(t *testing.T) {
 	if err := doc.External.ValidateSchemas(arch, params, tok); err != nil {
 		t.Fatal(err)
 	}
-	doc.External.Stages[0].Trainer["micro_batch"] = 2
+	doc.External.Stages[0].Execution = map[string]any{"micro_batch": 2}
 	if err := doc.External.ValidateSchemas(arch, params, tok); err != nil {
 		t.Fatal(err)
 	}
-	recipe, execution, err := params.Split(doc.External.Stages[0].Trainer)
+	merged, err := params.ComposeParameters(doc.External.Stages[0].Trainer, doc.External.Stages[0].Execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe, execution, err := params.Split(merged)
 	if err != nil {
 		t.Fatal(err)
 	}

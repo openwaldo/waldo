@@ -39,7 +39,7 @@ func TestEnvironmentHelperRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Identity.Name != "cpu" || result.Identity.Kind != "python-lock" || len(result.Identity.LockSHA256) != 64 || len(result.Identity.InterpreterSHA256) != 64 || result.Run.Installer != "pip" {
+	if result.Identity.Name != "cpu" || result.Identity.Kind != "python-lock" || len(result.Identity.LockSHA256) != 64 || len(result.Run.InterpreterSHA256) != 64 || result.Run.Installer != "pip" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 	verified, err := Verify(context.Background(), request)

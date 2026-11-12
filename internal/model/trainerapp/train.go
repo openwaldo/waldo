@@ -31,6 +31,7 @@ type Resume struct {
 	consumption        map[string]int64
 }
 type Begin struct {
+	ExecutionConfig ExecutionConfig `json:"-"`
 	// Lifecycle-owned pins and durable checkpoint destination are not trainer input.
 	PriorCheckpoints    []CheckpointReference           `json:"-"`
 	PriorEvaluations    []Evaluation                    `json:"-"`

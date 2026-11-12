@@ -88,10 +88,13 @@ integers and `micro_batch_sequences × accumulation_steps × world_size ==
 global_batch_sequences` without multiplication overflow.
 
 WALDO calls resolve again with one node/process and the same probe devices,
-architecture, data and compose parameters, even when the actual shape is already
+architecture, data and recipe inputs, even when the actual shape is already
 single-process. Each response is validated and split by schema role. Different
 recipe hashes fail. An unsupported recipe value must produce an error; a
 trainer must not silently downgrade precision or otherwise change the recipe.
+Stage `trainer` and `execution` inputs are checked against schema roles before
+merging into the wire `parameters`. The comparison resolve omits execution
+inputs so a world-specific decomposition does not prevent the one-process check.
 Only the resolved recipe and its hash enter plan identity. Execution values,
 batch decomposition and the complete parameter hash are run evidence. The
 complete resolved object and its hash are passed to `begin`.
