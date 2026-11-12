@@ -85,3 +85,4 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0086: Verify external publications and persist external BOM records](0086-external-output-and-bom-records.md)
 - [0087: Integrate external applications through a separate lifecycle record](0087-external-training-lifecycle.md)
 - [0088: External distributed node-local coordinators](0088-external-distributed-coordinators.md)
+- [0089: Separate external training specification from execution](0089-portable-external-plan-identity.md)

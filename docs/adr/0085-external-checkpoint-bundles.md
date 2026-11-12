@@ -1,11 +1,14 @@
 # ADR 0085: Commit and authenticate external checkpoint bundles in WALDO
 
 Status: accepted
+
+Amended by [ADR 0089](0089-portable-external-plan-identity.md): portable plan
+identity is separate from the exact execution config required for resume.
 - Date: 2026-11-02
 
 ## Decision
 
-Implement ADR 0084's external resume boundary with the schema-1
+Implement ADR 0084's external resume boundary with the schema-2
 `waldo-trainer-checkpoint` manifest. WALDO derives per-corpus consumption from
 its prepared stream at the reported step, copies hash-verified regular files
 into a temporary bundle, synchronizes it, then atomically publishes it.
@@ -15,7 +18,8 @@ inside a bundle is not an integrity anchor.
 
 The manifest pins the immutable run BOM, trainer, tokenizer, selected
 environment, complete normalized begin request (excluding paths and resume),
-complete parameter hash, resolved execution object, world shape, position,
+identity hashes plus exact execution config (including a complete parameter
+hash, environment evidence, determinism and world shape), position,
 consumption and file roles. Resume requires exact compatibility and rechecks
 the independent manifest pin and every file immediately before launch.
 

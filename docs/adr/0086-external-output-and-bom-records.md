@@ -2,6 +2,9 @@
 
 Status: accepted
 
+Amended by [ADR 0089](0089-portable-external-plan-identity.md): portable plan
+identity is separate from the exact execution config required for resume.
+
 ## Decision
 
 Implement ADR 0084's provenance boundary with separate schema-2 external

@@ -1,6 +1,9 @@
 # ADR 0084: External trainers
 
 Status: accepted
+
+Amended by [ADR 0089](0089-portable-external-plan-identity.md): portable plan
+identity is separate from the exact execution config required for resume.
 - Date: 2026-11-02
 
 This ADR records the design of external trainers. Until the implementation
@@ -321,14 +324,13 @@ to WALDO and validated by the trainer's architecture schema. Each stage has a
 `global_batch_sequences`, seed, shuffle, evaluation selection, checkpoint and
 evaluation cadence), and a `trainer` block, opaque to WALDO, validated by the
 trainer's parameter schema and completed by `resolve`. Execution parameters
-are normally omitted from the stage `trainer` block. A value written there is
-validated against the world shape but still stays out of identity. WALDO
-validates the
+are supplied through the separate stage `execution` block (ADR 0089). Values
+in the wrong block fail validation. WALDO validates the
 batch topology, and the trainer must verify that micro-batch size times
 accumulation steps times world size equals the global batch. YAML anchors and
 aliases are allowed; `yaml.v3` expands them before decoding.
 
-The `determinism` value is recorded in the plan and passed to the trainer in
+The `determinism` value is recorded in the run BOM and passed to the trainer in
 `begin`. WALDO does not yet enforce it.
 
 A compose without `trainer` and `tokenizer` blocks uses the built-in trainer

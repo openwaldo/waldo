@@ -2,6 +2,9 @@
 
 Status: accepted
 
+Amended by [ADR 0089](0089-portable-external-plan-identity.md): portable plan
+identity is separate from the exact execution config required for resume.
+
 ## Decision
 
 External protocol-1 training uses torchrun and the existing hostfile/Fuzzball
@@ -18,7 +21,8 @@ sequences assigned to other nodes, so global reported consumption remains
 verifiable without transporting corpus data between nodes.
 
 World shape, host list, launch arguments, transport settings and data plane are
-run provenance only. Resume preserves topology. Distributed checkpoint begin
+run provenance only. Resume preserves topology and checks identity plus exact
+execution config as defined in ADR 0089. Distributed checkpoint begin
 hashes normalize node rank and the staged initialization file's host path;
 immutable initialization artifact facts remain pinned. Existing single-process
 checkpoint hashes are unchanged.
