@@ -164,3 +164,25 @@ evidence. GPU/driver/CUDA/kernel changes are recorded per attempt, not enforced.
 Equal plans describe equivalent specifications, not necessarily identical weights;
 weights are identified by artifact digest. See ADR 0089 for the unverified
 bitwise/statistical reproducibility claim levels.
+
+### ADR 0089 qualification (2026-11-12)
+
+Trainer/tokenizer source: `3ae8cf79e0575ab16cbb647e57bd8444f5c8a7bf`.
+The CPU synthetic conformance test passed with three compared step losses,
+micro-batch 4/accumulation 1 versus micro-batch 1/accumulation 4, maximum loss
+delta `1.430511474609375e-6` (absolute/relative tolerance `1e-5`). Interrupted
+resume produced byte-identical weights; final-step resume also passed.
+
+The universal CUDA lock installed and verified 43 wheels on Linux aarch64;
+the resolver test also selects the x86_64 wheels with identical package versions.
+
+`compose.tinystories.yaml`, model name `waldo-qwen3-tinystories`, and the
+WALDO-68 corpus BOM at index commit `33d0847391db625d0f94d087a81843bb1d62b088`
+produce plan SHA-256:
+
+`afea0ef5e69c4b440efc9de45b8cb6fd7ca6244abf498410277b38527bf7b069`
+
+The exact corpus BOM digest is
+`44b7a494586b20b9485ccc3e400ee5621c66506214618f9e91cb2c002af7e0fc`.
+The plan and corpus BOM are attached to WALDO-70 for WALDO-71's reproduction.
+This was a plan-only check; no TinyStories training was performed.

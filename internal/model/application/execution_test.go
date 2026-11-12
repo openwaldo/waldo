@@ -42,3 +42,25 @@ func TestWaldoOwnedExecutionDeclarationsRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestComposeNestedParameterRoles(t *testing.T) {
+	s, err := CompileSchema([]byte(`{"type":"object","properties":{"optimizer":{"type":"object","properties":{"rate":{"type":"number"},"micro":{"type":"integer","x-waldo-role":"execution"}}}}}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe := map[string]any{"optimizer": map[string]any{"rate": 0.1}}
+	execution := map[string]any{"optimizer": map[string]any{"micro": 4}}
+	merged, err := s.ComposeParameters(recipe, execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Validate(merged); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ComposeParameters(merged, nil); err == nil || !strings.Contains(err.Error(), "optimizer.micro") {
+		t.Fatalf("nested misclassification: %v", err)
+	}
+	if _, err := s.ComposeParameters(recipe, recipe); err == nil || !strings.Contains(err.Error(), "optimizer.rate") {
+		t.Fatalf("nested duplicate: %v", err)
+	}
+}

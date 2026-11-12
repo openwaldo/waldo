@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -237,32 +238,82 @@ func waldoOwnedParameter(key string) bool {
 // ComposeParameters checks the identity/execution boundary before resolve.
 // Schema defaults are not injected; omitted values remain the trainer's job.
 func (s *ParameterSchema) ComposeParameters(recipe, execution map[string]any) (map[string]any, error) {
-	merged := map[string]any{}
-	for key, value := range recipe {
-		merged[key] = value
+	if recipe == nil {
+		recipe = map[string]any{}
 	}
-	for key, value := range execution {
-		if _, exists := merged[key]; exists {
-			return nil, fmt.Errorf("parameter %s occurs in both trainer and execution", key)
+	if execution == nil {
+		execution = map[string]any{}
+	}
+	rawRecipe, err := jsonValue(recipe)
+	if err != nil {
+		return nil, err
+	}
+	rawExecution, err := jsonValue(execution)
+	if err != nil {
+		return nil, err
+	}
+	var merge func(map[string]any, map[string]any, string) (map[string]any, error)
+	merge = func(a, b map[string]any, path string) (map[string]any, error) {
+		out := map[string]any{}
+		for k, v := range a {
+			out[k] = v
 		}
-		merged[key] = value
+		for k, v := range b {
+			if previous, exists := out[k]; exists {
+				am, aok := previous.(map[string]any)
+				bm, bok := v.(map[string]any)
+				if !aok || !bok {
+					return nil, fmt.Errorf("parameter %s occurs in both trainer and execution", path+k)
+				}
+				nested, err := merge(am, bm, path+k+".")
+				if err != nil {
+					return nil, err
+				}
+				out[k] = nested
+			} else {
+				out[k] = v
+			}
+		}
+		return out, nil
+	}
+	merged, err := merge(rawRecipe.(map[string]any), rawExecution.(map[string]any), "")
+	if err != nil {
+		return nil, err
 	}
 	r, e, err := s.Split(merged)
 	if err != nil {
 		return nil, err
 	}
-	for key := range recipe {
-		if _, exists := e[key]; exists {
-			return nil, fmt.Errorf("execution parameter %s belongs in stage execution, not trainer", key)
+	var check func(map[string]any, map[string]any, string, string) error
+	check = func(input, projection map[string]any, role, path string) error {
+		for k, v := range input {
+			want, exists := projection[k]
+			vm, vok := v.(map[string]any)
+			wm, wok := want.(map[string]any)
+			if exists && vok && wok {
+				if err := check(vm, wm, role, path+k+"."); err != nil {
+					return err
+				}
+				continue
+			}
+			if !exists || !reflect.DeepEqual(v, want) {
+				if role == "recipe" {
+					return fmt.Errorf("execution parameter %s belongs in stage execution, not trainer", path+k)
+				}
+				return fmt.Errorf("identity parameter %s belongs in stage trainer, not execution", path+k)
+			}
 		}
+		return nil
 	}
-	for key := range execution {
-		if _, exists := r[key]; exists {
-			return nil, fmt.Errorf("identity parameter %s belongs in stage trainer, not execution", key)
-		}
+	if err := check(rawRecipe.(map[string]any), r, "recipe", ""); err != nil {
+		return nil, err
+	}
+	if err := check(rawExecution.(map[string]any), e, "execution", ""); err != nil {
+		return nil, err
 	}
 	return merged, nil
 }
+
 func schemaChildren(s *jsonschema.Schema) []*jsonschema.Schema {
 	out := []*jsonschema.Schema{s.Ref, s.Not, s.If, s.Then, s.Else, s.PropertyNames, s.UnevaluatedProperties, s.Contains, s.Items2020, s.UnevaluatedItems, s.ContentSchema}
 	out = append(out, s.AllOf...)

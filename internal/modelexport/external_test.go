@@ -79,6 +79,16 @@ func externalExportFixtureAt(t *testing.T, artifactPath string) model.ExternalIn
 		t.Fatal(err)
 	}
 	refs := []model.ExternalBOMRun{{ID: "train", BOM: training.Artifact{Path: runPath, SHA256: application.Digest(raw), Bytes: int64(len(raw))}, Artifacts: []trainerapp.Artifact{{Artifact: training.Artifact{Path: artifactPath, SHA256: application.Digest(payload), Bytes: int64(len(payload))}, Role: "weights", Format: "safetensors"}}}}
+	segmentPath := "runs/train/RUN-BOM-ATTEMPT-1.json"
+	run.Probe.Driver = "segment driver"
+	if _, err := model.WriteExternalRunBOM(directory, filepath.Join(directory, segmentPath), run); err != nil {
+		t.Fatal(err)
+	}
+	segmentRaw, err := os.ReadFile(filepath.Join(directory, segmentPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs[0].Segments = []training.Artifact{{Path: segmentPath, SHA256: application.Digest(segmentRaw), Bytes: int64(len(segmentRaw))}}
 	bom, err := model.WriteExternalModelBOM(directory, false, refs)
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +102,7 @@ func TestExternalExportCopiesVerifiedPackageAndFinalizes(t *testing.T) {
 	called := false
 	_, err := ExportExternal(t.Context(), inspection, destination, Options{EUBOM: []byte("{}"), Finalize: func(dir string) error {
 		called = true
-		for _, name := range []string{"BOM.json", "EU-BOM.json", "PLAN.json", "TRAINER-SCHEMAS.json", "model.safetensors"} {
+		for _, name := range []string{"BOM.json", "EU-BOM.json", "PLAN.json", "TRAINER-SCHEMAS.json", "model.safetensors", "runs/train/RUN-BOM-ATTEMPT-1.json"} {
 			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 				return err
 			}
@@ -162,5 +172,16 @@ func TestExternalExportRejectsUnsafeLayout(t *testing.T) {
 		if _, err := os.Stat(destination); !os.IsNotExist(err) {
 			t.Fatalf("artifact %s published", path)
 		}
+	}
+}
+
+func TestExternalExportRejectsCorruptSegment(t *testing.T) {
+	inspection := externalExportFixture(t)
+	path := filepath.Join(inspection.Path, inspection.BOM.Runs[0].Segments[0].Path)
+	if err := os.WriteFile(path, []byte("corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExportExternal(t.Context(), inspection, filepath.Join(t.TempDir(), "export"), Options{}); err == nil {
+		t.Fatal("corrupt execution segment exported")
 	}
 }
