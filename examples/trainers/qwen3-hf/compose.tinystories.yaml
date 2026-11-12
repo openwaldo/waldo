@@ -7,7 +7,7 @@ schema: 2
 trainer:
   source: &application
     repository: https://github.com/kyleishie/waldo.git
-    commit: 3ae8cf79e0575ab16cbb647e57bd8444f5c8a7bf
+    commit: f9c2f5bdfd90145400b469ad5c89b6154b4f553b
     path: examples/trainers/qwen3-hf
   environment: cuda
   determinism: best-effort
