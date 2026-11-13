@@ -24,6 +24,7 @@ for target in \
     docs/INGESTION-DESIGN.md \
     docs/MODEL-COMPOSE.md \
     docs/MODEL-LIFECYCLE.md \
+    docs/WRITING-EXTERNAL-TRAINERS.md \
     docs/MODEL-EXPORTS.md \
     docs/COMPATIBILITY.md \
     docs/TESTING.md

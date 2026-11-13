@@ -952,3 +952,14 @@ func TestHostfileStageResumeVerifiesCheckpointsInPrivateScratch(t *testing.T) {
 		t.Fatalf("stage error = %v, want an already staged checkpoint in an unsafe directory to be refused", err)
 	}
 }
+
+func TestExternalHostfilePreflightCarriesBootstrapAndStageScratch(t *testing.T) {
+	t.Setenv("WALDO_APPLICATION_PYTHON", "/opt/python312/bin/python")
+	session := hostfileSession{externalCompose: `{"kind":"waldo-model-compose"}`, remoteRoot: "/scratch/session", remoteBinary: "/scratch/session/waldo", cluster: training.Cluster{Nodes: 2, Rendezvous: "primary:29500", RendezvousID: "test"}}
+	args := strings.Join(session.workerArguments(1, true), " ")
+	for _, expected := range []string{"--external-compose-json", "--application-python /opt/python312/bin/python", "--scratch /scratch/session/runs/test/node-1", "--check"} {
+		if !strings.Contains(args, expected) {
+			t.Fatalf("missing %s: %s", expected, args)
+		}
+	}
+}

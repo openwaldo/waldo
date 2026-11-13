@@ -1,0 +1,12 @@
+kind: waldo-trainer
+schema: 1
+name: qwen3-hf
+protocol: 1
+entrypoint: {module: qwen3_hf.train_cli}
+commands: {probe: probe, resolve: resolve, train: train}
+launch_profiles: [single-process, distributed]
+objectives: [causal-language-modeling, assistant-response-modeling]
+artifact_profile: hf-causal-lm
+environments:
+  cpu: {kind: python-lock, lock: env/cpu/pylock.toml, python: 3.12.3}
+  cuda: {kind: python-lock, lock: env/cuda/pylock.toml, python: 3.12.3}

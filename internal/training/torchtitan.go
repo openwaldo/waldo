@@ -149,20 +149,29 @@ func (backend TorchTitan) launchArguments(workerPath string, request Request) []
 }
 
 func (backend TorchTitan) environment() ([]string, error) {
-	environment := append(os.Environ(), "PYTHONUNBUFFERED=1")
-	interfaceName := backend.Interface
-	if interfaceName == "" && backend.Nodes > 1 {
+	settings, err := NCCLEnvironment(backend.Nodes, backend.Rendezvous, backend.Interface, backend.HCA)
+	if err != nil {
+		return nil, err
+	}
+	return append(append(os.Environ(), "PYTHONUNBUFFERED=1"), settings...), nil
+}
+
+// NCCLEnvironment resolves the shared native/external transport policy without inheriting host variables.
+func NCCLEnvironment(nodes int, rendezvous, iface, hca string) ([]string, error) {
+	var environment []string
+	interfaceName := iface
+	if interfaceName == "" && nodes > 1 {
 		var err error
-		interfaceName, err = selectRendezvousInterface(backend.Rendezvous)
+		interfaceName, err = selectRendezvousInterface(rendezvous)
 		if err != nil {
-			return nil, fmt.Errorf("select NCCL interface for rendezvous %s: %w", backend.Rendezvous, err)
+			return nil, fmt.Errorf("select NCCL interface for rendezvous %s: %w", rendezvous, err)
 		}
 	}
 	if interfaceName != "" {
 		environment = append(environment, "NCCL_SOCKET_IFNAME="+interfaceName)
 	}
-	if backend.HCA != "" {
-		environment = append(environment, "NCCL_IB_HCA="+backend.HCA, "NCCL_IB_DISABLE=0")
+	if hca != "" {
+		environment = append(environment, "NCCL_IB_HCA="+hca, "NCCL_IB_DISABLE=0")
 	} else {
 		// RDMA must be explicitly selected. NCCL can otherwise prefer an HCA
 		// that is present but not routable between the training hosts.
@@ -454,25 +463,30 @@ import struct
 import sysconfig
 from pathlib import Path
 import torch
-import torchtitan
-import torch.testing._internal.distributed.fake_pg
-from triton.runtime import driver as triton_driver
-from torch.distributed._composable.fsdp import fully_shard
-from torch.distributed.checkpoint.state_dict import get_model_state_dict, StateDictOptions
-from torchtitan.distributed import ParallelDims
+import sys
+external = len(sys.argv) > 1 and sys.argv[1] == "external"
+if not external:
+    import torchtitan
+    import torch.testing._internal.distributed.fake_pg
+    from triton.runtime import driver as triton_driver
+    from torch.distributed._composable.fsdp import fully_shard
+    from torch.distributed.checkpoint.state_dict import get_model_state_dict, StateDictOptions
+    from torchtitan.distributed import ParallelDims
 
 if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
     raise RuntimeError("TorchTitan requires at least one visible CUDA or ROCm GPU")
 # Torch compile reaches this lazy native-helper build only on the first model
 # batch. Force it during preflight so missing compilers, Python headers, or
 # driver link libraries fail before corpus materialization and GPU launch.
-compiler = os.environ.get("CC") or shutil.which("gcc") or shutil.which("cc")
-if not compiler:
-    raise RuntimeError("Triton native build requires a C compiler; install gcc or set CC")
-python_header = Path(sysconfig.get_path("include")) / "Python.h"
-if not python_header.is_file():
-    raise RuntimeError(f"Triton native build requires {python_header}; install the matching Python development headers")
-triton_driver.active.get_current_target()
+if not external:
+    compiler = os.environ.get("CC") or shutil.which("gcc") or shutil.which("cc")
+    if not compiler:
+        raise RuntimeError("Triton native build requires a C compiler; install gcc or set CC")
+    python_header = Path(sysconfig.get_path("include")) / "Python.h"
+    if not python_header.is_file():
+        raise RuntimeError(f"Triton native build requires {python_header}; install the matching Python development headers")
+    triton_driver.active.get_current_target()
+
 manufacturer = "AMD" if torch.version.hip else "NVIDIA"
 devices = []
 for index in range(torch.cuda.device_count()):
@@ -547,7 +561,7 @@ memlock_soft, _ = resource.getrlimit(resource.RLIMIT_MEMLOCK)
 print(json.dumps({
     "python_version": platform.python_version(),
     "torch_version": torch.__version__,
-    "torchtitan_version": importlib.metadata.version("torchtitan"),
+    "torchtitan_version": "external" if external else importlib.metadata.version("torchtitan"),
     "devices": devices,
     "memlock_soft_bytes": memlock_soft,
     "network_interfaces": network_interfaces,
@@ -557,9 +571,17 @@ print(json.dumps({
 `
 
 func probeTorchTitan(ctx context.Context, python string) (torchTitanProbe, error) {
+	return probeDistributedRuntime(ctx, python, false)
+}
+
+func probeDistributedRuntime(ctx context.Context, python string, external bool) (torchTitanProbe, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	command := exec.CommandContext(probeCtx, python, "-c", torchTitanProbeProgram)
+	args := []string{"-c", torchTitanProbeProgram}
+	if external {
+		args = []string{"-E", "-s", "-c", torchTitanProbeProgram, "external"}
+	}
+	command := exec.CommandContext(probeCtx, python, args...)
 	var stderr cappedBuffer
 	command.Stderr = &stderr
 	output, err := command.Output()
@@ -606,14 +628,28 @@ func CheckSecondaryTorchTitan(ctx context.Context, cluster Cluster) error {
 // InspectTorchTitanHost probes the runtime and every visible accelerator on a
 // prospective TorchTitan node without resolving a model architecture.
 func InspectTorchTitanHost(ctx context.Context) (TorchTitanHost, error) {
+	return inspectDistributedHost(ctx, pythonCandidates(), probeTorchTitan, false)
+}
+
+// InspectExternalDistributedHost shares cluster and accelerator preflight with the native path.
+func InspectExternalDistributedHost(ctx context.Context, python string) (TorchTitanHost, error) {
+	return inspectDistributedHost(ctx, []string{python}, func(ctx context.Context, python string) (torchTitanProbe, error) {
+		return probeDistributedRuntime(ctx, python, true)
+	}, true)
+}
+
+func inspectDistributedHost(ctx context.Context, candidates []string, probe func(context.Context, string) (torchTitanProbe, error), external bool) (TorchTitanHost, error) {
 	if runtime.GOOS != "linux" {
 		return TorchTitanHost{}, fmt.Errorf("TorchTitan training requires Linux; this host is %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
-	python, facts, failures := firstUsableTorchTitan(ctx, pythonCandidates(), probeTorchTitan)
+	python, facts, failures := firstUsableTorchTitan(ctx, candidates, probe)
 	if python == "" {
 		detail := strings.Join(failures, "; ")
 		if detail != "" {
 			detail = ": " + detail
+		}
+		if external {
+			return TorchTitanHost{}, fmt.Errorf("no usable external distributed runtime found%s; verify the selected trainer environment and CUDA visibility", detail)
 		}
 		return TorchTitanHost{}, fmt.Errorf("no usable TorchTitan runtime found%s\n%s", detail, torchTitanInstallGuidance())
 	}

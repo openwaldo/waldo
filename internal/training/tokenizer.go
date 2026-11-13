@@ -133,6 +133,9 @@ func (byteCodec) Decode(tokens []int) string {
 }
 
 func cloneTokenCodec(codec TokenCodec) (TokenCodec, error) {
+	if shared, ok := codec.(interface{ ConcurrentSafe() bool }); ok && shared.ConcurrentSafe() {
+		return codec, nil
+	}
 	if _, ok := codec.(byteCodec); ok {
 		return byteCodec{}, nil
 	}
@@ -176,4 +179,20 @@ func ResolveTokenizerCodec(name string) (TokenCodec, error) {
 		return waldoTokenizer.NewCodec(name)
 	}
 	return nil, fmt.Errorf("unsupported tokenizer %q", name)
+}
+
+// encodeChecked preserves the native codec API while allowing process-backed
+// codecs to report failures before counts, masks or sequences are accepted.
+func encodeChecked(codec TokenCodec, text string) ([]int, error) {
+	if fallible, ok := codec.(interface{ EncodeChecked(string) ([]int, error) }); ok {
+		return fallible.EncodeChecked(text)
+	}
+	return codec.Encode(text), nil
+}
+func countChecked(codec TokenCodec, text string) (int, error) {
+	if _, ok := codec.(interface{ EncodeChecked(string) ([]int, error) }); ok {
+		tokens, err := encodeChecked(codec, text)
+		return len(tokens), err
+	}
+	return codec.Count(text), nil
 }

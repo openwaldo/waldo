@@ -179,6 +179,7 @@ const MultiNodePlanSchema = 3
 const MultiNodePlanKind = "openwaldo-multinode-plan"
 
 type MultiNodePlan struct {
+	External           *ExternalNodePlan              `json:"external,omitempty"`
 	Kind               string                         `json:"kind"`
 	Schema             int                            `json:"schema"`
 	ModelID            string                         `json:"model_id"`

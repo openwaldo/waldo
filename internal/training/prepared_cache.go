@@ -381,7 +381,9 @@ func (writer *preparedCacheWriter) Abort() {
 	}
 }
 
-func replayPreparedSequences(base, identity, bomSHA256 string, nodeRank, worldSize, GPUsPerNode int, globalMicroBatch, maxBytes, resumeSequences int64, encoder *json.Encoder) (bool, error) {
+type preparedFrameEncoder interface{ Encode(any) error }
+
+func replayPreparedSequences(base, identity, bomSHA256 string, nodeRank, worldSize, GPUsPerNode int, globalMicroBatch, maxBytes, resumeSequences int64, encoder preparedFrameEncoder) (bool, error) {
 	directory := filepath.Join(base, identity, fmt.Sprintf("node-%d", nodeRank))
 	manifest, err := loadPreparedCache(directory, identity, bomSHA256, nodeRank, worldSize, GPUsPerNode, globalMicroBatch, false)
 	if os.IsNotExist(err) {
@@ -421,7 +423,7 @@ func preparedCacheReady(begin WorkerBegin) (bool, error) {
 	return true, nil
 }
 
-func replayIndexedPreparedSequences(directory string, manifest preparedCacheManifest, nodeRank, worldSize, GPUsPerNode int, globalMicroBatch, resumeSequences int64, encoder *json.Encoder) (bool, error) {
+func replayIndexedPreparedSequences(directory string, manifest preparedCacheManifest, nodeRank, worldSize, GPUsPerNode int, globalMicroBatch, resumeSequences int64, encoder preparedFrameEncoder) (bool, error) {
 	boundaryLimit := manifest.GlobalSequences/globalMicroBatch - resumeSequences/globalMicroBatch
 	if boundaryLimit < 0 {
 		return false, fmt.Errorf("prepared cache resume position exceeds stream")
@@ -488,7 +490,7 @@ func replayIndexedPreparedSequences(directory string, manifest preparedCacheMani
 	return true, nil
 }
 
-func replayLegacyPreparedSequences(directory string, manifest preparedCacheManifest, nodeRank, worldSize, GPUsPerNode int, globalMicroBatch, resumeSequences int64, encoder *json.Encoder) (bool, error) {
+func replayLegacyPreparedSequences(directory string, manifest preparedCacheManifest, nodeRank, worldSize, GPUsPerNode int, globalMicroBatch, resumeSequences int64, encoder preparedFrameEncoder) (bool, error) {
 	sequences := int64(0)
 	emitted := int64(0)
 	boundaries := int64(0)
