@@ -221,7 +221,9 @@ class WaldoTrainer(Trainer):
         # micro-batches. labels[:, 0] is always -100, matching the causal shift.
         denominator = num_items_in_batch if num_items_in_batch is not None else labels[:, 1:].ne(-100).sum()
         distributed = torch.distributed.is_initialized()
-        if distributed:
+        # HF already sums num_items_in_batch across ranks when averaging tokens
+        # across devices. Only reduce local counts (including the fallback).
+        if distributed and (num_items_in_batch is None or not self.args.average_tokens_across_devices):
             denominator = torch.as_tensor(denominator, device=outputs.logits.device).clone()
             torch.distributed.all_reduce(denominator)
         loss = torch.nn.functional.cross_entropy(

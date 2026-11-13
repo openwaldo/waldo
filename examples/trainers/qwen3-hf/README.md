@@ -145,6 +145,20 @@ This does not claim cross-world-size determinism or physical multi-node
 qualification. Hostfile preflight retains the native requirement for matching
 runtime and accelerator topology on every node.
 
+The loss normalization regression uses four CPU/Gloo ranks with unequal target
+counts, the pinned Transformers count helper, and the real DDP gradient reducer.
+It compares loss and gradients with a single global-batch reference, covering
+both token-averaging settings, accumulation, and the missing-count fallback:
+
+```sh
+CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=1 "$ENV/bin/python" -m torch.distributed.run \
+  --standalone --nproc-per-node=4 testing/external-qwen3/distributed-loss.py
+```
+
+Here `ENV` is a verified reference-trainer environment. Transformers already
+aggregates the target count when `average_tokens_across_devices` is enabled;
+the trainer must not reduce that global count again.
+
 ## Portable plan identity
 
 The stage `trainer` block contains identity-bearing recipe inputs (`bf16`, `fp16`,
