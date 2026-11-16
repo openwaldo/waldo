@@ -290,7 +290,7 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 		Optimizer:       Optimizer{Name: optimizerName, WeightDecay: weightDecay, Beta1: 0.9, Beta2: 0.95, Epsilon: 1e-8},
 		Schedule:        Schedule{Name: scheduleName, WarmupSteps: warmup, WarmdownSteps: warmdown, MinimumRateRatio: minimumRateRatio},
 		Data:            DataPlan{Order: order, ShuffleBufferRecords: shuffleBuffer, ShuffleBufferBytes: shuffleBufferBytes, Packing: "continuous-eos-v1", CorpusWeights: weights, RepeatUntilSteps: requestedTokens > 0},
-		Evaluation:      &EvaluationPolicy{Selection: selection, Fraction: evaluationFraction, MaxRecords: evaluationMaxRecords, MaxBytes: evaluationMaxBytes},
+		Evaluation:      &EvaluationPolicy{Selection: selection, Fraction: evaluationFraction, MaxRecords: evaluationMaxRecords, MaxBytes: evaluationMaxBytes, Seed: parameters.EvaluationSeed},
 		CheckpointEvery: checkpointEvery, EvaluateEvery: evaluateEvery,
 	}, nil
 }

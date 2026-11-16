@@ -1784,3 +1784,38 @@ func writeTrainingRows(t *testing.T, rows []shard.Row) Input {
 	}
 	return Input{Path: path, SHA256: digest, Bytes: int64(len(data)), Records: int64(len(rows))}
 }
+
+func TestEvaluationSeedHoldsOutTheSameRecordsAcrossTrainingSeeds(t *testing.T) {
+	var texts []string
+	for index := 0; index < 40; index++ {
+		texts = append(texts, fmt.Sprintf("record %d", index))
+	}
+	inputs := []Input{writeTrainingShard(t, texts[:20]), writeTrainingShard(t, texts[20:])}
+	inputs[0].Corpus, inputs[1].Corpus = "first", "second"
+	limit, fraction := 5, 0.5
+	for _, selection := range []string{"indexed-sample-v1", "stratified-indexed-sample-v1", "lowest-sha256-v1"} {
+		heldOut := func(seed uint64, evaluationSeed *uint64) EvaluationSet {
+			t.Helper()
+			parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: seed,
+				EvaluationSelection: selection, EvaluationFraction: &fraction, EvaluationMaxRecords: &limit, EvaluationSeed: evaluationSeed})
+			if err != nil {
+				t.Fatal(err)
+			}
+			partition, err := NewRecordPartition(inputs, parameters)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return partition.Evaluation
+		}
+		// Without an evaluation seed, each training seed holds out its own records, as before.
+		if heldOut(1, nil).SHA256 == heldOut(2, nil).SHA256 {
+			t.Fatalf("%s: training seeds 1 and 2 held out the same records", selection)
+		}
+		// With one, runs that shuffle differently hold out the same records.
+		nine := uint64(9)
+		first, second := heldOut(1, &nine), heldOut(2, &nine)
+		if first.SHA256 != second.SHA256 || first.Seed != 9 || first.Records == 0 {
+			t.Fatalf("%s: held out %+v and %+v", selection, first, second)
+		}
+	}
+}

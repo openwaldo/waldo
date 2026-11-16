@@ -273,6 +273,7 @@ type Parameters struct {
 	EvaluationSelection     string            `json:"evaluation_selection,omitempty" yaml:"evaluation_selection,omitempty"`
 	EvaluationMaxRecords    *int              `json:"evaluation_max_records,omitempty" yaml:"evaluation_max_records,omitempty"`
 	EvaluationMaxBytes      *int64            `json:"evaluation_max_bytes,omitempty" yaml:"evaluation_max_bytes,omitempty"`
+	EvaluationSeed          *uint64           `json:"evaluation_seed,omitempty" yaml:"evaluation_seed,omitempty"`
 }
 
 type ResolvedParameters struct {
@@ -328,6 +329,9 @@ type EvaluationPolicy struct {
 	Fraction   float64 `json:"fraction"`
 	MaxRecords int     `json:"max_records"`
 	MaxBytes   int64   `json:"max_bytes"`
+	// Seed, when set, picks the held-out records instead of the training seed,
+	// so runs that shuffle differently can hold out the same records.
+	Seed *uint64 `json:"seed,omitempty"`
 }
 
 type EvaluationSet struct {
