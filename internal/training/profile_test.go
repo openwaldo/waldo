@@ -1300,6 +1300,38 @@ func TestWorkerInputStopsTrainingRecordsAfterTargetSignal(t *testing.T) {
 	}
 }
 
+func TestEvaluateOnlyWorkerInputSendsOnlyHeldOutRecords(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := workerBeginFromRequest(Request{RunID: "evaluate", Stage: "pretrain", Objective: "causal-language-modeling", Parameters: parameters, EvaluateOnly: true})
+	records := recordSourceFunc(func(_ context.Context, consume func(Record) error) error {
+		return consume(Record{ID: "training", Text: "training text"})
+	})
+	evaluation := recordSourceFunc(func(_ context.Context, consume func(Record) error) error {
+		return consume(Record{ID: "held-out", Text: "held-out text"})
+	})
+	var encoded bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &encoded, begin, records, evaluation); err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, line := range strings.Split(strings.TrimSpace(encoded.String()), "\n") {
+		var frame WorkerInputFrame
+		if err := json.Unmarshal([]byte(line), &frame); err != nil {
+			t.Fatal(err)
+		}
+		kinds = append(kinds, frame.Kind)
+		if frame.Begin != nil && !frame.Begin.EvaluateOnly {
+			t.Fatalf("begin frame dropped evaluate_only: %s", line)
+		}
+	}
+	if strings.Join(kinds, ",") != "begin,evaluation_record,end" {
+		t.Fatalf("evaluate-only input frames = %v", kinds)
+	}
+}
+
 func TestResolveParametersPinsGradientAccumulation(t *testing.T) {
 	resolved, err := ResolveParameters(Parameters{Steps: 2, BatchSize: 8, GradientAccumulation: 4, SequenceLength: 16, LearningRate: 0.001})
 	if err != nil {

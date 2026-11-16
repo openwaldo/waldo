@@ -39,6 +39,10 @@ func TestParseModelTrainDefaultsAndValidatesEpochs(t *testing.T) {
 	if code := Run([]string{"model", "train", "foo", "core/books", "--epochs", "0"}, &stdout, &stderr); code != 1 {
 		t.Fatal("zero epochs accepted")
 	}
+	stderr.Reset()
+	if code := Run([]string{"model", "train", "foo", "core/books", "--evaluate-only"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "--evaluate-only needs a compose file") {
+		t.Fatalf("evaluate-only without compose: code %d, stderr %q", code, stderr.String())
+	}
 }
 
 func TestTrainingComposeInputRequiresOneIdentifiedCompose(t *testing.T) {

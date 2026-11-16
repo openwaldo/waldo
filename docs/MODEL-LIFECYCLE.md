@@ -465,6 +465,16 @@ For `--hostfile` runs, WALDO performs this local completion check before
 probing or staging secondary hosts. A verified no-op therefore has no remote
 side effects.
 
+`--evaluate-only` scores the model's current weights on the held-out records
+the compose's first stage selects, through the selected backend's worker, and
+prints the held-out loss, the held-out set's size and SHA-256, and the weights'
+SHA-256. It trains nothing, writes no weights, records no run, and runs on
+MLX or PyTorch, not TorchTitan or simulated backends. Held-out selection depends on the corpus, filters,
+objective, evaluation parameters, and seed, not on the training budget, so
+different models scored with the same compose see the same records; with a
+training stage's own seed they see exactly the records that training held out.
+The result compares weights; it does not promote a model.
+
 Passing `--audit` audits every materialized stage before the transaction starts.
 Interactive terminals receive byte-level materialization progress; redirected
 logs receive one completion line for every shard. The optional audit is shown
