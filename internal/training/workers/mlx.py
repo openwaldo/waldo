@@ -81,6 +81,40 @@ def read_gpu_throttle():
 GPU_THROTTLE = read_gpu_throttle()
 
 
+# The waldo config, for settings `waldo config set` may change while the worker runs.
+def config_path():
+    if os.environ.get("WALDO_CONFIG"):
+        return os.environ["WALDO_CONFIG"]
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/waldo/config.json")
+    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "waldo", "config.json")
+
+
+live_config = {"read": -math.inf, "value": {}}
+
+
+def live_setting(section, key):
+    """A value from the waldo config, re-read at most every 30 seconds while the worker runs."""
+    now = time.monotonic()
+    if now - live_config["read"] >= 30:
+        live_config["read"] = now
+        try:
+            with open(config_path(), encoding="utf-8") as file:
+                live_config["value"] = json.load(file)
+        except (OSError, ValueError):
+            live_config["value"] = {}
+    configured = live_config["value"].get(section) if isinstance(live_config["value"], dict) else None
+    return configured.get(key) if isinstance(configured, dict) else None
+
+
+# checkpoint_due saves every `every` steps, and also once `minutes` of wall clock have passed since
+# the last save (training.checkpoint-minutes), so slow training still stops cheaply.
+def checkpoint_due(step, every, saved_at, now, minutes):
+    if every <= 0:
+        return False
+    return step % every == 0 or (isinstance(minutes, (int, float)) and minutes > 0 and now - saved_at >= minutes * 60)
+
+
 # WALDO_PROGRESS_HEARTBEAT_SECONDS is how long a run may go without a progress line before the
 # worker prints one anyway, so a long 1% interval does not look like a hang. Default 300; 0 turns
 # the heartbeat off.
@@ -299,6 +333,7 @@ class Trainer:
         self.target_steps = self.parameters["steps"]
         self.step_number = 0
         self.replay_micro_batches = 0
+        self.saved_at = time.monotonic()  # a resume counts its minutes from here, as a fresh run does
         self.consumed_tokens = 0
         self.token_buffer = []
         self.loss_buffer = []
@@ -554,8 +589,9 @@ class Trainer:
         )
         if evaluate_due:
             self.record_evaluation(loss_value)
-        checkpoint_every = self.parameters["checkpoint_every"]
-        if checkpoint_every > 0 and self.step_number % checkpoint_every == 0 and not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints):
+        due = checkpoint_due(self.step_number, self.parameters["checkpoint_every"], self.saved_at, time.monotonic(),
+                             live_setting("training", "checkpoint_minutes"))
+        if due and not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints):
             self.save_checkpoint()
         self.last_step_finished = time.perf_counter()
 
@@ -577,6 +613,7 @@ class Trainer:
         )
 
     def save_checkpoint(self):
+        self.saved_at = time.monotonic()
         name = f"checkpoints/step-{self.step_number:08d}"
         path = os.path.join(self.artifact_directory, *name.split("/"))
         temporary = path + f".tmp-{os.getpid()}"

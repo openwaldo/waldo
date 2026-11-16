@@ -170,6 +170,15 @@ deterministic prefix-replay fallback. `RUN.json`
 records each attempt. A changed corpus, epoch count, profile, backend, or
 execution environment is a new run rather than an unsafe resume.
 
+A compose's `checkpoint_every` saves by steps. On MLX,
+`waldo config set training.checkpoint-minutes 30` also saves once 30 minutes of
+wall clock have passed since the last save, so a slow run still stops cheaply.
+The running worker rereads the setting at most every 30 seconds, counts a
+resume's minutes from its start, and saves only at the end of an optimizer step;
+a compose with `checkpoint_every: 0` gets no clock-saved checkpoints. Clock-saved
+checkpoints resume like any other but are not artifact-selection candidates
+unless held-out scoring lands on the same step.
+
 PyTorch and TorchTitan resumable checkpoints keep FP32 master weights even
 when the architecture declares a reduced portable `parameter_dtype`. This
 preserves exact optimizer continuation. WALDO converts only the selected

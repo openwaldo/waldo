@@ -28,6 +28,12 @@ type Config struct {
 	AI         AI         `json:"ai,omitempty"`
 	Disclosure Disclosure `json:"disclosure,omitempty"`
 	Signing    Signing    `json:"signing,omitempty"`
+	Training   Training   `json:"training,omitempty"`
+}
+
+// Training.CheckpointMinutes also saves on the clock, read live by a running MLX worker.
+type Training struct {
+	CheckpointMinutes *float64 `json:"checkpoint_minutes,omitempty"`
 }
 
 type Disclosure struct {

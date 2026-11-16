@@ -984,6 +984,45 @@ func TestConfigRejectsInvalidCompletedCacheRetention(t *testing.T) {
 	}
 }
 
+func TestConfigCheckpointMinutesRoundTrip(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	run := func(args ...string) (string, string, int) {
+		var stdout, stderr bytes.Buffer
+		code := Run(args, &stdout, &stderr)
+		return stdout.String(), stderr.String(), code
+	}
+	if out, _, code := run("config", "get", "training.checkpoint-minutes"); code != 0 || strings.TrimSpace(out) != "(unset)" {
+		t.Fatalf("get unset out = %q code = %d", out, code)
+	}
+	if _, stderr, code := run("config", "set", "training.checkpoint-minutes", "30"); code != 0 {
+		t.Fatalf("set: %s", stderr)
+	}
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Training.CheckpointMinutes == nil || *loaded.Training.CheckpointMinutes != 30 {
+		t.Fatalf("config = %+v", loaded.Training)
+	}
+	if out, _, code := run("config", "get", "training.checkpoint-minutes"); code != 0 || strings.TrimSpace(out) != "30" {
+		t.Fatalf("get out = %q code = %d", out, code)
+	}
+	for _, value := range []string{"0", "-5", "NaN", "Inf", "soon"} {
+		if _, stderr, code := run("config", "set", "--", "training.checkpoint-minutes", value); code != 1 || !strings.Contains(stderr, "must be a positive number of minutes") {
+			t.Fatalf("set %s: code = %d, stderr = %q", value, code, stderr)
+		}
+	}
+	if _, stderr, code := run("config", "set", "training.checkpoint-minutes", "5", "10"); code != 1 || !strings.Contains(stderr, "requires exactly one value") {
+		t.Fatalf("two values: code = %d, stderr = %q", code, stderr)
+	}
+	if _, stderr, code := run("config", "unset", "training.checkpoint-minutes"); code != 0 {
+		t.Fatalf("unset: %s", stderr)
+	}
+	if loaded, err = config.Load(); err != nil || loaded.Training.CheckpointMinutes != nil {
+		t.Fatalf("minutes not cleared: %+v, %v", loaded.Training, err)
+	}
+}
+
 func TestConfigRejectsUnknownKey(t *testing.T) {
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	var stdout, stderr bytes.Buffer
