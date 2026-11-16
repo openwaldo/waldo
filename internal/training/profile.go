@@ -226,6 +226,9 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 	if evaluationFraction < 0 || evaluationFraction >= 1 || math.IsNaN(evaluationFraction) || math.IsInf(evaluationFraction, 0) {
 		return ResolvedParameters{}, fmt.Errorf("evaluation_fraction must be finite and in 0..<1")
 	}
+	if parameters.ArtifactSelection != "" && parameters.ArtifactSelection != "final" {
+		return ResolvedParameters{}, fmt.Errorf("artifact_selection must be final or omitted")
+	}
 	evaluationMaxRecords := 256
 	if parameters.EvaluationMaxRecords != nil {
 		evaluationMaxRecords = *parameters.EvaluationMaxRecords
@@ -292,6 +295,7 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 		Data:            DataPlan{Order: order, ShuffleBufferRecords: shuffleBuffer, ShuffleBufferBytes: shuffleBufferBytes, Packing: "continuous-eos-v1", CorpusWeights: weights, RepeatUntilSteps: requestedTokens > 0},
 		Evaluation:      &EvaluationPolicy{Selection: selection, Fraction: evaluationFraction, MaxRecords: evaluationMaxRecords, MaxBytes: evaluationMaxBytes, Seed: parameters.EvaluationSeed},
 		CheckpointEvery: checkpointEvery, EvaluateEvery: evaluateEvery,
+		ArtifactSelection: parameters.ArtifactSelection,
 	}, nil
 }
 

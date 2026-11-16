@@ -97,6 +97,18 @@ func TestValidateBackendObservationVerifiesBoundsAndArtifacts(t *testing.T) {
 			}
 		})
 	}
+	// With artifact_selection final, the last step is published even when an earlier checkpoint scored better.
+	final := PlannedStage{PlannedTokens: 128, Parameters: training.Parameters{Steps: 2, ArtifactSelection: "final"}}
+	earlierBest := valid
+	earlierBest.Evaluations = []training.Evaluation{{Step: valid.Evaluations[0].Step, Tokens: valid.Evaluations[0].Tokens, Metrics: map[string]float64{"heldout_loss": 1.0}}, valid.Evaluations[1]}
+	if err := validateBackendObservation(runDirectory, final, earlierBest); err != nil {
+		t.Fatalf("final selection rejected: %v", err)
+	}
+	notFinal := earlierBest
+	notFinal.SelectedCheckpoint = &training.CheckpointSelection{Step: valid.Evaluations[0].Step, Tokens: valid.Evaluations[0].Tokens, Metric: "heldout_loss", Value: 1.0}
+	if err := validateBackendObservation(runDirectory, final, notFinal); err == nil || !strings.Contains(err.Error(), "not the final step") {
+		t.Fatalf("earlier checkpoint under final selection: %v", err)
+	}
 }
 
 func TestRealBackendsRequireArtifactVerification(t *testing.T) {

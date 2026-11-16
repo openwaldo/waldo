@@ -588,6 +588,7 @@ must use one representation or the other, never both.
 | `evaluation_max_records` | no | default `256`; `0..1000000` | Held-out record cap. |
 | `evaluation_max_bytes` | no | default 1 MiB; `0 B..16 GiB` | Held-out text-byte cap. |
 | `evaluation_seed` | no | unsigned integer; default `seed` | Picks the held-out records instead of `seed`, so runs that shuffle differently hold out the same records and their held-out losses compare. |
+| `artifact_selection` | no | `final`; default lowest held-out | Which weights the run publishes. By default, the checkpoint with the lowest held-out loss; `final`, the last step's weights, still verified against their held-out loss. |
 
 Exactly one of `tokens`, `epochs`, or legacy `steps` is normally declared. A
 legacy compose may declare both `steps` and `epochs`; steps remains the exact

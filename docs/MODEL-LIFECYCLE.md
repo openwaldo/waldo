@@ -189,7 +189,11 @@ and evaluates that saved file again before completion. `RUN.json` records the
 selected step, token count, metric, and value. Summaries distinguish the last
 optimizer-step metric from the selected and reloaded artifact metrics. The
 full requested training budget still runs when validation passes; this
-selection rule is not early stopping.
+selection rule is not early stopping. A stage that declares
+`artifact_selection: final` publishes its last optimizer step instead, for
+runs whose last weights are what matters, such as a fine-tune that will be
+continued or a run whose weights are combined with others afterwards; that
+artifact is reloaded and verified against its held-out loss the same way.
 
 PyTorch/TorchTitan training, artifact verification, and chat inference execute
 one embedded model implementation owned by `internal/pytorchruntime`. Runtime

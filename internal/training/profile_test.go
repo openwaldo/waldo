@@ -152,6 +152,26 @@ func TestResolveParametersAcceptsContiguousTailEvaluation(t *testing.T) {
 	}
 }
 
+func TestResolveParametersValidatesArtifactSelection(t *testing.T) {
+	parameters := Parameters{Steps: 10, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 42}
+	resolved, err := ResolveParameters(parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The default stays out of resolved JSON so existing run identities are unchanged.
+	if encoded, err := json.Marshal(resolved); err != nil || resolved.ArtifactSelection != "" || strings.Contains(string(encoded), "artifact_selection") {
+		t.Fatalf("default artifact selection = %q in %s: %v", resolved.ArtifactSelection, encoded, err)
+	}
+	parameters.ArtifactSelection = "final"
+	if resolved, err = ResolveParameters(parameters); err != nil || resolved.ArtifactSelection != "final" {
+		t.Fatalf("final artifact selection = %q: %v", resolved.ArtifactSelection, err)
+	}
+	parameters.ArtifactSelection = "best"
+	if _, err := ResolveParameters(parameters); err == nil || !strings.Contains(err.Error(), "artifact_selection must be final or omitted") {
+		t.Fatalf("unknown artifact selection: %v", err)
+	}
+}
+
 func TestWeightedProfilePinsDeclaredCorpusWeights(t *testing.T) {
 	parameters := Parameters{Profile: WeightedProfile, Steps: 10, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 42, CorpusWeights: map[string]uint64{"corpus-a": 3, "corpus-b": 1}}
 	resolved, err := ResolveParameters(parameters)

@@ -274,6 +274,7 @@ type Parameters struct {
 	EvaluationMaxRecords    *int              `json:"evaluation_max_records,omitempty" yaml:"evaluation_max_records,omitempty"`
 	EvaluationMaxBytes      *int64            `json:"evaluation_max_bytes,omitempty" yaml:"evaluation_max_bytes,omitempty"`
 	EvaluationSeed          *uint64           `json:"evaluation_seed,omitempty" yaml:"evaluation_seed,omitempty"`
+	ArtifactSelection       string            `json:"artifact_selection,omitempty" yaml:"artifact_selection,omitempty"`
 }
 
 type ResolvedParameters struct {
@@ -298,6 +299,8 @@ type ResolvedParameters struct {
 	CheckpointEvery         int64             `json:"checkpoint_every"`
 	EvaluateEvery           int64             `json:"evaluate_every"`
 	PlannedTokenCapacity    int64             `json:"planned_token_capacity"`
+	// ArtifactSelection "final" publishes the last weights; empty publishes the lowest held-out checkpoint.
+	ArtifactSelection string `json:"artifact_selection,omitempty"`
 }
 
 type Optimizer struct {

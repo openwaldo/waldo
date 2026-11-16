@@ -749,7 +749,8 @@ class Trainer:
         # run must validate and select its published inference artifact.
         if self.evaluation_sequences and (not self.evaluations or self.evaluations[-1]["step"] != self.step_number):
             self.record_evaluation(self.final_loss)
-        if self.parameters["checkpoint_every"] > 0 and (
+        # Final selection needs a checkpoint at the last step even without periodic checkpoints.
+        if (self.parameters["checkpoint_every"] > 0 or self.parameters.get("artifact_selection") == "final") and (
             not self.checkpoints or self.checkpoints[-1]["step"] != self.step_number
         ):
             self.save_checkpoint()
@@ -758,6 +759,9 @@ class Trainer:
         weights_path = os.path.join(self.artifact_directory, weights_name)
         evaluated_checkpoints = {checkpoint["step"]: checkpoint for checkpoint in self.checkpoints}
         candidates = [evaluation for evaluation in self.evaluations if evaluation["step"] in evaluated_checkpoints]
+        if self.parameters.get("artifact_selection") == "final":
+            # The run's last weights, still verified against their held-out loss.
+            candidates = [evaluation for evaluation in candidates if evaluation["step"] == self.step_number]
         selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"]) if candidates else None
         selected_checkpoint = None if selected_evaluation is None else evaluated_checkpoints[selected_evaluation["step"]]
         selected_step = self.step_number
