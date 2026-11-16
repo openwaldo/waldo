@@ -498,7 +498,7 @@ corpora:
 | `sources` | no | Matches either the canonical source identifier or source name. |
 | `metadata` | no | Maps canonical `meta` JSON keys to value filters. Each declared key must contain a string value and all declared keys must match. Missing, malformed, or non-string values are rejected. |
 | `date` | no | Selects canonical dates that overlap the inclusive `from`/`to` interval. |
-| `slice` | no | `{index, count}` with `0 <= index < count`. Keeps the records whose hex ID's SHA-256, read as a big-endian 64-bit integer from its first 8 bytes, modulo `count` equals `index`. The `count` slices of a corpus are disjoint, near-equal in size, and stable for as long as each record's text is unchanged, so several trainings can each take a reproducible share of one corpus. |
+| `slice` | no | `{index, count}`, both required, with `0 <= index < count`. Keeps the records whose lowercase hex ID's SHA-256, read as a big-endian 64-bit integer from its first 8 bytes, modulo `count` equals `index`. The `count` slices of a corpus are disjoint, near-equal in size, and stable for as long as each record's text is unchanged, so several trainings can each take a reproducible share of one corpus. Stage and corpus slices hash the same value, so declare a slice at one level only. |
 | `include` | no | At least one shell-style, case-sensitive pattern must match. |
 | `exclude` | no | Any matching pattern rejects the record and takes precedence over `include`. |
 | `languages.include_unset` | no | Also retains rows with no recorded language. Known languages must still match `include`. Defaults to `false`; it is not accepted for license or source filters. |

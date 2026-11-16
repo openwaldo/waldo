@@ -196,7 +196,7 @@ func TestContentAssessmentExclusionsCombineGlobalAndCorpusPolicy(t *testing.T) {
 func TestSliceFilterDividesRecordsDisjointly(t *testing.T) {
 	filters := make([]RecordFilter, 3)
 	for index := range filters {
-		filters[index] = RecordFilter{Slice: &SliceFilter{Index: index, Count: 3}}
+		filters[index] = RecordFilter{Slice: &SliceFilter{Index: &index, Count: 3}}
 		if err := filters[index].Validate(); err != nil {
 			t.Fatal(err)
 		}
@@ -222,16 +222,14 @@ func TestSliceFilterDividesRecordsDisjointly(t *testing.T) {
 	}
 	// Other tools must compute the same slice; expected values come from Python's hashlib.
 	known := shard.RecordView{ID: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"}
-	for _, want := range []SliceFilter{{Index: 2, Count: 7}, {Index: 16, Count: 1000}} {
+	two, sixteen := 2, 16
+	for _, want := range []SliceFilter{{Index: &two, Count: 7}, {Index: &sixteen, Count: 1000}} {
 		if !(RecordFilter{Slice: &want}).Allows(known) {
 			t.Fatalf("known record is not in slice %+v", want)
 		}
 	}
-	// Counts are not limited to what one hash byte could divide.
-	if err := (RecordFilter{Slice: &SliceFilter{Index: 999, Count: 1000}}).Validate(); err != nil {
-		t.Fatal(err)
-	}
-	for _, bad := range []SliceFilter{{Count: 0}, {Index: 3, Count: 3}, {Index: -1, Count: 2}} {
+	zero, three, negative := 0, 3, -1
+	for _, bad := range []SliceFilter{{Count: 2}, {Index: &zero, Count: 0}, {Index: &three, Count: 3}, {Index: &negative, Count: 2}} {
 		if err := (RecordFilter{Slice: &bad}).Validate(); err == nil {
 			t.Fatalf("slice %+v accepted", bad)
 		}

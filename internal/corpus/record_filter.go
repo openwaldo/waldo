@@ -65,8 +65,8 @@ type ValueFilter struct {
 // records, chosen by the SHA-256 of each record ID, so several parties can
 // train separate shares of one corpus and record exactly which share each used.
 type SliceFilter struct {
-	Index int `json:"index" yaml:"index"`
-	Count int `json:"count" yaml:"count"`
+	Index *int `json:"index" yaml:"index"`
+	Count int  `json:"count" yaml:"count"`
 }
 
 type DateFilter struct {
@@ -136,8 +136,8 @@ func (filter RecordFilter) Validate() error {
 			return err
 		}
 	}
-	if filter.Slice != nil && (filter.Slice.Count < 1 || filter.Slice.Index < 0 || filter.Slice.Index >= filter.Slice.Count) {
-		return fmt.Errorf("slice needs 0 <= index < count")
+	if filter.Slice != nil && (filter.Slice.Index == nil || filter.Slice.Count < 1 || *filter.Slice.Index < 0 || *filter.Slice.Index >= filter.Slice.Count) {
+		return fmt.Errorf("slice needs an index with 0 <= index < count")
 	}
 	if filter.empty() {
 		return fmt.Errorf("record filter must declare at least one condition")
@@ -266,7 +266,7 @@ func (filter RecordFilter) Allows(record shard.RecordView) bool {
 	}
 	if filter.Slice != nil {
 		digest := sha256.Sum256([]byte(record.ID))
-		if binary.BigEndian.Uint64(digest[:8])%uint64(filter.Slice.Count) != uint64(filter.Slice.Index) {
+		if binary.BigEndian.Uint64(digest[:8])%uint64(filter.Slice.Count) != uint64(*filter.Slice.Index) {
 			return false
 		}
 	}
