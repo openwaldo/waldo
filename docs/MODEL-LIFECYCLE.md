@@ -279,6 +279,7 @@ waldo model chat small
 waldo model chat small "Once upon a time"
 printf 'Once upon a time' | waldo model chat small
 waldo --json model chat small "Once" --max-tokens 64 --temperature 0 --seed 7
+printf '"Once"\n"Linux is"\n' | waldo --json model chat small --prompts --temperature 0
 waldo model chat conversation --run-id <completed-run-id> --raw --temperature 0 "Linux is"
 waldo model chat conversation --run-id <interrupted-run-id> --checkpoint-step 12000 --raw "Linux is"
 ```
@@ -292,6 +293,9 @@ invalid UTF-8 bytes are escaped so model output cannot emit terminal control
 sequences. Redirected output is rendered once without cursor controls. JSON is
 one-shot and includes model and run identity, prompt, text, token count, finish
 reason, and generation duration.
+With `--prompts`, `--json` chat instead reads one JSON string prompt per
+standard-input line and writes one compact JSON result per line, so many
+prompts share a single model open and verification.
 
 `--run-id` selects the verified published artifact from a specific completed
 real run instead of the model's current run. This supports stage-by-stage

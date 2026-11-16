@@ -249,7 +249,8 @@ func newModelCommand(state *cobraState) *cobra.Command {
 			unsigned64Flag("seed", 0, "deterministic sampling seed"),
 			textFlag("run-id", "", "completed run artifact, or interrupted run when paired with --checkpoint-step"),
 			integer64Flag("checkpoint-step", 0, "exact durable checkpoint step from the explicitly selected interrupted run"),
-			booleanFlag("raw", "bypass the model interaction template and perform raw causal continuation")),
+			booleanFlag("raw", "bypass the model interaction template and perform raw causal continuation"),
+			booleanFlag("prompts", "with --json, answer each standard-input line (a JSON string prompt) with the model opened once, one JSON result per line")),
 		leaf(state, "rm <name...>", "Remove explicitly named local models", "Names are preflighted before removal.", cobra.MinimumNArgs(1), runModelRemove),
 	)
 	return command
