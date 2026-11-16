@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -323,7 +324,7 @@ func (resolver TorchTitanResolver) Resolve(ctx context.Context, request ResolveR
 	descriptor := backend.Descriptor()
 	execution := Execution{
 		Backend: descriptor.Identity, Framework: descriptor.Framework,
-		Runtime: fmt.Sprintf("%s; Python %s; TorchTitan %s; PyTorch %s", python, facts.PythonVersion, facts.TorchTitanVersion, facts.TorchVersion),
+		Runtime: fmt.Sprintf("%s; Python %s; TorchTitan %s; PyTorch %s", filepath.Base(python), facts.PythonVersion, facts.TorchTitanVersion, facts.TorchVersion),
 		Host:    Host{OS: hostOS, Architecture: hostArch}, Nodes: nodes, WorldSize: nodes * localProcs,
 	}
 	for node := 0; node < nodes; node++ {
