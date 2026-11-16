@@ -100,8 +100,10 @@ Schema 1 initially accepts standard bias-free Llama weights with
 `OpenWALDOTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors. Pull
 also accepts the legacy `OpenWALDOByteTokenizer` class name used by older WALDO
 exports; both names identify the same byte tokenizer. That is the format
-produced by WALDO's Hugging Face export. Other tokenizers or architectural
-variants fail before publication rather than being numerically converted or
+produced by WALDO's Hugging Face export, which also carries a trained
+`waldo/byte-bpe` tokenizer as `openwaldo_tokenizer.json`; pull restores it into
+the architecture when its vocabulary size matches `config.json`. Other
+tokenizers or architectural variants fail before publication rather than being numerically converted or
 silently retokenized.
 
 A compose can use this same verified importer without first creating a visible
@@ -234,15 +236,16 @@ failure modes, and consumer examples are in
 non-simulated run as a standalone Transformers package. WALDO rewrites only the Safetensors
 header: tensor bytes remain unchanged while names move to the standard Llama
 layout and container metadata identifies PyTorch. The package includes
-`architecture.py`, the schema-1 byte tokenizer implementation and
-configuration, `BOM.json`, and `EU-BOM.json`. The tokenizer is custom code, so
+`architecture.py`, the tokenizer implementation and configuration (the
+schema-1 byte tokenizer, or a trained `waldo/byte-bpe` tokenizer with its
+`openwaldo_tokenizer.json` artifact), `BOM.json`, and `EU-BOM.json`. The tokenizer is custom code, so
 Transformers callers load it with `trust_remote_code=True`; the model itself
 uses the standard Llama configuration. A model without a usable origin or real
 run is rejected rather than exporting simulated or incomplete artifacts.
 
 `--format mlx` emits the same standard Llama tensor names with Safetensors
 metadata for MLX, an executable binding to MLX-LM's Llama model, and the same
-explicit byte tokenizer. It is a separate package, not a second copy bundled
+explicit tokenizer. It is a separate package, not a second copy bundled
 into the Hugging Face export. Tensor data is again copied byte-for-byte; only
 the container header and surrounding runtime files differ.
 

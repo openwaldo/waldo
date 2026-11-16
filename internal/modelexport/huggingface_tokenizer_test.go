@@ -6,6 +6,10 @@
 package modelexport
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -14,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openwaldo/waldo/internal/model"
 	waldotokenizer "github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/openwaldo/waldo/internal/training"
 )
@@ -106,6 +111,74 @@ print(json.dumps({"encoded": encoded, "converted": converted}))
 	}
 	if !json.Valid(wantJSON) {
 		t.Fatal("native token IDs are not valid JSON")
+	}
+}
+
+func TestLlamaPackageExportsCarryTrainedBPETokenizer(t *testing.T) {
+	artifact, tokenizerPath := writeExportTokenizerFixture(t)
+	root := t.TempDir()
+	tokenizerData, err := os.ReadFile(tokenizerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := []byte(`{"__metadata__":{"format":"pt"}}`)
+	weights := binary.LittleEndian.AppendUint64(nil, uint64(len(header)))
+	files := map[string][]byte{"weights": append(weights, header...), "configuration": []byte("{}\n"), "tokenizer": tokenizerData}
+	var artifacts []model.ModelBOMArtifact
+	for role, data := range files {
+		if err := os.WriteFile(filepath.Join(root, role), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(data)
+		artifacts = append(artifacts, model.ModelBOMArtifact{Role: role, Path: role, SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))})
+	}
+	inspection := model.Inspection{
+		Path: root,
+		Model: model.ModelRecord{Name: "fixture", Architecture: model.Architecture{
+			Tokenizer:      model.Tokenizer{Name: artifact.Name, Revision: artifact.Revision, Artifact: &artifact},
+			VocabularySize: uint64(artifact.VocabularySize), ContextTokens: 64, ParameterDType: "float32",
+		}},
+		BOM: model.ModelBOM{CurrentOriginSHA256: "origin", Origin: &model.ModelBOMOrigin{SHA256: "origin", Artifacts: artifacts}},
+	}
+	for format, export := range map[string]func(context.Context, model.Inspection, string, Options) (string, error){"huggingface": ExportHuggingFace, "mlx": ExportMLX} {
+		destination, err := export(context.Background(), inspection, filepath.Join(t.TempDir(), format), Options{Attribution: []byte("attribution\n"), EUBOM: []byte("{}\n")})
+		if err != nil {
+			t.Fatalf("%s export: %v", format, err)
+		}
+		data, err := os.ReadFile(filepath.Join(destination, "openwaldo_tokenizer.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var exported exportTokenizerFixture
+		if err := json.Unmarshal(data, &exported); err != nil {
+			t.Fatal(err)
+		}
+		if exported.Name != waldotokenizer.TrainedName || exported.Artifact == nil || !reflect.DeepEqual(*exported.Artifact, artifact) {
+			t.Fatalf("%s package tokenizer = %+v", format, exported.TokenizerSpec)
+		}
+		var configuration struct {
+			VocabularySize int `json:"vocab_size"`
+		}
+		if data, err = os.ReadFile(filepath.Join(destination, "config.json")); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, &configuration); err != nil || configuration.VocabularySize != artifact.VocabularySize {
+			t.Fatalf("%s config vocab_size = %d, %v", format, configuration.VocabularySize, err)
+		}
+		var bom releaseBOM
+		if data, err = os.ReadFile(filepath.Join(destination, "BOM.json")); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, &bom); err != nil {
+			t.Fatal(err)
+		}
+		roles := map[string]string{}
+		for _, entry := range bom.Artifacts {
+			roles[entry.Path] = entry.Role
+		}
+		if roles["openwaldo_tokenizer.json"] != "tokenizer-artifact" || roles["tokenization_openwaldo.py"] != "tokenizer-code" || roles["tokenizer_config.json"] != "tokenizer" {
+			t.Fatalf("%s BOM roles = %v", format, roles)
+		}
 	}
 }
 

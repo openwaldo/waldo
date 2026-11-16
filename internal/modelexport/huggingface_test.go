@@ -30,6 +30,7 @@ func TestLlamaPackageExportsRejectUnsupportedTokenizersBeforeWriting(t *testing.
 		{name: "cl100k", tokenizer: model.Tokenizer{Name: "tiktoken/cl100k_base", Revision: "tiktoken-cl100k-base"}, vocabulary: 100259},
 		{name: "wrong byte revision", tokenizer: model.Tokenizer{Name: "byte", Revision: "other"}, vocabulary: 259},
 		{name: "wrong byte vocabulary", tokenizer: model.Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}, vocabulary: 50259},
+		{name: "trained bpe without its artifact", tokenizer: model.Tokenizer{Name: "waldo/byte-bpe", Revision: "unpinned"}, vocabulary: 320},
 	}
 	for _, format := range formats {
 		for _, tokenizer := range tokenizers {
@@ -54,17 +55,17 @@ func TestLlamaPackageExportsRejectUnsupportedTokenizersBeforeWriting(t *testing.
 }
 
 func TestLlamaPackageExportsContinuePastSupportedByteTokenizer(t *testing.T) {
-	inspection := model.Inspection{Model: model.ModelRecord{
-		Name: "fixture",
-		Architecture: model.Architecture{
-			Tokenizer:      model.Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"},
-			VocabularySize: 259,
-		},
-	}}
-	for _, export := range []func(context.Context, model.Inspection, string, Options) (string, error){ExportHuggingFace, ExportMLX} {
-		_, err := export(context.Background(), inspection, filepath.Join(t.TempDir(), "export"), Options{})
-		if err == nil || !strings.Contains(err.Error(), "no complete non-simulated run with usable weights") {
-			t.Fatalf("supported byte tokenizer did not pass the compatibility check: %v", err)
+	artifact, _ := writeExportTokenizerFixture(t)
+	for name, architecture := range map[string]model.Architecture{
+		"byte":        {Tokenizer: model.Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}, VocabularySize: 259},
+		"trained bpe": {Tokenizer: model.Tokenizer{Name: artifact.Name, Revision: artifact.Revision, Artifact: &artifact}, VocabularySize: uint64(artifact.VocabularySize)},
+	} {
+		inspection := model.Inspection{Model: model.ModelRecord{Name: "fixture", Architecture: architecture}}
+		for _, export := range []func(context.Context, model.Inspection, string, Options) (string, error){ExportHuggingFace, ExportMLX} {
+			_, err := export(context.Background(), inspection, filepath.Join(t.TempDir(), "export"), Options{})
+			if err == nil || !strings.Contains(err.Error(), "no complete non-simulated run with usable weights") {
+				t.Fatalf("supported %s tokenizer did not pass the compatibility check: %v", name, err)
+			}
 		}
 	}
 }
