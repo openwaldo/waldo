@@ -1023,6 +1023,50 @@ func TestConfigCheckpointMinutesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestConfigGPUThrottleRoundTrip(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	run := func(args ...string) (string, string, int) {
+		var stdout, stderr bytes.Buffer
+		code := Run(args, &stdout, &stderr)
+		return stdout.String(), stderr.String(), code
+	}
+	if out, _, code := run("config", "get", "gpu.throttle"); code != 0 || strings.TrimSpace(out) != "(unset)" {
+		t.Fatalf("get unset out = %q code = %d", out, code)
+	}
+	for _, value := range []string{"0", "0.25", "1"} {
+		if _, stderr, code := run("config", "set", "gpu.throttle", value); code != 0 {
+			t.Fatalf("set %s: %s", value, stderr)
+		}
+	}
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.GPU.Throttle == nil || *loaded.GPU.Throttle != 1 {
+		t.Fatalf("config = %+v", loaded.GPU)
+	}
+	if _, stderr, code := run("config", "set", "gpu.throttle", "0"); code != 0 {
+		t.Fatalf("set 0: %s", stderr)
+	}
+	if out, _, code := run("config", "get", "gpu.throttle"); code != 0 || strings.TrimSpace(out) != "0" {
+		t.Fatalf("get out = %q code = %d", out, code)
+	}
+	for _, value := range []string{"-0.1", "0.001", "1.5", "NaN", "half"} {
+		if _, stderr, code := run("config", "set", "--", "gpu.throttle", value); code != 1 || !strings.Contains(stderr, "gpu.throttle must be a decimal from 0.01 to 1") {
+			t.Fatalf("set %s: code = %d, stderr = %q", value, code, stderr)
+		}
+	}
+	if _, stderr, code := run("config", "set", "gpu.throttle", "0.5", "0.6"); code != 1 || !strings.Contains(stderr, "requires exactly one value") {
+		t.Fatalf("two values: code = %d, stderr = %q", code, stderr)
+	}
+	if _, stderr, code := run("config", "unset", "gpu.throttle"); code != 0 {
+		t.Fatalf("unset: %s", stderr)
+	}
+	if loaded, err = config.Load(); err != nil || loaded.GPU.Throttle != nil {
+		t.Fatalf("throttle not cleared: %+v, %v", loaded.GPU, err)
+	}
+}
+
 func TestConfigRejectsUnknownKey(t *testing.T) {
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	var stdout, stderr bytes.Buffer

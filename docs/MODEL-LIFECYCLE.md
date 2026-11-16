@@ -736,6 +736,24 @@ the first trained step, so neither replaying the record stream up to the checkpo
 nor that step's one-time start-up cost distorts them. A progress row that lands on
 that first step reports 0 tokens/s and no ETA.
 
+On a laptop, `WALDO_GPU_THROTTLE` keeps MLX training cool and quiet: `0.25`
+caps training steps, optimizer updates, and held-out scoring to about 25% of
+wall-clock time, idling the GPU between them, and `model chat` generation
+likewise. It is the ceiling for the life of the worker. Under it,
+`waldo config set gpu.throttle` moves the budget while the worker runs, which
+rereads it at most every 30 seconds; `0` pauses at the next step, and says so,
+until the budget is raised again, and `waldo config unset gpu.throttle` returns
+to the ceiling:
+
+```bash
+WALDO_GPU_THROTTLE=0.5 waldo model train small core/books
+waldo config set gpu.throttle 0.25   # cooler, from another terminal
+waldo config set gpu.throttle 0      # pause
+waldo config unset gpu.throttle      # back to 0.5
+```
+
+Only the MLX workers throttle; PyTorch and TorchTitan ignore both settings.
+
 The MLX, PyTorch, and TorchTitan adapters embed their worker source in the
 WALDO binary while using the machine's explicit Python framework runtime. They
 implement rotary

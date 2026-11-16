@@ -1860,6 +1860,9 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
+	if configuration, err := config.Load(); err == nil && configuration.GPU.Throttle != nil && *configuration.GPU.Throttle == 0 {
+		fmt.Fprintln(stderr, "warning: gpu.throttle is 0, so MLX chat waits until `waldo config set gpu.throttle` raises it")
+	}
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err

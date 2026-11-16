@@ -41,6 +41,7 @@ var configKeys = []string{
 	"signing.method",
 	"signing.key",
 	"training.checkpoint-minutes",
+	"gpu.throttle",
 }
 
 func runConfigShow(context Context, _ []string, stdout, _ io.Writer) error {
@@ -346,6 +347,15 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 			return fmt.Errorf("training.checkpoint-minutes must be a positive number of minutes")
 		}
 		configuration.Training.CheckpointMinutes = &value
+	case "gpu.throttle":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		value, parseErr := strconv.ParseFloat(strings.TrimSpace(values[0]), 64)
+		if parseErr != nil || !(value == 0 || value >= 0.01 && value <= 1) {
+			return fmt.Errorf("gpu.throttle must be a decimal from 0.01 to 1, or 0 to pause")
+		}
+		configuration.GPU.Throttle = &value
 	default:
 		return fmt.Errorf("%s", unknownConfigKey(key))
 	}
@@ -408,6 +418,8 @@ func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
 		configuration.Signing.Key = ""
 	case "training.checkpoint-minutes":
 		configuration.Training.CheckpointMinutes = nil
+	case "gpu.throttle":
+		configuration.GPU.Throttle = nil
 	default:
 		return fmt.Errorf("%s", unknownConfigKey(key))
 	}
@@ -534,6 +546,11 @@ func configValue(configuration config.Config, key string) (any, bool, error) {
 			return nil, false, nil
 		}
 		return *configuration.Training.CheckpointMinutes, true, nil
+	case "gpu.throttle":
+		if configuration.GPU.Throttle == nil {
+			return nil, false, nil
+		}
+		return *configuration.GPU.Throttle, true, nil
 	default:
 		return nil, false, fmt.Errorf("%s", unknownConfigKey(key))
 	}

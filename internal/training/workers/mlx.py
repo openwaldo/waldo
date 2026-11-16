@@ -67,8 +67,8 @@ class RateWindow:
         return progress_estimate(step, target_steps, step - self.step, tokens - self.tokens, now - self.started)
 
 
-# WALDO_GPU_THROTTLE=0.25 caps training to ~25% of wall-clock time; GPU alternates between
-# full-speed and idle. Applies only to the MLX worker.
+# WALDO_GPU_THROTTLE=0.25 caps training steps, optimizer updates, and held-out scoring to ~25% of
+# wall-clock time, as the MLX chat worker does generation; the GPU alternates between full speed and idle.
 def read_gpu_throttle():
     try:
         value = float(os.environ.get("WALDO_GPU_THROTTLE") or 1)
@@ -113,6 +113,28 @@ def checkpoint_due(step, every, saved_at, now, minutes):
     if every <= 0:
         return False
     return step % every == 0 or (isinstance(minutes, (int, float)) and minutes > 0 and now - saved_at >= minutes * 60)
+
+
+# WALDO_GPU_THROTTLE is the ceiling; `waldo config set gpu.throttle` moves the live budget under it.
+def live_gpu_throttle():
+    configured = live_setting("gpu", "throttle")
+    if isinstance(configured, (int, float)) and 0 <= configured <= 1:
+        return min(configured, GPU_THROTTLE)
+    return GPU_THROTTLE
+
+
+# idle_after sleeps so GPU work since started is the live budget's share of wall-clock time; 0 pauses.
+def idle_after(started):
+    elapsed = time.perf_counter() - started
+    throttle = live_gpu_throttle()
+    if throttle == 0:
+        emit("event", event={"kind": "log", "message": "paused: gpu.throttle is 0 until `waldo config set gpu.throttle` raises it"})
+        while throttle == 0:
+            time.sleep(30)
+            throttle = live_gpu_throttle()
+        emit("event", event={"kind": "log", "message": f"resumed at gpu.throttle {throttle}"})
+    if throttle < 1:
+        time.sleep(elapsed * (1 / throttle - 1))
 
 
 # WALDO_PROGRESS_HEARTBEAT_SECONDS is how long a run may go without a progress line before the
@@ -506,8 +528,6 @@ class Trainer:
         mx.random.seed(self.parameters["seed"] ^ micro_seed)
         loss, gradients = self.loss_and_grad(self.model, inputs, targets, mask)
         mx.eval(loss, gradients)
-        if GPU_THROTTLE < 1:
-            time.sleep((time.perf_counter() - step_started) * (1 / GPU_THROTTLE - 1))
         valid_tokens = int(mask.sum().item())
         if not math.isfinite(float(loss.item())):
             raise NumericalIntegrityError(f"non-finite training loss at optimizer step {next_step}; no optimizer update was applied")
@@ -525,6 +545,7 @@ class Trainer:
         self.batch = []
         self.accumulation_number += 1
         self.accumulated_compute_seconds += max(time.perf_counter() - step_started, 1e-9)
+        idle_after(step_started)
         if self.accumulation_number < self.gradient_accumulation_steps and not final:
             self.last_step_finished = time.perf_counter()
             return
@@ -532,6 +553,7 @@ class Trainer:
         averaged_gradients = tree_map(lambda gradient: gradient / self.accumulated_tokens, self.accumulated_gradients)
         # Validate every optimizer update before mutating model or optimizer
         # state. Delayed sampling can let one bad gradient poison a long run.
+        checked_started = time.perf_counter()
         squared_norm = mx.array(0.0)
         for _, gradient in tree_flatten(averaged_gradients):
             squared_norm = squared_norm + mx.sum(gradient.astype(mx.float32) ** 2)
@@ -544,6 +566,7 @@ class Trainer:
         self.optimizer.update(self.model, averaged_gradients)
         mx.eval(self.model.parameters(), self.optimizer.state)
         self.accumulated_compute_seconds += max(time.perf_counter() - update_started, 1e-9)
+        idle_after(checked_started)
         loss_value = self.accumulated_loss_sum / self.accumulated_tokens
         valid_tokens = self.accumulated_tokens
         step_seconds = max(self.accumulated_compute_seconds, 1e-9)
@@ -709,6 +732,7 @@ class Trainer:
         total_loss = 0.0
         total_tokens = 0.0
         for offset in range(0, len(self.evaluation_sequences), self.batch_size):
+            batch_started = time.perf_counter()
             batch = self.evaluation_sequences[offset : offset + self.batch_size]
             tokens = mx.array([item[0] for item in batch], dtype=mx.int32)
             mask = mx.array([item[1] for item in batch], dtype=mx.float32)
@@ -719,6 +743,7 @@ class Trainer:
             loss_sum = (losses * mask).sum()
             token_count = mask.sum()
             mx.eval(loss_sum, token_count)
+            idle_after(batch_started)
             total_loss += float(loss_sum.item())
             total_tokens += float(token_count.item())
         self.model.train()

@@ -29,11 +29,17 @@ type Config struct {
 	Disclosure Disclosure `json:"disclosure,omitempty"`
 	Signing    Signing    `json:"signing,omitempty"`
 	Training   Training   `json:"training,omitempty"`
+	GPU        GPU        `json:"gpu,omitempty"`
 }
 
 // Training.CheckpointMinutes also saves on the clock, read live by a running MLX worker.
 type Training struct {
 	CheckpointMinutes *float64 `json:"checkpoint_minutes,omitempty"`
+}
+
+// GPU.Throttle is a live MLX budget under the WALDO_GPU_THROTTLE ceiling; 0 pauses.
+type GPU struct {
+	Throttle *float64 `json:"throttle,omitempty"`
 }
 
 type Disclosure struct {
