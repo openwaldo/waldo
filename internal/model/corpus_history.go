@@ -83,7 +83,7 @@ func ComposeCompleted(compose Compose, inspection Inspection) (bool, error) {
 				return false, nil
 			}
 		}
-		return isMerge(inspection.Origin) && compose.Base.OriginSHA256 == inspection.Model.OriginBOMSHA256, nil
+		return IsMerge(inspection.Origin) && compose.Base.OriginSHA256 == inspection.Model.OriginBOMSHA256, nil
 	}
 	if len(compose.Stages) == 0 || len(inspection.Runs) != len(inspection.RunBOMs) || len(inspection.Runs) < len(compose.Stages) {
 		return false, nil

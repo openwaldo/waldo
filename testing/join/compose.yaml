@@ -1,0 +1,39 @@
+# The join e2e's training, as a plain compose: model-join.sh appends a fine-tuning stage when asked
+# for post-training, then the join block that makes it a run file. The stage's budget is what a
+# single-model baseline would train; join sets each unit's own.
+kind: waldo-model-compose
+schema: 1
+interaction:
+  template: user-assistant-v1
+architecture:
+  family: decoder-transformer
+  context_tokens: 512
+  vocabulary_size: 259
+  hidden_size: 128
+  intermediate_size: 384
+  layers: 4
+  attention_heads: 4
+  key_value_heads: 2
+  tie_embeddings: true
+  parameter_dtype: bfloat16
+  tokenizer:
+    name: byte
+    revision: builtin-byte-schema-1
+stages:
+  - name: python
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+    corpora:
+      - path: code/permissive
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      steps: 500
+      batch_size: 32
+      sequence_length: 512
+      learning_rate: 0.0006
+      evaluation_selection: lowest-sha256-v1  # scans every record a unit's filters keep, so narrow units always find held-out records
+      shuffle_buffer_records: 1000000
+      shuffle_buffer_bytes: 4294967296

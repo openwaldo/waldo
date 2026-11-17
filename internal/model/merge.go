@@ -34,7 +34,7 @@ type MergeParent struct {
 	Share           float64 `json:"share,omitempty"`
 }
 
-func isMerge(origin *OriginBOM) bool {
+func IsMerge(origin *OriginBOM) bool {
 	return origin != nil && origin.Source.Provider == "merge"
 }
 
@@ -53,9 +53,6 @@ func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, error) {
 		}
 		if len(parents) > 0 && inspection.Model.ArchitectureSHA256 != parents[0].inspection.Model.ArchitectureSHA256 {
 			return nil, fmt.Errorf("base.merge parent %q does not have the architecture of %q", declared.Model, parents[0].inspection.Model.Name)
-		}
-		if inspection.Model.Architecture.Tokenizer.Name != "byte" {
-			return nil, fmt.Errorf("base.merge supports byte-tokenizer models; %q uses %s", declared.Model, inspection.Model.Architecture.Tokenizer.Name)
 		}
 		if dtype := inspection.Model.Architecture.ParameterDType; dtype != "bfloat16" && dtype != "float32" {
 			return nil, fmt.Errorf("base.merge supports bfloat16 and float32 parameters; %q uses %s", declared.Model, dtype)
@@ -231,7 +228,7 @@ func (builder Builder) recordedMerge(name string, base ComposeBase) (*Inspection
 		return nil, err
 	}
 	mismatch := fmt.Errorf("compose base does not match existing model %q; use a new model name", name)
-	if !isMerge(target.Origin) {
+	if !IsMerge(target.Origin) {
 		return nil, mismatch
 	}
 	key := target.Origin.Source.Revision
@@ -278,7 +275,7 @@ func (builder Builder) recordedMerge(name string, base ComposeBase) (*Inspection
 
 // ReadMerge is nil for models that aren't merges.
 func ReadMerge(inspection Inspection) (*MergeRecord, error) {
-	if !isMerge(inspection.Origin) {
+	if !IsMerge(inspection.Origin) {
 		return nil, nil
 	}
 	index := newLineageIndex("", nil)
@@ -359,6 +356,35 @@ func (builder Builder) mergeOrigin(base ComposeBase) (Inspection, error) {
 	if err != nil {
 		return Inspection{}, err
 	}
+	carried := map[string]string{}
+	for _, parent := range parents {
+		records, err := ProvenanceRecords(parent.inspection)
+		if err != nil {
+			return Inspection{}, err
+		}
+		for digest, path := range records {
+			carried[digest] = path
+		}
+	}
+	provenance, err := copyProvenance(temporary, carried)
+	if err != nil {
+		return Inspection{}, err
+	}
+	artifacts = append(artifacts, provenance...)
+	// The merge inherits every parent's whole training history.
+	var closures []TrainingClosure
+	for _, parent := range parents {
+		closure, err := ModelClosure(parent.inspection)
+		if err != nil {
+			return Inspection{}, err
+		}
+		closures = append(closures, closure)
+	}
+	closure, err := writeClosure(temporary, unionClosures(closures...))
+	if err != nil {
+		return Inspection{}, err
+	}
+	artifacts = append(artifacts, closure...)
 	origin := OriginBOM{
 		Kind: "openwaldo-bom", Schema: 1, Subject: "model-origin",
 		Source:             OriginSource{Provider: "merge", RequestedRevision: key, Revision: key},

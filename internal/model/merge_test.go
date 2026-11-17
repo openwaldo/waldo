@@ -10,14 +10,17 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/corpus"
+	waldotokenizer "github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/openwaldo/waldo/internal/training"
 )
 
@@ -57,6 +60,10 @@ func flipWeightsBuilder(root string) Builder {
 		}
 		data[len(data)-1] ^= 1 << (runs % 5)
 		runs++
+		// Stamp the weights as WALDO's trainers do.
+		if data, err = restamp(data, map[string]string{"format": "openwaldo", "run_id": request.RunID, "architecture_sha256": request.ArchitectureSHA256}); err != nil {
+			return training.Observation{}, err
+		}
 		if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
 			return training.Observation{}, err
 		}
@@ -73,6 +80,28 @@ func flipWeightsBuilder(root string) Builder {
 	return Builder{Root: root, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
 		return testSelection(backend), nil
 	})}
+}
+
+// restamp replaces a Safetensors file's metadata, keeping its tensors.
+func restamp(data []byte, metadata map[string]string) ([]byte, error) {
+	length := binary.LittleEndian.Uint64(data)
+	var header map[string]json.RawMessage
+	if err := json.Unmarshal(data[8:8+length], &header); err != nil {
+		return nil, err
+	}
+	stamp, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+	header["__metadata__"] = stamp
+	encoded, err := json.Marshal(header)
+	if err != nil {
+		return nil, err
+	}
+	for len(encoded)%8 != 0 {
+		encoded = append(encoded, ' ')
+	}
+	return append(append(binary.LittleEndian.AppendUint64(nil, uint64(len(encoded))), encoded...), data[8+length:]...), nil
 }
 
 // tune composes name from base with one stage per stage name.
@@ -124,7 +153,7 @@ func TestMergeComposeRecordsItsParentsAndFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !isMerge(merged.Origin) || merged.Origin.Source.Revision != merged.Origin.SourceArtifacts[0].SHA256 || merged.Origin.Source.URL != "" {
+	if !IsMerge(merged.Origin) || merged.Origin.Source.Revision != merged.Origin.SourceArtifacts[0].SHA256 || merged.Origin.Source.URL != "" {
 		t.Fatalf("origin = %+v", merged.Origin)
 	}
 	record, err := ReadMerge(merged)
@@ -207,7 +236,7 @@ func TestMergeComposeTrainsFromTheMerge(t *testing.T) {
 	root := t.TempDir()
 	builder := family(t, root)
 	trained := tune(t, builder, *mergeOf("left", "right").Base, "trained", "continue")
-	if !isMerge(trained.Origin) || len(trained.Runs) != 1 {
+	if !IsMerge(trained.Origin) || len(trained.Runs) != 1 {
 		t.Fatalf("trained = %+v", trained)
 	}
 }
@@ -725,5 +754,44 @@ func TestComposeFromAMergeAfterItsParentsAreDeleted(t *testing.T) {
 	next := tune(t, builder, ComposeBase{Model: "merged"}, "next", "next")
 	if walk := modelHistory(root, next, next.BOM.CurrentRunID); len(walk.gaps) != 0 {
 		t.Fatalf("history has gaps after the merge's parents were deleted: %v", walk.sortedGaps())
+	}
+}
+
+func TestMergeComposeMergesTrainedTokenizerModels(t *testing.T) {
+	artifact, err := waldotokenizer.TrainByteBPE([]waldotokenizer.Sample{{ID: "one", Text: strings.Repeat("fn main() { println!(\"hello\"); } ", 20)}}, 290, 4096, strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: uint64(artifact.VocabularySize), HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: artifact.Name, Revision: artifact.Revision, Artifact: &artifact}}
+	exported, err := json.Marshal(struct {
+		Kind   string `json:"kind"`
+		Schema int    `json:"schema"`
+		training.TokenizerSpec
+	}{"waldo-tokenizer", 1, training.TokenizerSpec{Name: artifact.Name, Revision: artifact.Revision, VocabularySize: artifact.VocabularySize, PadID: 0, BOSID: 1, EOSID: 2, Artifact: &artifact}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	left, right, _ := familyPackages(t, architecture, map[string][]byte{TokenizerArtifactFile: exported})
+	for name, directory := range map[string]string{"left": left, "right": right, "byte": releasePackage(t, 2)} {
+		if _, err := pullDirectory(t, root, name, directory); err != nil {
+			t.Fatal(err)
+		}
+	}
+	builder := Builder{Root: root}
+	merged, err := builder.Compose(context.Background(), "merged", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(merged.Model.Architecture, architecture) {
+		t.Fatalf("merged architecture = %+v", merged.Model.Architecture)
+	}
+	// The merge's runtime tokenizer is the trained one, so it can be continued and exported.
+	if _, _, err := training.ResolveArchitectureTokenizer(mustJSON(t, merged.Model.Architecture)); err != nil {
+		t.Fatal(err)
+	}
+	_, err = builder.Compose(context.Background(), "mixed", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "byte"}}}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "does not have the architecture") {
+		t.Fatalf("mixed tokenizer merge error = %v", err)
 	}
 }

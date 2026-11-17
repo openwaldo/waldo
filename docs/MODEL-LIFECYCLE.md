@@ -93,6 +93,10 @@ file. Source downloads live only in private staging and are removed after the
 managed artifact has been verified. `ORIGIN-BOM.json` retains the repository,
 requested reference, resolved commit, license when declared, and hashes of all
 acquired files; it does not retain a redundant copy of the source weights.
+A WALDO release's origin also keeps its lineage and training evidence
+([ADR 0084](adr/0084-record-model-lineage.md), [ADR 0089](adr/0089-publish-training-provenance-across-lineage.md)). Origins can
+also come from a join run's exported package (provider `waldo-join`; [ADR 0087](adr/0087-import-exported-packages-from-a-directory.md)) or a merge (provider
+`merge`, under `<model.root>/.merges`; [ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)).
 `MODEL-BOM.json` selects the origin until a complete real training run produces
 new current weights.
 
@@ -736,9 +740,10 @@ waldo model gate conversation2 core-v1.bom.json core-v1.results.json core-v1.gat
 
 The evaluator-owned results file uses kind `openwaldo-evaluation-results`,
 schema 1, the evaluation BOM SHA-256, and a `results` array of metric/value
-pairs. The gate re-materializes every completed real training BOM, scans each
-corpus once for exact and fuzzy overlap, and fails promotion on contamination
-or threshold errors. Simulated runs can never pass this release gate.
+pairs. The gate scans every corpus in the model's training closure, inherited
+ones included, for exact and fuzzy overlap, and fails promotion on
+contamination or threshold errors. A model with incompletely recorded history
+cannot be gated, and simulated runs can never pass.
 
 Model composes never select MLX, PyTorch, TensorFlow, or TorchTitan. Before a
 run is written, the environment-aware resolver chooses an adapter and records

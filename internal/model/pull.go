@@ -64,6 +64,7 @@ type hubModel struct {
 
 var huggingFaceRepository = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`)
 var huggingFaceCommit = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
+var provenanceFile = regexp.MustCompile(`^provenance-([a-f0-9]{64})\.json$`)
 var huggingFaceShard = regexp.MustCompile(`^model-[0-9]{5}-of-[0-9]{5}\.safetensors$`)
 
 // Probe resolves only the portable architecture and tokenizer contract. It is
@@ -160,9 +161,6 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 		}
 		sourceArtifacts = append(sourceArtifacts, OriginArtifact{Role: sourceRole(filename), Path: filename, SHA256: digest, Bytes: bytes})
 	}
-	if err := validateShardIndex(sourceDirectory, names); err != nil {
-		return Inspection{}, err
-	}
 	// The release's history isn't pinned in the origin, so origin IDs match an earlier WALDO's pull.
 	if release, err := os.ReadFile(filepath.Join(sourceDirectory, "BOM.json")); err == nil && listedLineage(release) != "" {
 		fileURL := endpoint + "/" + repository + "/resolve/" + metadata.SHA + "/" + lineageFile
@@ -170,9 +168,106 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 			return Inspection{}, fmt.Errorf("download %s, which the release lists: %w", lineageFile, err)
 		}
 	}
-	architecture, err := loadHuggingFaceArchitecture(sourceDirectory)
+	origin := OriginSource{Provider: "huggingface", Repository: metadata.ID, RequestedRevision: requested, Revision: metadata.SHA, URL: endpoint + "/" + metadata.ID, License: metadata.CardData.License}
+	if err := puller.importSource(name, temporary, sourceDirectory, names, sourceArtifacts, origin); err != nil {
+		return Inspection{}, err
+	}
+	committed = true
+	puller.report(PullProgress{Phase: "complete", Message: fmt.Sprintf("pulled %s at %s", metadata.ID, metadata.SHA)})
+	return Inspect(puller.Root, name)
+}
+
+// PullDirectory imports a Hugging Face package exported to a local directory.
+// Its origin pins every imported file by hash and names the package by
+// source, which the caller gives so that it names no local path: everyone
+// who imports the same package records the same origin. An empty revision
+// is the weights' hash.
+func (puller Puller) PullDirectory(name, directory string, source OriginSource) (Inspection, error) {
+	if err := ValidateName(name); err != nil {
+		return Inspection{}, err
+	}
+	directory, err := filepath.Abs(directory)
 	if err != nil {
 		return Inspection{}, err
+	}
+	if _, err := os.Stat(filepath.Join(puller.Root, name)); err == nil {
+		return Inspection{}, fmt.Errorf("model %q already exists", name)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return Inspection{}, err
+	}
+	var listing hubModel
+	for _, entry := range entries {
+		if entry.Type().IsRegular() {
+			listing.Siblings = append(listing.Siblings, struct {
+				Name string `json:"rfilename"`
+				Size int64  `json:"size"`
+			}{Name: entry.Name()})
+		}
+	}
+	names, err := selectModelFiles(listing)
+	if err != nil {
+		return Inspection{}, err
+	}
+	if err := os.MkdirAll(puller.Root, 0o755); err != nil {
+		return Inspection{}, err
+	}
+	temporary, err := os.MkdirTemp(puller.Root, ".waldo-pull-*")
+	if err != nil {
+		return Inspection{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.RemoveAll(temporary)
+		}
+	}()
+	sourceDirectory := filepath.Join(temporary, ".source")
+	var sourceArtifacts []OriginArtifact
+	revision := ""
+	for _, filename := range names {
+		target := filepath.Join(sourceDirectory, filename)
+		if err := copyArtifactFile(filepath.Join(directory, filename), target); err != nil {
+			return Inspection{}, err
+		}
+		digest, bytes, err := hashFile(target)
+		if err != nil {
+			return Inspection{}, err
+		}
+		if filename == "model.safetensors" {
+			revision = digest
+		}
+		sourceArtifacts = append(sourceArtifacts, OriginArtifact{Role: sourceRole(filename), Path: filename, SHA256: digest, Bytes: bytes})
+	}
+	if source.Revision == "" {
+		source.RequestedRevision, source.Revision = revision, revision
+	}
+	// A WALDO release's history comes along unpinned, as from a hub.
+	if release, err := os.ReadFile(filepath.Join(sourceDirectory, "BOM.json")); err == nil && listedLineage(release) != "" {
+		if _, err := os.Stat(filepath.Join(directory, lineageFile)); err == nil {
+			if err := copyArtifactFile(filepath.Join(directory, lineageFile), filepath.Join(sourceDirectory, lineageFile)); err != nil {
+				return Inspection{}, err
+			}
+		}
+	}
+	if err := puller.importSource(name, temporary, sourceDirectory, names, sourceArtifacts, source); err != nil {
+		return Inspection{}, err
+	}
+	committed = true
+	puller.report(PullProgress{Phase: "complete", Message: fmt.Sprintf("pulled %s %s", source.Repository, short(source.Revision))})
+	return Inspect(puller.Root, name)
+}
+
+// importSource validates a Hugging Face layout in sourceDirectory and
+// publishes it as model name with an origin BOM naming source.
+func (puller Puller) importSource(name, temporary, sourceDirectory string, names []string, sourceArtifacts []OriginArtifact, source OriginSource) error {
+	if err := validateShardIndex(sourceDirectory, names); err != nil {
+		return err
+	}
+	architecture, err := loadHuggingFaceArchitecture(sourceDirectory)
+	if err != nil {
+		return err
 	}
 	// A byte package's tokenizer artifact is unused, so its origin stays what earlier pulls recorded.
 	if architecture.Tokenizer.Artifact == nil {
@@ -180,11 +275,11 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 	}
 	architectureHash, err := hashJSON(architecture)
 	if err != nil {
-		return Inspection{}, err
+		return err
 	}
 	artifactDirectory := filepath.Join(temporary, "origin", "artifacts")
 	if err := os.MkdirAll(artifactDirectory, 0o755); err != nil {
-		return Inspection{}, err
+		return err
 	}
 	var weightFiles []string
 	for _, filename := range names {
@@ -196,42 +291,114 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 	puller.report(PullProgress{Phase: "normalize", Message: fmt.Sprintf("normalizing %d Safetensors file(s)", len(weightFiles))})
 	descriptors, err := modelweights.NormalizeHuggingFace(weightFiles, filepath.Join(artifactDirectory, "model.safetensors"))
 	if err != nil {
-		return Inspection{}, fmt.Errorf("normalize Hugging Face weights: %w", err)
+		return fmt.Errorf("normalize Hugging Face weights: %w", err)
 	}
 	if err := validateDownloadedTensors(architecture, descriptors); err != nil {
-		return Inspection{}, err
+		return err
 	}
 	artifacts, err := writeOriginRuntime(temporary, architecture, architectureHash)
 	if err != nil {
-		return Inspection{}, err
+		return err
+	}
+	// Keep the release's run BOMs with the origin, each verified against the hash it is named by.
+	records := map[string]string{}
+	var corpora []string
+	for _, name := range names {
+		match := provenanceFile.FindStringSubmatch(name)
+		if match == nil {
+			continue
+		}
+		// Run BOMs are pinned by the hash of their canonical JSON, as models pin their runs.
+		path := filepath.Join(sourceDirectory, name)
+		var runBOM RunBOM
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if json.Unmarshal(data, &runBOM) != nil {
+			return fmt.Errorf("%s is not a run BOM", name)
+		}
+		if digest, err := hashJSON(runBOM); err != nil || digest != match[1] {
+			return fmt.Errorf("%s does not hash to the run BOM it names", name)
+		}
+		if digest, err := hashJSON(runBOM.CorpusBOM); err != nil || digest != runBOM.CorpusBOMSHA256 {
+			return fmt.Errorf("%s does not hash to the corpus BOM it records", name)
+		}
+		records[match[1]] = path
+		corpora = append(corpora, runBOM.CorpusBOMSHA256)
+	}
+	provenance, err := copyProvenance(temporary, records)
+	if err != nil {
+		return err
+	}
+	artifacts = append(artifacts, provenance...)
+	// Keep the release's training closure, so models built from it inherit its whole history.
+	if data, err := os.ReadFile(filepath.Join(sourceDirectory, ClosureFile)); err == nil {
+		var closure TrainingClosure
+		if err := json.Unmarshal(data, &closure); err != nil || closure.Kind != "openwaldo-bom" || closure.Subject != "training-closure" || closure.Schema != 1 {
+			return fmt.Errorf("%s is not a schema-1 training closure", ClosureFile)
+		}
+		// A closure that leaves out the release's own runs misstates its history.
+		for _, digest := range corpora {
+			if !slices.ContainsFunc(closure.Corpora, func(entry ClosureCorpus) bool { return entry.CorpusBOMSHA256 == digest }) {
+				return fmt.Errorf("%s leaves out corpus %s that the release's own run BOMs trained on", ClosureFile, digest[:12])
+			}
+		}
+		kept, err := writeClosure(temporary, closure)
+		if err != nil {
+			return err
+		}
+		artifacts = append(artifacts, kept...)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	// Keep a distributed run's round record, the weights' link back to the records that produced them.
+	if data, err := os.ReadFile(filepath.Join(sourceDirectory, RoundFile)); err == nil {
+		var round struct {
+			Kind    string `json:"kind"`
+			Subject string `json:"subject"`
+			Schema  int    `json:"schema"`
+		}
+		if err := json.Unmarshal(data, &round); err != nil || round.Kind != "openwaldo-bom" || round.Subject != "join-round" || round.Schema != 1 {
+			return fmt.Errorf("%s is not a schema-1 join round record", RoundFile)
+		}
+		logical := "origin/" + RoundFile
+		if err := copyArtifactFile(filepath.Join(sourceDirectory, RoundFile), filepath.Join(temporary, filepath.FromSlash(logical))); err != nil {
+			return err
+		}
+		kept, err := inventoryOriginArtifacts(temporary, []string{logical})
+		if err != nil {
+			return err
+		}
+		for index := range kept {
+			kept[index].Role = RoundRole
+		}
+		artifacts = append(artifacts, kept...)
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 	origin := OriginBOM{
 		Kind: "openwaldo-bom", Schema: 1, Subject: "model-origin",
-		Source:             OriginSource{Provider: "huggingface", Repository: metadata.ID, RequestedRevision: requested, Revision: metadata.SHA, URL: endpoint + "/" + metadata.ID, License: metadata.CardData.License},
+		Source:             source,
 		ArchitectureSHA256: architectureHash, SourceArtifacts: sourceArtifacts, Artifacts: artifacts,
 	}
 	lineage, err := pullLineage(puller.Root, sourceDirectory, name, origin, architecture, func(message string) {
 		puller.report(PullProgress{Phase: "lineage", Message: message})
 	})
 	if err != nil {
-		return Inspection{}, err
+		return err
 	}
 	if err := writeJSONAtomic(filepath.Join(temporary, lineageFile), lineage); err != nil {
-		return Inspection{}, err
+		return err
 	}
 	if err := os.RemoveAll(sourceDirectory); err != nil {
-		return Inspection{}, err
+		return err
 	}
 	now := time.Now
 	if puller.Now != nil {
 		now = puller.Now
 	}
-	if err := publishOrigin(puller.Root, name, temporary, origin, architecture, now()); err != nil {
-		return Inspection{}, err
-	}
-	committed = true
-	puller.report(PullProgress{Phase: "complete", Message: fmt.Sprintf("pulled %s at %s", metadata.ID, metadata.SHA)})
-	return Inspect(puller.Root, name)
+	return publishOrigin(puller.Root, name, temporary, origin, architecture, now())
 }
 
 func (puller Puller) resolveHub(ctx context.Context, source string) (hubModel, string, string, string, string, *http.Client, error) {
@@ -239,21 +406,7 @@ func (puller Puller) resolveHub(ctx context.Context, source string) (hubModel, s
 	if err != nil {
 		return hubModel{}, "", "", "", "", nil, err
 	}
-	client := puller.Client
-	if client == nil {
-		client = &http.Client{}
-	}
-	endpoint := strings.TrimRight(puller.Endpoint, "/")
-	if endpoint == "" {
-		endpoint = strings.TrimRight(os.Getenv("HF_ENDPOINT"), "/")
-		if endpoint == "" {
-			endpoint = "https://huggingface.co"
-		}
-	}
-	token := puller.Token
-	if token == "" {
-		token = huggingFaceToken()
-	}
+	client, endpoint, token := puller.hubClient()
 	puller.report(PullProgress{Phase: "resolve", Message: fmt.Sprintf("resolving %s@%s", repository, requested)})
 	metadataURL := endpoint + "/api/models/" + repository + "/revision/" + url.PathEscape(requested)
 	var metadata hubModel
@@ -304,6 +457,17 @@ func selectModelFiles(metadata hubModel) ([]string, error) {
 	var selected []string
 	for _, name := range []string{"config.json", "tokenizer_config.json", "special_tokens_map.json", "tokenization_openwaldo.py", TokenizerArtifactFile, "README.md", "LICENSE", "LICENSE.md", "BOM.json"} {
 		if available[name] {
+			selected = append(selected, name)
+		}
+	}
+	for _, name := range []string{ClosureFile, RoundFile} {
+		if available[name] {
+			selected = append(selected, name)
+		}
+	}
+	// A WALDO release publishes its training run BOMs beside its weights.
+	for name := range available {
+		if provenanceFile.MatchString(name) {
 			selected = append(selected, name)
 		}
 	}
@@ -679,6 +843,10 @@ func sourceRole(name string) string {
 		return "source-tokenizer"
 	case name == "BOM.json":
 		return "source-bom"
+	case provenanceFile.MatchString(name):
+		return "source-" + ProvenanceRole
+	case name == ClosureFile:
+		return "source-" + ClosureRole
 	case strings.HasPrefix(name, "LICENSE"):
 		return "source-license"
 	default:
@@ -714,7 +882,7 @@ func huggingFaceToken() string {
 	return strings.TrimSpace(string(data))
 }
 
-// writeOriginRuntime writes the runtime configuration and byte tokenizer
+// writeOriginRuntime writes the runtime configuration and tokenizer
 // beside origin/artifacts/model.safetensors and inventories all three.
 func writeOriginRuntime(temporary string, architecture Architecture, architectureHash string) ([]OriginArtifact, error) {
 	artifactDirectory := filepath.Join(temporary, "origin", "artifacts")
@@ -787,4 +955,81 @@ func publishOrigin(root, name, temporary string, origin OriginBOM, architecture 
 		return fmt.Errorf("publish model %q: %w", name, err)
 	}
 	return nil
+}
+
+var pinnedFileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// FetchPinned copies exactly the named files of a file:// release into
+// directory, and refuses the release if any file's SHA-256 differs from its
+// pin: the result is the release the pins name, or nothing.
+func (puller Puller) FetchPinned(ctx context.Context, source string, files map[string]string, directory string) error {
+	names := make([]string, 0, len(files))
+	for name, digest := range files {
+		if !pinnedFileName.MatchString(name) || len(digest) != 64 {
+			return fmt.Errorf("pinned file %q must be a plain name with a SHA-256", name)
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	partial := directory + ".partial"
+	_ = os.RemoveAll(partial)
+	if err := os.MkdirAll(partial, 0o755); err != nil {
+		return err
+	}
+	defer os.RemoveAll(partial)
+	if !strings.HasPrefix(source, "file://") {
+		return fmt.Errorf("%s is not a file:// release", source)
+	}
+	for _, name := range names {
+		digest, _, err := copyHashed(filepath.Join(strings.TrimPrefix(source, "file://"), name), filepath.Join(partial, name))
+		if err != nil {
+			return fmt.Errorf("fetch %s: %w", name, err)
+		}
+		if digest != files[name] {
+			return fmt.Errorf("%s in %s does not match its pinned SHA-256", name, source)
+		}
+	}
+	if err := os.RemoveAll(directory); err != nil {
+		return err
+	}
+	return os.Rename(partial, directory)
+}
+
+// hubClient is the HTTP client, endpoint, and token Hugging Face requests use.
+func (puller Puller) hubClient() (*http.Client, string, string) {
+	client := puller.Client
+	if client == nil {
+		client = &http.Client{}
+	}
+	endpoint := strings.TrimRight(puller.Endpoint, "/")
+	if endpoint == "" {
+		endpoint = strings.TrimRight(os.Getenv("HF_ENDPOINT"), "/")
+		if endpoint == "" {
+			endpoint = "https://huggingface.co"
+		}
+	}
+	token := puller.Token
+	if token == "" {
+		token = huggingFaceToken()
+	}
+	return client, endpoint, token
+}
+
+// copyHashed copies source to a new file at path and returns its SHA-256.
+func copyHashed(source, path string) (string, int64, error) {
+	input, err := os.Open(source)
+	if err != nil {
+		return "", 0, err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return "", 0, err
+	}
+	hasher := sha256.New()
+	bytes, err := io.Copy(io.MultiWriter(output, hasher), input)
+	if closeErr := output.Close(); err == nil {
+		err = closeErr
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), bytes, err
 }

@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/corpus"
+	"github.com/openwaldo/waldo/internal/modelweights"
 	"github.com/openwaldo/waldo/internal/training"
 )
 
@@ -330,12 +331,12 @@ func TestComposeFillsAMissingHistory(t *testing.T) {
 // releaseFiles makes a Hugging Face release of a model, with lineage when withLineage is set.
 func releaseFiles(t *testing.T, root string, inspection Inspection, withLineage bool, change func([]byte) []byte) map[string][]byte {
 	t.Helper()
-	files := huggingFaceFixture(t, lineageArchitecture(), HuggingFaceTokenizerClass)
+	files := huggingFaceFixture(t, inspection.Model.Architecture, HuggingFaceTokenizerClass)
 	sourceType, sourceID := "origin", inspection.Model.OriginBOMSHA256
 	if inspection.BOM.CurrentRunID != "" {
 		sourceType, sourceID = "run", inspection.BOM.CurrentRunID
 	}
-	weights := files["model.safetensors"]
+	weights := huggingFaceNamed(t, inspection)
 	if change != nil {
 		weights = change(weights)
 	}
@@ -542,4 +543,39 @@ func TestAReleaseNeverFailsAPull(t *testing.T) {
 	if !strings.Contains(strings.Join(warnings, "\n"), "doesn't match BOM.json") || pulled.Model.ID == "" {
 		t.Fatalf("warnings = %q", warnings)
 	}
+}
+
+// huggingFaceNamed is a model's current weights under Hugging Face tensor names, as export writes them.
+func huggingFaceNamed(t *testing.T, inspection Inspection) []byte {
+	t.Helper()
+	path := filepath.Join(inspection.Path, "origin", "artifacts", "model.safetensors")
+	if count := len(inspection.Model.Runs); count > 0 {
+		path = filepath.Join(inspection.Path, "runs", runDirectoryName(inspection.Model.Runs[count-1]), "artifacts", "model.safetensors")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	length := binary.LittleEndian.Uint64(data[:8])
+	var tensors map[string]json.RawMessage
+	if err := json.Unmarshal(data[8:8+length], &tensors); err != nil {
+		t.Fatal(err)
+	}
+	renamed := map[string]json.RawMessage{}
+	for name, descriptor := range tensors {
+		if name != "__metadata__" {
+			if name, err = modelweights.HuggingFaceName(name); err != nil {
+				t.Fatal(err)
+			}
+		}
+		renamed[name] = descriptor
+	}
+	header, err := json.Marshal(renamed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for len(header)%8 != 0 {
+		header = append(header, ' ')
+	}
+	return append(append(binary.LittleEndian.AppendUint64(nil, uint64(len(header))), header...), data[8+length:]...)
 }

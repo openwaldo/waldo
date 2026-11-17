@@ -101,31 +101,33 @@ func runModelGate(context Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
-	var reports []evaluation.ContaminationReport
-	for position, run := range inspection.Runs {
-		if run.State != model.RunComplete {
-			continue
-		}
-		if run.Observation == nil || run.Observation.Simulated {
+	for _, run := range inspection.Runs {
+		if run.State == model.RunComplete && (run.Observation == nil || run.Observation.Simulated) {
 			return fmt.Errorf("model %s run %s has simulated or absent training evidence", inspection.Model.Name, run.ID)
 		}
-		if position >= len(inspection.RunBOMs) {
-			return fmt.Errorf("model %s has incomplete run BOM evidence", inspection.Model.Name)
-		}
-		runBOM := inspection.RunBOMs[position]
-		trainingMaterialized, err := corpus.Materialize(context.Execution, runBOM.CorpusBOM, cache, modelMaterializeProgressPrinter(stderr))
+	}
+	// Every corpus the weights' whole lineage trained on, inherited or its own; a
+	// history not completely recorded cannot show the evaluation is clean.
+	closure, err := model.ModelClosure(inspection)
+	if err != nil {
+		return err
+	}
+	if !closure.Complete {
+		return fmt.Errorf("model %s's training history is not completely recorded, so contamination cannot be ruled out", inspection.Model.Name)
+	}
+	var reports []evaluation.ContaminationReport
+	for _, trained := range closure.Corpora {
+		trainingMaterialized, err := corpus.Materialize(context.Execution, trained.CorpusBOM, cache, modelMaterializeProgressPrinter(stderr))
 		if err != nil {
-			return fmt.Errorf("materialize training run %s: %w", run.ID, err)
+			return fmt.Errorf("materialize training corpus %s: %w", trained.CorpusBOMSHA256[:12], err)
 		}
-		parameters := runBOM.Parameters
-		parameters.Epochs = 1
-		trainingRecords, err := training.NewCanonicalRecordSource(verifiedTrainingInputs(trainingMaterialized, runBOM.CorpusBOM), parameters)
+		trainingRecords, err := training.NewCanonicalRecordSource(verifiedTrainingInputs(trainingMaterialized, trained.CorpusBOM), evaluationParameters)
 		if err != nil {
-			return fmt.Errorf("training run %s records: %w", run.ID, err)
+			return fmt.Errorf("training corpus %s records: %w", trained.CorpusBOMSHA256[:12], err)
 		}
-		report, err := evaluation.CheckContamination(context.Execution, runBOM.CorpusBOMSHA256, evaluationBOMSHA256, trainingRecords, evaluationRecords, evaluationBOM.Contamination)
+		report, err := evaluation.CheckContamination(context.Execution, trained.CorpusBOMSHA256, evaluationBOMSHA256, trainingRecords, evaluationRecords, evaluationBOM.Contamination)
 		if err != nil {
-			return fmt.Errorf("training run %s contamination: %w", run.ID, err)
+			return fmt.Errorf("training corpus %s contamination: %w", trained.CorpusBOMSHA256[:12], err)
 		}
 		reports = append(reports, report)
 	}

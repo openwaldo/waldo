@@ -186,6 +186,7 @@ BOM.
 | `architecture` | normally | object | Defines immutable model structure and tokenizer identity. It may be omitted with `base.source`, in which case WALDO inherits the verified source architecture. |
 | `interaction` | no | object | Declares a versioned inference-time prompt contract. Omit it for raw causal continuation. |
 | `stages` | yes, unless `base.merge` creates the model | list | Ordered training stages. Stage names must be unique. |
+| `join` | no | object | Makes the compose a distributed run's file, read only by `waldo model join` ([Model join](MODEL-JOIN.md)); every other command ignores it, and it is no part of the compose's identity. |
 
 ### Interaction fields
 
@@ -293,8 +294,9 @@ merge-base must be in its history, with no gap and no model that starts there
 from scratch or from an outside release, and every earlier merge above it must
 have parents that reach a common ancestor too: a family never merges in a model
 from outside it, but a merge can merge again with its own parents. Below the
-merge-base, gaps are only recorded. Merges accept byte-tokenizer
-models with `bfloat16` or `float32` parameters.
+merge-base, gaps are only recorded. Merges accept models with `bfloat16` or
+`float32` parameters, whether their tokenizer is the byte tokenizer or a trained
+one.
 
 WALDO computes every new merge from the parents' weights and writes it as an
 origin under the model root's `.merges` directory, named by the hash of its

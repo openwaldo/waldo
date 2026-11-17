@@ -37,6 +37,22 @@ type Compose struct {
 	Architecture Architecture `json:"architecture" yaml:"architecture"`
 	Interaction  Interaction  `json:"interaction,omitzero" yaml:"interaction,omitempty"`
 	Stages       []Stage      `json:"stages" yaml:"stages"`
+	// Join is read only by `waldo model join`, which runs this compose as a
+	// distributed run; every other command ignores it, and it is no part of the
+	// compose's identity.
+	Join *RawYAML `json:"-" yaml:"join,omitempty"`
+}
+
+// RawYAML keeps a block of a compose as written, for the command that reads it.
+type RawYAML struct{ Node yaml.Node }
+
+func (raw *RawYAML) UnmarshalYAML(node *yaml.Node) error {
+	raw.Node = *node
+	return nil
+}
+
+func (raw RawYAML) MarshalYAML() (any, error) {
+	return &raw.Node, nil
 }
 
 const InteractionUserAssistantV1 = "user-assistant-v1"

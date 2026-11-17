@@ -191,6 +191,9 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	if err := writeLineage(temporary, options.Lineage, roles); err != nil {
 		return "", err
 	}
+	if err := writeProvenance(temporary, inspection, roles); err != nil {
+		return "", err
+	}
 	sourceBOM, err := hashJSON(inspection.BOM)
 	if err != nil {
 		return "", err

@@ -190,6 +190,9 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	if err := writeLineage(temporary, options.Lineage, roles); err != nil {
 		return "", err
 	}
+	if err := writeProvenance(temporary, inspection, roles); err != nil {
+		return "", err
+	}
 	inventory, err := inventoryFiles(temporary, roles)
 	if err != nil {
 		return "", err
@@ -613,4 +616,58 @@ func writeLineage(directory string, lineage []byte, roles map[string]string) err
 	}
 	roles["LINEAGE.json"] = "lineage"
 	return os.WriteFile(filepath.Join(directory, "LINEAGE.json"), lineage, 0o644)
+}
+
+// writeProvenance publishes the run BOMs behind the released weights beside
+// them, each named by its hash, so the release itself proves what data
+// trained it.
+func writeProvenance(directory string, inspection model.Inspection, roles map[string]string) error {
+	records, err := model.ProvenanceRecords(inspection)
+	if err != nil {
+		return err
+	}
+	for digest, source := range records {
+		data, err := os.ReadFile(source)
+		if err != nil {
+			return fmt.Errorf("read run BOM %s: %w", digest[:12], err)
+		}
+		name := "provenance-" + digest + ".json"
+		if err := os.WriteFile(filepath.Join(directory, name), data, 0o644); err != nil {
+			return err
+		}
+		roles[name] = model.ProvenanceRole
+	}
+	closure, err := model.ModelClosure(inspection)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(closure, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(directory, model.ClosureFile), append(data, '\n'), 0o644); err != nil {
+		return err
+	}
+	roles[model.ClosureFile] = model.ClosureRole
+	// Weights unchanged since a distributed run produced them keep their link to its records.
+	trained := false
+	for _, run := range inspection.Model.Runs {
+		trained = trained || run.State == model.RunComplete
+	}
+	if !trained && inspection.Origin != nil {
+		for _, artifact := range inspection.Origin.Artifacts {
+			if artifact.Role != model.RoundRole {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path)))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(directory, model.RoundFile), data, 0o644); err != nil {
+				return err
+			}
+			roles[model.RoundFile] = model.RoundRole
+		}
+	}
+	return nil
 }

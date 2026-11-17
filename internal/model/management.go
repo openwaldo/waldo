@@ -74,7 +74,7 @@ func State(inspection Inspection) string {
 	if inspection.Origin == nil {
 		return ""
 	}
-	if isMerge(inspection.Origin) {
+	if IsMerge(inspection.Origin) {
 		return "merged"
 	}
 	return "downloaded"
@@ -257,7 +257,7 @@ func verifyModelArtifacts(inspection Inspection) error {
 // VerifyCompletedCompose verifies the artifacts a completed compose left: a
 // merge-only model's weights are its merged origin's, which Inspect verifies.
 func VerifyCompletedCompose(compose Compose, inspection Inspection) error {
-	if len(compose.Stages) == 0 && compose.Base != nil && len(compose.Base.Merge) > 0 && isMerge(inspection.Origin) {
+	if len(compose.Stages) == 0 && compose.Base != nil && len(compose.Base.Merge) > 0 && IsMerge(inspection.Origin) {
 		return nil
 	}
 	return VerifyCurrentModelArtifacts(inspection)

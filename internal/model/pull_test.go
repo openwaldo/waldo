@@ -394,3 +394,94 @@ func sortStrings(values []string) {
 		}
 	}
 }
+
+func TestPullDirectoryImportsATrainedTokenizerPackage(t *testing.T) {
+	artifact, err := waldotokenizer.TrainByteBPE([]waldotokenizer.Sample{{ID: "one", Text: strings.Repeat("fn main() { println!(\"hello\"); } ", 20)}, {ID: "two", Text: strings.Repeat("def main():\n    print('hello')\n", 20)}}, 300, 4096, strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: uint64(artifact.VocabularySize), HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: artifact.Name, Revision: artifact.Revision, Artifact: &artifact}}
+	exported, err := json.Marshal(struct {
+		Kind   string `json:"kind"`
+		Schema int    `json:"schema"`
+		training.TokenizerSpec
+	}{"waldo-tokenizer", 1, training.TokenizerSpec{Name: artifact.Name, Revision: artifact.Revision, VocabularySize: artifact.VocabularySize, PadID: 0, BOSID: 1, EOSID: 2, Artifact: &artifact}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
+	files[TokenizerArtifactFile] = exported
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(directory, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inspection, err := pullDirectory(t, t.TempDir(), "trained", directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The pulled architecture is the exported model's, so copies of it can merge and continue training.
+	hash, err := hashJSON(architecture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(inspection.Model.Architecture, architecture) || inspection.Model.ArchitectureSHA256 != hash {
+		t.Fatalf("pulled architecture = %+v, want %+v", inspection.Model.Architecture, architecture)
+	}
+	if _, _, err := training.ResolveArchitectureTokenizer(mustJSON(t, inspection.Model.Architecture)); err != nil {
+		t.Fatalf("pulled tokenizer does not resolve: %v", err)
+	}
+	runtime, err := os.ReadFile(filepath.Join(inspection.Path, "origin", "artifacts", "tokenizer.json"))
+	if err != nil || !strings.Contains(string(runtime), `"kind":"waldo-tokenizer"`) && !strings.Contains(string(runtime), `"kind": "waldo-tokenizer"`) {
+		t.Fatalf("origin tokenizer = %s, %v", runtime, err)
+	}
+	// A vocabulary that disagrees with config.json is refused.
+	architecture.VocabularySize++
+	files = huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
+	files[TokenizerArtifactFile] = exported
+	mismatched := t.TempDir()
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(mismatched, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pullDirectory(t, t.TempDir(), "mismatched", mismatched); err == nil || !strings.Contains(err.Error(), "vocabulary_size") {
+		t.Fatalf("mismatched vocabulary error = %v", err)
+	}
+}
+
+func mustJSON(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestPullDirectoryImportsAnExportedPackage(t *testing.T) {
+	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
+	files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
+	var origins []string
+	for range 2 {
+		// Two identities keep the same package in their own places.
+		directory := t.TempDir()
+		writePackage(t, directory, files)
+		inspection, err := pullDirectory(t, t.TempDir(), "local", directory)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := inspection.Origin.Source
+		if source.Provider != "waldo-join" || source.Repository != "runs/test/local" || len(source.Revision) != 64 || strings.Contains(source.URL+source.Repository, directory) || len(inspection.Origin.SourceArtifacts) != 4 {
+			t.Fatalf("origin = %+v", inspection.Origin)
+		}
+		if _, err := pullDirectory(t, filepath.Dir(inspection.Path), "local", directory); err == nil {
+			t.Fatal("pulled over an existing model")
+		}
+		origins = append(origins, inspection.Model.OriginBOMSHA256)
+	}
+	if origins[0] != origins[1] {
+		t.Fatal("the same package kept in two places has two origins")
+	}
+}
