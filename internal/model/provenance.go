@@ -8,8 +8,10 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	"github.com/openwaldo/waldo/internal/corpus"
@@ -308,4 +310,23 @@ func releaseTrained(inspection Inspection) bool {
 		return json.Unmarshal(index.docs[artifact.SHA256], &release) == nil && release.RunID != ""
 	}
 	return false
+}
+
+// CheckHistory is whether a model's lineage records the training its closure
+// does: both complete or neither, over the same corpora. A package's lineage is
+// not part of what pins it, so a package can carry its weights with another history.
+func CheckHistory(root string, inspection Inspection) error {
+	closure, err := ModelClosure(inspection)
+	if err != nil {
+		return err
+	}
+	history := TrainingHistory(root, inspection)
+	var pinned []string
+	for _, entry := range closure.Corpora {
+		pinned = append(pinned, entry.CorpusBOMSHA256)
+	}
+	if history.Complete != closure.Complete || !slices.Equal(slices.Sorted(maps.Keys(history.Corpora)), pinned) {
+		return fmt.Errorf("model %s's lineage and training closure record different histories", inspection.Model.Name)
+	}
+	return nil
 }

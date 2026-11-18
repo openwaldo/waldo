@@ -363,3 +363,43 @@ func TestClosureSurvivesDeletingTheParent(t *testing.T) {
 		t.Fatalf("closure before deleting the parent %+v, after %+v", before, after)
 	}
 }
+
+// A package that carries agreed weights and closure with another lineage is told apart from the honest one.
+func TestCheckHistoryComparesLineageWithTheClosure(t *testing.T) {
+	exporter := t.TempDir()
+	base := trainTwice(t, lineageBuilder(exporter), "base")
+	closure, err := ModelClosure(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(closure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	honest := exportPackage(t, exporter, base, map[string][]byte{ClosureFile: data})
+	stripped := t.TempDir()
+	entries, err := os.ReadDir(honest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "BOM.json" || entry.Name() == lineageFile {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(honest, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		writePackage(t, stripped, map[string][]byte{entry.Name(): data})
+	}
+	for directory, agrees := range map[string]bool{honest: true, stripped: false} {
+		root := t.TempDir()
+		pulled, err := pullDirectory(t, root, "waldo-run-r0000-merge-x", directory)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := CheckHistory(root, pulled); (err == nil) != agrees {
+			t.Fatalf("package with its lineage %t: CheckHistory = %v", agrees, err)
+		}
+	}
+}
