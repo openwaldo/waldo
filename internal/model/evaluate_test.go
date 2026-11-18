@@ -81,6 +81,9 @@ func TestEvaluateScoresCurrentWeightsWithoutRecordingRun(t *testing.T) {
 	if len(inspection.Model.Runs) != 1 {
 		t.Fatalf("evaluation recorded runs: %+v", inspection.Model.Runs)
 	}
+	if trained := inspection.RunBOMs[0].EvaluationSet; trained == nil || *trained != result.Set {
+		t.Fatalf("evaluated held-out set %+v, training selected %+v", result.Set, trained)
+	}
 }
 
 func TestEvaluateRefusesWhatItCannotScore(t *testing.T) {
