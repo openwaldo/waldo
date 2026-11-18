@@ -24,6 +24,7 @@ The `count` slices of a corpus are disjoint, cover it, and are near-equal in
 size. A record ID is the SHA-256 of its text, so a record stays in its slice
 for as long as its text is unchanged; ingestion changes that alter text may
 move records, while a run pinned to an index revision is unaffected. Stage and
-corpus slices hash the same value, so nesting them does not subdivide a slice.
+corpus slices hash the same value, so nesting them intersects the two
+selections instead of subdividing a slice.
 Older binaries reject composes and BOMs that declare a slice rather than
 training the whole corpus.
