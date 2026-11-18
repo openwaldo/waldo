@@ -114,3 +114,24 @@ func TestEvaluateRefusesWhatItCannotScore(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckEvaluationComparesATrainedTokenizersArchitecture(t *testing.T) {
+	root := t.TempDir()
+	builder := Builder{Root: root, Resolver: training.FakeResolver()}
+	if _, err := builder.Initialize("pulled", byteArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	trains := byteArchitecture()
+	trains.Tokenizer = Tokenizer{Training: &TokenizerTraining{Algorithm: TokenizerAlgorithmByteBPEV1}}
+	wider := trains
+	wider.Layers++
+	for _, test := range []struct {
+		architecture Architecture
+		want         string
+	}{{trains, "no weights to evaluate"}, {wider, "does not match model"}} {
+		compose := Compose{Architecture: test.architecture, Stages: []Stage{testStage("pretrain")}}
+		if err := builder.CheckEvaluation(context.Background(), "pulled", compose); err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("layers %d: CheckEvaluation error = %v, want %q", test.architecture.Layers, err, test.want)
+		}
+	}
+}
