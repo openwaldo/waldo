@@ -184,3 +184,64 @@ func TestModelTrainFormatsOmittedNameDiagnostic(t *testing.T) {
 		t.Fatalf("stdout does not contain Cobra usage: %q", stdout.String())
 	}
 }
+
+const evaluateOnlyCompose = `kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 128
+  vocabulary_size: 259
+  hidden_size: 64
+  intermediate_size: 192
+  layers: 2
+  attention_heads: 4
+  key_value_heads: 2
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    name: byte
+    revision: builtin-byte-schema-1
+stages:
+  - name: pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    corpora:
+      - books
+    parameters:
+      steps: 2
+      batch_size: 1
+      sequence_length: 64
+      learning_rate: 0.001
+      seed: 7
+`
+
+// evaluateOnlyFixture configures an empty index and an untrained model the compose describes.
+func evaluateOnlyFixture(t *testing.T) string {
+	t.Helper()
+	index, models := t.TempDir(), t.TempDir()
+	writeCLIFile(t, filepath.Join(index, "index.yaml"), "kind: index\nschema: 1\n")
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{Index: index, Model: config.Model{Root: models, Backend: "fake"}}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "compose.yaml")
+	writeCLIFile(t, path, evaluateOnlyCompose)
+	compose, _, err := model.LoadCompose(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (model.Builder{Root: models}).Initialize("untrained", compose.Architecture); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestEvaluateOnlyRefusesAModelBeforeCheckingTheCorpus(t *testing.T) {
+	compose := evaluateOnlyFixture(t)
+	for name, want := range map[string]string{"absent": "absent", "untrained": "no weights to evaluate"} {
+		var stdout, stderr bytes.Buffer
+		if code := Run([]string{"model", "train", name, compose, "--evaluate-only"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), want) || strings.Contains(stderr.String(), "corpus") {
+			t.Fatalf("%s: code %d, stderr %q", name, code, stderr.String())
+		}
+	}
+}

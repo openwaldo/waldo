@@ -31,6 +31,9 @@ func runModelEvaluate(context Context, name, path string, cluster training.Clust
 		return fmt.Errorf("--evaluate-only needs a compose with a stage that selects held-out records")
 	}
 	stage := compose.Stages[0]
+	if err := builder.CheckEvaluation(context.Execution, name, compose); err != nil {
+		return err
+	}
 	targets, err := sanityCheckComposeCorpora(context.Execution, compose, stderr)
 	if err != nil {
 		return err

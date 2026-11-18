@@ -22,6 +22,56 @@ type Evaluation struct {
 	CorpusBOMSHA256 string                 `json:"corpus_bom_sha256"` // the corpus selection scored, as a training run's BOM records it
 }
 
+// CheckEvaluation refuses a model Evaluate cannot score before any corpus is planned or downloaded.
+func (builder Builder) CheckEvaluation(ctx context.Context, name string, compose Compose) error {
+	inspection, err := Inspect(builder.Root, name)
+	if err != nil {
+		return err
+	}
+	_, _, _, err = builder.evaluationBackend(ctx, name, inspection, compose.Stages[0].Objective)
+	return err
+}
+
+// evaluationBackend resolves the single-process backend that scores the model's current weights.
+func (builder Builder) evaluationBackend(ctx context.Context, name string, inspection Inspection, objective string) (training.Selection, []byte, *training.Initialization, error) {
+	architectureJSON, err := json.Marshal(inspection.Model.Architecture)
+	if err != nil {
+		return training.Selection{}, nil, nil, err
+	}
+	resolver := builder.Resolver
+	if resolver == nil {
+		resolver = builtinResolver()
+	}
+	selection, err := resolver.Resolve(ctx, training.ResolveRequest{
+		ArchitectureSHA256: inspection.Model.ArchitectureSHA256, Architecture: architectureJSON,
+		Objectives: []string{objective}, ApproximateParameters: inspection.Model.Forecast.ApproximateParameters,
+	})
+	if err != nil {
+		return training.Selection{}, nil, nil, fmt.Errorf("resolve evaluation backend: %w", err)
+	}
+	if err := validateSelection(selection, []string{objective}); err != nil {
+		return training.Selection{}, nil, nil, err
+	}
+	if selection.Execution.Backend.Name == training.BackendTorchTitan {
+		return training.Selection{}, nil, nil, fmt.Errorf("evaluation runs on MLX or PyTorch; set model.backend to pytorch to score on this host")
+	}
+	if selection.Execution.WorldSize > 1 {
+		return training.Selection{}, nil, nil, fmt.Errorf("evaluation runs on a single process; %s selected %d", selection.Execution.Backend.Name, selection.Execution.WorldSize)
+	}
+	selection.Execution.Parallelism.DataPlane = training.DataPlaneLocal
+	initialization, err := resolveInitialization(inspection)
+	if err != nil {
+		return training.Selection{}, nil, nil, err
+	}
+	if initialization == nil {
+		return training.Selection{}, nil, nil, fmt.Errorf("model %q has no weights to evaluate", name)
+	}
+	if selection.Execution.Backend.Name == training.BackendFake {
+		return training.Selection{}, nil, nil, fmt.Errorf("backend %s only simulates; evaluation needs real weights scored by a real backend", selection.Execution.Backend.Name)
+	}
+	return selection, architectureJSON, initialization, nil
+}
+
 // Evaluate scores current weights on the held-out records Train would select, without training.
 func (builder Builder) Evaluate(ctx context.Context, name string, prepared PreparedStage) (Evaluation, error) {
 	inspection, err := Inspect(builder.Root, name)
@@ -93,40 +143,9 @@ func (builder Builder) Evaluate(ctx context.Context, name string, prepared Prepa
 	if err != nil {
 		return Evaluation{}, fmt.Errorf("stage %s record stream: %w", stage.Name, err)
 	}
-	architectureJSON, err := json.Marshal(inspection.Model.Architecture)
+	selection, architectureJSON, initialization, err := builder.evaluationBackend(ctx, name, inspection, stage.Objective)
 	if err != nil {
 		return Evaluation{}, err
-	}
-	resolver := builder.Resolver
-	if resolver == nil {
-		resolver = builtinResolver()
-	}
-	selection, err := resolver.Resolve(ctx, training.ResolveRequest{
-		ArchitectureSHA256: inspection.Model.ArchitectureSHA256, Architecture: architectureJSON,
-		Objectives: []string{stage.Objective}, ApproximateParameters: inspection.Model.Forecast.ApproximateParameters,
-	})
-	if err != nil {
-		return Evaluation{}, fmt.Errorf("resolve evaluation backend: %w", err)
-	}
-	if err := validateSelection(selection, []string{stage.Objective}); err != nil {
-		return Evaluation{}, err
-	}
-	if selection.Execution.Backend.Name == training.BackendTorchTitan {
-		return Evaluation{}, fmt.Errorf("evaluation runs on MLX or PyTorch; set model.backend to pytorch to score on this host")
-	}
-	if selection.Execution.WorldSize > 1 {
-		return Evaluation{}, fmt.Errorf("evaluation runs on a single process; %s selected %d", selection.Execution.Backend.Name, selection.Execution.WorldSize)
-	}
-	selection.Execution.Parallelism.DataPlane = training.DataPlaneLocal
-	initialization, err := resolveInitialization(inspection)
-	if err != nil {
-		return Evaluation{}, err
-	}
-	if initialization == nil {
-		return Evaluation{}, fmt.Errorf("model %q has no weights to evaluate", name)
-	}
-	if selection.Execution.Backend.Name == training.BackendFake {
-		return Evaluation{}, fmt.Errorf("backend %s only simulates; evaluation needs real weights scored by a real backend", selection.Execution.Backend.Name)
 	}
 	scratch, err := os.MkdirTemp("", "waldo-evaluate-*")
 	if err != nil {
