@@ -23,7 +23,7 @@ const ClosureFile = "TRAINING-CLOSURE.json"
 
 // RoundRole marks a distributed run's round record, which a release made by
 // `waldo model join` publishes and a pulled origin keeps: the link from the
-// weights back to the runs repository and the signed records that produced them.
+// weights back to the run and the signed records that produced them.
 const RoundRole = "join-round"
 
 // RoundFile is the round record's name in a release package.
@@ -99,6 +99,14 @@ func InheritedClosure(inspection Inspection) (TrainingClosure, error) {
 		if err != nil || ancestor.Model.ID != parent.ModelID {
 			return historyClosure(inspection), nil
 		}
+		// Only the parent's training up to the run its weights came from, not what it trained since.
+		kept := 0
+		for position, run := range ancestor.Runs {
+			if run.ID == parent.RunID {
+				kept = position + 1
+			}
+		}
+		ancestor.Runs, ancestor.RunBOMs = ancestor.Runs[:min(kept, len(ancestor.Runs))], ancestor.RunBOMs[:min(kept, len(ancestor.RunBOMs))]
 		return ModelClosure(ancestor)
 	}
 	if inspection.Origin == nil {
