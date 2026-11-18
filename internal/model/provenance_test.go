@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -331,5 +332,27 @@ func TestMergeCarriesItsParentsProvenance(t *testing.T) {
 				t.Fatalf("%s run %s was not carried", name, digest)
 			}
 		}
+	}
+}
+
+// Deleting a fine-tune's parent leaves its training closure as it was, read from the history the fine-tune keeps.
+func TestClosureSurvivesDeletingTheParent(t *testing.T) {
+	root := t.TempDir()
+	builder := lineageBuilder(root)
+	trainTwice(t, builder, "base")
+	child := fineTune(t, builder, "base", "child", nil)
+	before, err := ModelClosure(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "base")); err != nil {
+		t.Fatal(err)
+	}
+	after, err := ModelClosure(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !before.Complete || len(before.Corpora) == 0 || !reflect.DeepEqual(before, after) {
+		t.Fatalf("closure before deleting the parent %+v, after %+v", before, after)
 	}
 }

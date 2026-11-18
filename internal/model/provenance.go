@@ -90,13 +90,14 @@ func ownClosure(inspection Inspection) TrainingClosure {
 
 // InheritedClosure is the training history behind a model's starting
 // weights: a local parent's whole closure, the closure a pulled release or a
-// merge recorded, or nothing for weights initialized at random. Where that
-// history is not recorded, the result is incomplete rather than silently empty.
+// merge recorded, or nothing for weights initialized at random. Without those,
+// as for a deleted parent or a release made before closures, it is what the
+// model's lineage records, incomplete rather than silently empty where that has gaps.
 func InheritedClosure(inspection Inspection) (TrainingClosure, error) {
 	if parent := inspection.Model.Parent; parent != nil {
 		ancestor, err := Inspect(filepath.Dir(inspection.Path), parent.Model)
 		if err != nil || ancestor.Model.ID != parent.ModelID {
-			return emptyClosure(false), nil
+			return historyClosure(inspection), nil
 		}
 		return ModelClosure(ancestor)
 	}
@@ -117,8 +118,21 @@ func InheritedClosure(inspection Inspection) (TrainingClosure, error) {
 		}
 		return closure, nil
 	}
-	// A release that recorded no closure, or weights from outside WALDO, carry unrecorded history.
-	return emptyClosure(false), nil
+	return historyClosure(inspection), nil
+}
+
+// historyClosure is the closure of the training the model's lineage records before its own runs.
+func historyClosure(inspection Inspection) TrainingClosure {
+	history := TrainingHistory(filepath.Dir(inspection.Path), inspection)
+	closure := emptyClosure(history.Complete)
+	for digest, uses := range history.Corpora {
+		for _, used := range uses {
+			if used.ModelID != inspection.Model.ID {
+				closure.Corpora = append(closure.Corpora, ClosureCorpus{CorpusBOMSHA256: digest, Uses: 1, CorpusBOM: used.BOM})
+			}
+		}
+	}
+	return unionClosures(closure)
 }
 
 // ModelClosure is the model's whole training history: what its starting

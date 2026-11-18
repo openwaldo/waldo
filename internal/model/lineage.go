@@ -573,6 +573,7 @@ func fillLineage(root string, inspection Inspection, base *Inspection, warn func
 type History struct {
 	Corpora  map[string][]HistoryCorpus // by corpus BOM hash, one per run that trained on it
 	Upstream *OriginSource
+	Complete bool // the history has no gaps and starts at no outside pull
 }
 
 // HistoryCorpus is a corpus BOM and a run that trained on it.
@@ -600,6 +601,7 @@ func TrainingHistory(root string, inspection Inspection) History {
 		source := walk.outside[0].Source
 		history.Upstream = &source
 	}
+	history.Complete = len(walk.outside) == 0 && len(walk.gaps) == 0
 	return history
 }
 
