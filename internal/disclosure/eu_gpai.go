@@ -242,6 +242,10 @@ func BuildEUGPAIReport(inspection model.Inspection, history model.History, provi
 			entry.Stages = append(entry.Stages, "ancestor "+used.Model+" "+used.Stage)
 		}
 	}
+	// A lineage with gaps that starts at no outside pull leaves some of the weights' training unrecorded.
+	if !history.Complete && history.Upstream == nil {
+		report.gap("1.3", "training.history", inspection.Model.Name, "the model's lineage has gaps, so part of the training behind its weights is not recorded")
+	}
 	if len(corpora) == 0 {
 		report.gap("1.3", "training.stages", inspection.Model.Name, "the model records no training stages")
 	}

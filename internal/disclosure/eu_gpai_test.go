@@ -79,9 +79,17 @@ func TestAMergeReportsItsAncestorsAndWhereItCameFrom(t *testing.T) {
 	if used := report.Training.UniqueCorpora; len(used) != 1 || used[0].Uses != 2 || !slices.Equal(used[0].Stages, []string{"ancestor left python", "ancestor right python"}) || hasGap(report.Gaps, "training.stages") {
 		t.Fatalf("the merge's report leaves out what its parents trained on: %+v", report.Training)
 	}
-	// With its whole history recorded, it is a new model.
-	if release := ReleaseFromModel(merged, model.History{Corpora: history.Corpora}); release.Origin != "new" {
-		t.Fatalf("a merge with no pull in its history is %q", release.Origin)
+	// With its whole history recorded, it is a new model; with gaps in it, the report says so.
+	for _, complete := range []bool{true, false} {
+		recorded := model.History{Corpora: history.Corpora, Complete: complete}
+		release := ReleaseFromModel(merged, recorded)
+		report, err := BuildEUGPAIReport(merged, recorded, nil, release, time.Unix(0, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if release.Origin != "new" || hasGap(report.Gaps, "training.history") == complete {
+			t.Fatalf("history complete %t: origin %q, gaps %+v", complete, release.Origin, report.Gaps)
+		}
 	}
 }
 
