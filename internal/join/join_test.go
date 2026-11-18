@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -467,5 +468,174 @@ func TestOnlyACheckpointPastTheFirstStepIsKept(t *testing.T) {
 		if got := savedStep(model.Inspection{Runs: test.runs}); got != test.want {
 			t.Errorf("%s: saved step %d, want %d", name, got, test.want)
 		}
+	}
+}
+
+// A closer whose claim expired, landing its merge after the slot's next holder voted and the round was decided, does not undo the decision.
+func TestLateMergeFromAnExpiredClaimKeepsTheDecision(t *testing.T) {
+	keys, identities := map[string]string{}, map[string]Identity{}
+	for _, name := range []string{"alice", "bob", "carol", "dave"} {
+		key, public := signingKey(t, name)
+		keys[name], identities[name] = key, Identity{Key: public}
+	}
+	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Closers: 3, ClaimMinutes: 60, Rounds: RoundsPlan{Pretrain: 1}, Identities: identities}
+	runDir := runDirectory(t)
+	allowed := filepath.Join(t.TempDir(), "allowed_signers")
+	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
+		t.Fatal(err)
+	}
+	write := signer(t, runDir)
+	read := func() Round {
+		t.Helper()
+		state, err := ReadState(runDir, plan, allowed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state.Rounds[0]
+	}
+	write("claims/all-1.yaml", claimFixture("all-1", 1, "alice"), keys["alice"])
+	write("submissions/all-alice.yaml", submissionFixture("all", "alice"), keys["alice"])
+	write("claims/close-1.yaml", claimFixture("close-1", 1, "alice"), keys["alice"])
+	write("claims/close-2.yaml", claimFixture("close-2", 1, "bob"), keys["bob"])
+	write("claims/close-3.yaml", claimFixture("close-3", 1, "carol"), keys["carol"])
+	// Alice's close outlives claim_minutes, and dave retakes close-1.
+	later := time.Date(2026, 10, 21, 11, 30, 0, 0, time.UTC)
+	if got := stateOf(plan, []Round{read()}).Next("dave", later); got.Kind != "claim" || got.Slot != "close-1" || got.Attempt != 2 {
+		t.Fatalf("dave = %+v, want a retake of close-1", got)
+	}
+	retake := claimFixture("close-1", 2, "dave")
+	retake.CreatedAt = "2026-10-21T11:30:00+00:00"
+	write("claims/close-1.2.yaml", retake, keys["dave"])
+	honest, other := strings.Repeat("c", 64), strings.Repeat("f", 64)
+	write("merges/dave.yaml", mergeFixture("dave", honest), keys["dave"])
+	write("merges/bob.yaml", mergeFixture("bob", honest), keys["bob"])
+	if round := read(); round.Merge == nil || round.Merge.ModelSHA256 != honest {
+		t.Fatalf("round not decided by dave and bob: %+v", round.Merge)
+	}
+	write("merges/alice.yaml", mergeFixture("alice", other), keys["alice"])
+	if round := read(); round.Merge == nil || round.Merge.ModelSHA256 != honest {
+		t.Fatalf("a late merge changed the decided round: %+v", round.Merge)
+	}
+}
+
+// A majority of the plan's closers decides the round whichever of their slots they took.
+func TestClosersDecideWhicheverSlotsTheyHold(t *testing.T) {
+	keys, identities := map[string]string{}, map[string]Identity{}
+	for _, name := range []string{"alice", "bob", "carol"} {
+		key, public := signingKey(t, name)
+		keys[name], identities[name] = key, Identity{Key: public}
+	}
+	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Closers: 3, ClaimMinutes: 60, Rounds: RoundsPlan{Pretrain: 1}, Identities: identities}
+	runDir := runDirectory(t)
+	allowed := filepath.Join(t.TempDir(), "allowed_signers")
+	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
+		t.Fatal(err)
+	}
+	write := signer(t, runDir)
+	write("claims/all-1.yaml", claimFixture("all-1", 1, "alice"), keys["alice"])
+	write("submissions/all-alice.yaml", submissionFixture("all", "alice"), keys["alice"])
+	honest := strings.Repeat("c", 64)
+	for _, slot := range []struct{ position, identity string }{{"2", "alice"}, {"3", "bob"}} {
+		write("claims/close-"+slot.position+".yaml", claimFixture("close-"+slot.position, 1, slot.identity), keys[slot.identity])
+		write("merges/"+slot.identity+".yaml", mergeFixture(slot.identity, honest), keys[slot.identity])
+	}
+	state, err := ReadState(runDir, plan, allowed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merge := state.Rounds[0].Merge; merge == nil || merge.ModelSHA256 != honest {
+		t.Fatalf("two of three closers agreed, with close-1 unclaimed, and the round is undecided: %+v", merge)
+	}
+}
+
+// The configuration and tokenizer the next round imports are part of what closers agree on.
+func TestDecisionCoversTheFilesTheNextRoundImports(t *testing.T) {
+	record := mergeFixture("alice", strings.Repeat("c", 64))
+	other := mergeFixture("bob", strings.Repeat("c", 64))
+	other.Files["config.json"] = strings.Repeat("2", 64)
+	if record.decision() == other.decision() {
+		t.Fatal("merges with different config.json agree")
+	}
+	other.Files = maps.Clone(record.Files)
+	other.Files["EU-BOM.json"] = strings.Repeat("3", 64) // release metadata carries each closer's own timestamps
+	if record.decision() != other.decision() {
+		t.Fatal("merges that differ only in release metadata disagree")
+	}
+}
+
+// Closers who keep the runs repository in different places write the same round record.
+func TestRoundRecordIsTheSameForEveryCloser(t *testing.T) {
+	accepted := []Submission{submissionFixture("all", "alice")}
+	var digests []string
+	for range 2 {
+		clone := t.TempDir()
+		runDir := filepath.Join(clone, "runs", "run")
+		path := filepath.Join(roundDir(runDir, 0), "submissions", "all-alice.yaml")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		joiner := &Joiner{clone: clone, runDir: runDir, plan: Plan{Name: "run"}, planSHA256: testPlanSHA256}
+		target := t.TempDir()
+		if err := joiner.writeRound(target, Action{Round: 0, Stage: "bootstrap"}, nil, "single", accepted); err != nil {
+			t.Fatal(err)
+		}
+		digest, err := hashFile(filepath.Join(target, model.RoundFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		digests = append(digests, digest)
+	}
+	if digests[0] != digests[1] {
+		t.Fatal("closers' round records differ with where they keep the runs repository")
+	}
+}
+
+// A claim committed but never pushed, as by a pass killed before its push, loses to another identity's
+// claim on the same slot, and the next pass carries on rather than failing every sync.
+func TestSyncRecoversFromAnUnpushedClaimThatLostItsSlot(t *testing.T) {
+	work := t.TempDir()
+	run := func(directory string, args ...string) {
+		t.Helper()
+		command := exec.Command("git", args...)
+		command.Dir = directory
+		command.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	run(work, "init", "-q", "--bare", "-b", "main", "runs.git")
+	run(work, "clone", "-q", "runs.git", "seed")
+	if err := os.WriteFile(filepath.Join(work, "seed", "README"), []byte("runs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(filepath.Join(work, "seed"), "add", "README")
+	run(filepath.Join(work, "seed"), "commit", "-q", "-m", "seed")
+	run(filepath.Join(work, "seed"), "push", "-q", "origin", "main")
+	claim := func(clone, identity string) {
+		run(work, "clone", "-q", "runs.git", clone)
+		directory := filepath.Join(work, clone, "claims")
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, "u0-1.yaml"), []byte(identity+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run(filepath.Join(work, clone), "add", ".")
+		run(filepath.Join(work, clone), "commit", "-q", "-m", "claim by "+identity)
+	}
+	claim("bob", "bob")
+	claim("carol", "carol")
+	run(filepath.Join(work, "carol"), "push", "-q")
+	joiner := &Joiner{clone: filepath.Join(work, "bob")}
+	for pass := range 2 {
+		if err := joiner.sync(t.Context()); err != nil {
+			t.Fatalf("pass %d: %v", pass+1, err)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(work, "bob", "claims", "u0-1.yaml")); err != nil || string(data) != "carol\n" {
+		t.Fatalf("bob's clone holds %q, %v; carol's claim stands", data, err)
 	}
 }

@@ -191,9 +191,10 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 }
 
 // votes are the round's merges counted toward its decision, one per closing
-// slot from the earliest of its holders to land a merge, in slot order. A slot
-// past the plan's closers votes only once every slot before it has voted, since
-// it opens only when those closers have not agreed.
+// slot from its latest holder, in slot order, so a merge landing after its
+// expired claim was retaken changes nothing. A slot past the plan's closers
+// votes only once every slot before it has voted, since it opens only when
+// those closers have not agreed.
 func votes(round Round, plan Plan) []MergeRecord {
 	byIdentity := map[string]MergeRecord{}
 	for _, record := range round.Merges {
@@ -203,24 +204,30 @@ func votes(round Round, plan Plan) []MergeRecord {
 	everyVoted := true
 	for position := 1; ; position++ {
 		slot := fmt.Sprintf("close-%d", position)
-		if round.Latest[slot].Number == 0 || (position > plan.Closing() && !everyVoted) {
+		if position > plan.Closing() && (round.Latest[slot].Number == 0 || !everyVoted) {
 			return result
 		}
-		voted := false
-		for _, claim := range round.Claims[slot] {
-			if record, ok := byIdentity[claim.Identity]; ok {
-				result, voted = append(result, record), true
-				break
-			}
+		record, voted := byIdentity[round.holder(slot)]
+		if voted {
+			result = append(result, record)
 		}
 		everyVoted = everyVoted && voted
 	}
 }
 
+// holder is the identity of slot's latest valid claim.
+func (round Round) holder(slot string) string {
+	if claims := round.Claims[slot]; len(claims) > 0 {
+		return claims[len(claims)-1].Identity
+	}
+	return ""
+}
+
 // decision is what closers must agree on: the round's starting weights, the
-// units accepted, the method, the merged weights, and the training provenance
+// units accepted, the method, the merged weights, the configuration and
+// tokenizer files the next round imports with them, and the training provenance
 // and round record published with them, so no closer in a majority can publish the agreed
-// weights with a different history. Measured losses may differ slightly across
+// weights as another model or with a different history. Measured losses may differ slightly across
 // hardware, and release metadata carries each closer's own timestamps; both
 // are evidence, not the decision.
 func (record MergeRecord) decision() string {
@@ -232,19 +239,25 @@ func (record MergeRecord) decision() string {
 	for _, unit := range record.Accepted {
 		parts = append(parts, unit.Unit+" "+unit.Identity+" "+unit.ModelSHA256)
 	}
-	var provenance []string
+	var pinned []string
 	for name, digest := range record.Files {
-		if name == model.ClosureFile || name == model.RoundFile || strings.HasPrefix(name, "provenance-") {
-			provenance = append(provenance, name+" "+digest)
+		if decidedFiles[name] || strings.HasPrefix(name, "provenance-") {
+			pinned = append(pinned, name+" "+digest)
 		}
 	}
-	slices.Sort(provenance)
-	parts = append(parts, provenance...)
+	slices.Sort(pinned)
+	parts = append(parts, pinned...)
 	// A gate round's merges must also agree whether the gate passed.
 	if record.Gate != nil {
 		parts = append(parts, fmt.Sprintf("gate %s %t", record.Gate.After, record.Gate.Passed))
 	}
 	return strings.Join(parts, "\n")
+}
+
+// decidedFiles are the package files a decision pins beside the weights and provenance.
+var decidedFiles = map[string]bool{
+	"config.json": true, "tokenizer_config.json": true, "special_tokens_map.json": true, "tokenization_openwaldo.py": true,
+	model.TokenizerArtifactFile: true, model.ClosureFile: true, model.RoundFile: true,
 }
 
 // decide returns the first decision, in slot order, that a quorum of votes
@@ -356,13 +369,14 @@ func (state State) expired(claim Claim, now time.Time) bool {
 	return err != nil || now.After(created.Add(time.Duration(state.Plan.ClaimMinutes*float64(time.Minute))))
 }
 
-// filled is whether any holder of slot has landed its record.
+// filled is whether any holder of slot has landed its record; a closing
+// slot's must be its latest holder's, the one whose merge votes.
 func (round Round) filled(slot string) bool {
 	unit := slotUnit(slot)
+	if unit == "close" {
+		return slices.ContainsFunc(round.Merges, func(record MergeRecord) bool { return record.Identity == round.holder(slot) })
+	}
 	for _, claim := range round.Claims[slot] {
-		if unit == "close" && slices.ContainsFunc(round.Merges, func(record MergeRecord) bool { return record.Identity == claim.Identity }) {
-			return true
-		}
 		if slices.ContainsFunc(round.Submissions[unit], func(record Submission) bool { return record.Identity == claim.Identity }) {
 			return true
 		}

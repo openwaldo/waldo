@@ -39,8 +39,7 @@ type Joiner struct {
 	lastRound int // the last round to work in when Rounds is set, once known
 
 	clone      string
-	url        string // the runs repository, as round records name it
-	planSHA256 string // the plan.yaml this pass's records pin
+	planSHA256 string // the run file this pass's records pin
 	runDir     string
 	run        string // the run's directory in the runs repository, as given
 	plan       Plan
@@ -59,7 +58,6 @@ func (joiner *Joiner) Open(ctx context.Context, url, runDir string) error {
 			url = absolute
 		}
 	}
-	joiner.url = url
 	name := strings.TrimSuffix(filepath.Base(strings.TrimRight(url, "/")), ".git")
 	joiner.clone = filepath.Join(joiner.Home, name)
 	joiner.runDir = filepath.Join(joiner.clone, filepath.FromSlash(runDir))
@@ -265,19 +263,31 @@ func (joiner *Joiner) push(ctx context.Context) (bool, error) {
 		if _, err := joiner.git(ctx, joiner.clone, "push", "-q"); err == nil {
 			return true, nil
 		}
-		if _, err := joiner.git(ctx, joiner.clone, "pull", "-q", "--rebase"); err != nil {
-			// Only another claim on the same slot can conflict; theirs stands.
-			_, _ = joiner.git(ctx, joiner.clone, "rebase", "--abort")
-			_, resetErr := joiner.git(ctx, joiner.clone, "reset", "-q", "--hard", "@{u}")
-			return false, resetErr
+		if lost, err := joiner.rebase(ctx); lost || err != nil {
+			return false, err
 		}
 	}
 	return false, fmt.Errorf("push kept being rejected; try again later")
 }
 
+// rebase replays unpushed records onto the runs repo. Only another identity's
+// claim on the same slot can conflict, and theirs stands: this identity's
+// unpushed records are dropped and lost is true.
+func (joiner *Joiner) rebase(ctx context.Context) (bool, error) {
+	_, err := joiner.git(ctx, joiner.clone, "pull", "-q", "--rebase")
+	if err == nil {
+		return false, nil
+	}
+	if _, abortErr := joiner.git(ctx, joiner.clone, "rebase", "--abort"); abortErr != nil {
+		return false, err // no rebase stopped on a conflict; the pull itself failed
+	}
+	_, err = joiner.git(ctx, joiner.clone, "reset", "-q", "--hard", "@{u}")
+	return true, err
+}
+
 // sync brings the clone up to date and pushes any record a cut-short pass committed but never pushed.
 func (joiner *Joiner) sync(ctx context.Context) error {
-	if _, err := joiner.git(ctx, joiner.clone, "pull", "-q", "--rebase"); err != nil {
+	if _, err := joiner.rebase(ctx); err != nil {
 		return err
 	}
 	_, err := joiner.push(ctx)

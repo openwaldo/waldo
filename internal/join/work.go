@@ -38,7 +38,11 @@ func pieceSeed(parts ...any) int {
 }
 
 func (joiner *Joiner) modelName(number int, suffix string) string {
-	return fmt.Sprintf("waldo-%s-r%04d-%s", joiner.plan.Name, number, suffix)
+	return roundModel(joiner.plan.Name, number, suffix)
+}
+
+func roundModel(run string, number int, suffix string) string {
+	return fmt.Sprintf("waldo-%s-r%04d-%s", run, number, suffix)
 }
 
 func (joiner *Joiner) waldo(ctx context.Context, args ...string) error {
@@ -96,6 +100,19 @@ func savedStep(inspection model.Inspection) int64 {
 
 // train trains name from the compose text unless an earlier pass already did.
 func (joiner *Joiner) train(ctx context.Context, name, text string) error {
+	path := filepath.Join(joiner.workDir(), "composes", name+".yaml")
+	// A model of this name trained from another compose, as after an edit to the run file, is not this one.
+	if previous, err := os.ReadFile(path); err == nil && string(previous) != text {
+		if _, err := model.Inspect(joiner.models(), name); err == nil {
+			fmt.Fprintf(joiner.Log, "   %s was trained from another compose; training it afresh\n", name)
+			if err := joiner.waldo(ctx, "model", "rm", name); err != nil {
+				return err
+			}
+		}
+		if err := os.RemoveAll(filepath.Join(joiner.workDir(), "exports", name)); err != nil {
+			return err
+		}
+	}
 	if joiner.built(name) {
 		fmt.Fprintf(joiner.Log, "   %s already trained\n", name)
 		return nil
@@ -120,7 +137,6 @@ func (joiner *Joiner) train(ctx context.Context, name, text string) error {
 			return err
 		}
 	}
-	path := filepath.Join(joiner.workDir(), "composes", name+".yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -268,7 +284,7 @@ func (joiner *Joiner) ensure(name, directory string) error {
 	}
 	// The origin names the package by run and name in the runs repository, never
 	// by where this identity keeps it, so every identity records the same origin.
-	source := model.OriginSource{Provider: "waldo-join", Repository: path.Join(joiner.run, name), URL: joiner.url}
+	source := model.OriginSource{Provider: "waldo-join", Repository: path.Join(joiner.run, name)}
 	_, err := (model.Puller{Root: joiner.models()}).PullDirectory(name, directory, source)
 	return err
 }
@@ -384,7 +400,12 @@ func (joiner *Joiner) timestamp() string {
 // exact weights, never the contributor's own report. seed must be the unit's
 // training seed, so the probe scores the records every replica held out.
 func (joiner *Joiner) probe(ctx context.Context, stage, unit, export string, seed int) (model.Evaluation, error) {
-	name := filepath.Base(export)
+	// Named by the weights it holds, like every package taken from the network, so no record's name reaches another's weights.
+	weights, err := hashFile(filepath.Join(export, "model.safetensors"))
+	if err != nil {
+		return model.Evaluation{}, err
+	}
+	name := published(filepath.Base(export), weights)
 	if err := joiner.ensure(name, export); err != nil {
 		return model.Evaluation{}, err
 	}
@@ -811,7 +832,7 @@ func (joiner *Joiner) checkGate(ctx context.Context, gate Gate, action Action, n
 
 // writeRound writes the merge package's RoundRecord.
 func (joiner *Joiner) writeRound(target string, action Action, base *MergeRecord, method string, accepted []Submission) error {
-	round := RoundRecord{Kind: "openwaldo-bom", Schema: 1, Subject: "join-round", RunsRepository: joiner.url,
+	round := RoundRecord{Kind: "openwaldo-bom", Schema: 1, Subject: "join-round",
 		Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, PlanSHA256: joiner.planSHA256, Method: method}
 	if base != nil {
 		round.BaseSHA256 = &base.ModelSHA256

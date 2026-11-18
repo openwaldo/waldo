@@ -123,6 +123,7 @@ func TestLoadRunRefusesWhatJoinCannotRun(t *testing.T) {
 		"no bootstrap":    runCompose + strings.Replace(runJoin, "bootstrap_tokens: 2000000, ", "", 1),
 		"no fine-tuning":  strings.SplitN(runCompose, "  - name: sft", 2)[0] + runJoin,
 		"invalid compose": strings.Replace(runCompose, "schema: 1", "schema: 9", 1) + runJoin,
+		"long names":      runCompose + strings.Replace(runJoin, "name: run", "name: python-code-assistant", 1),
 	} {
 		if _, err := LoadRun(writeRun(t, text)); err == nil {
 			t.Fatalf("%s: run accepted", name)

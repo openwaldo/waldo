@@ -141,21 +141,21 @@ type DroppedUnit struct {
 }
 
 // RoundRecord is a merge package's link back to the run that produced it: the
-// runs repository, run, round, and plan, and every accepted submission's signed
-// record by hash. Every honest closer writes the same one, so the majority's
-// decision covers it, and pulls and exports keep it with the weights.
+// run, round, and plan, and every accepted submission's signed record by path
+// and hash, never where a closer keeps the runs repository. Every honest closer
+// writes the same one, so the majority's decision covers it, and pulls and
+// exports keep it with the weights.
 type RoundRecord struct {
-	Kind           string            `json:"kind"`
-	Schema         int               `json:"schema"`
-	Subject        string            `json:"subject"`
-	RunsRepository string            `json:"runs_repository"`
-	Run            string            `json:"run"`
-	Round          int               `json:"round"`
-	Stage          string            `json:"stage"`
-	PlanSHA256     string            `json:"plan_sha256"`
-	BaseSHA256     *string           `json:"base_sha256"`
-	Method         string            `json:"method"`
-	Accepted       []RoundSubmission `json:"accepted"`
+	Kind       string            `json:"kind"`
+	Schema     int               `json:"schema"`
+	Subject    string            `json:"subject"`
+	Run        string            `json:"run"`
+	Round      int               `json:"round"`
+	Stage      string            `json:"stage"`
+	PlanSHA256 string            `json:"plan_sha256"`
+	BaseSHA256 *string           `json:"base_sha256"`
+	Method     string            `json:"method"`
+	Accepted   []RoundSubmission `json:"accepted"`
 }
 
 type RoundSubmission struct {

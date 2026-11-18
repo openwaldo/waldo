@@ -72,8 +72,7 @@ type RoundsPlan struct {
 }
 
 // PlanBase is an existing model a run starts from instead of random weights: a
-// published package pinned by its weights and every file's SHA-256. It may live
-// in any Hugging Face account, at a pinned commit, or in a file store.
+// published package in a file store, pinned by its weights and every file's SHA-256.
 type PlanBase struct {
 	Model       string            `yaml:"model"`
 	URL         string            `yaml:"url"`
@@ -81,11 +80,10 @@ type PlanBase struct {
 	Files       map[string]string `yaml:"files"`
 }
 
-// Identity is a plan contributor: an ssh signing key and, for Hugging Face
-// stores, the account its uploads come from. A bare string is just the key.
+// Identity is a plan contributor's ssh signing key. A bare string is just the key.
 type Identity struct {
 	Key         string `yaml:"key"`
-	HuggingFace string `yaml:"hf"` // accepted for older run files; unused
+	HuggingFace string `yaml:"hf"` // accepted from run files written for Hugging Face stores; unused
 }
 
 func (identity *Identity) UnmarshalYAML(node *yaml.Node) error {
@@ -175,6 +173,18 @@ func (plan *Plan) check() error {
 			return fmt.Errorf("%q must use lowercase letters, digits, '.', '_', and '-'", name)
 		}
 	}
+	// Join names models from these, and imports each one it fetches under its name and weights' hash.
+	derived := []string{"merge-" + strings.Repeat("0", 12)}
+	for _, unit := range append([]string{"all"}, plan.Units...) {
+		for identity := range plan.Identities {
+			derived = append(derived, unit+"-"+identity)
+		}
+	}
+	for _, suffix := range derived {
+		if name := published(roundModel(plan.Name, 0, suffix), strings.Repeat("0", 64)); model.ValidateName(name) != nil {
+			return fmt.Errorf("join would name a model %s, over 64 characters; shorten the run, unit, or identity names", name)
+		}
+	}
 	if slices.Contains(plan.Units, "all") || slices.Contains(plan.Units, "close") {
 		return fmt.Errorf("units must not be named all, the bootstrap's unit, or close, the closing slots' name")
 	}
@@ -184,7 +194,7 @@ func (plan *Plan) check() error {
 		}
 	}
 	if base := plan.Base; base != nil {
-		if model.ValidateName(base.Model) != nil || !strings.HasPrefix(base.URL, "file://") || !validFiles(base.Files, base.ModelSHA256) {
+		if model.ValidateName(published(base.Model, strings.Repeat("0", 64))) != nil || !strings.HasPrefix(base.URL, "file://") || !validFiles(base.Files, base.ModelSHA256) {
 			return fmt.Errorf("base needs a model name, a file:// url, its model_sha256, and every file's sha256, model.safetensors included")
 		}
 	}
