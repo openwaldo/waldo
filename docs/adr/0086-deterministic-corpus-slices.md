@@ -26,5 +26,6 @@ for as long as its text is unchanged; ingestion changes that alter text may
 move records, while a run pinned to an index revision is unaffected. Stage and
 corpus slices hash the same value, so nesting them intersects the two
 selections instead of subdividing a slice.
-Older binaries reject composes and BOMs that declare a slice rather than
-training the whole corpus.
+Older binaries reject composes that declare a slice rather than training the
+whole corpus, and can't read a model trained on one: they report its run as not
+matching its model pin and refuse to list the model store that holds it.
