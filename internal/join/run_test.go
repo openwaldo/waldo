@@ -96,7 +96,7 @@ func TestLoadRunReadsTheJoinBlock(t *testing.T) {
 	if strings.Join(plan.Units, ",") != "u0,u1" || len(plan.UnitData["u1"]) != 2 || plan.Identities["bob"].HuggingFace != "bob" {
 		t.Fatalf("plan = %+v", plan)
 	}
-	if got := strings.Join(plan.Stages(), ","); got != "bootstrap,pretrain,pretrain,posttrain,posttrain,posttrain" {
+	if got := strings.Join(plan.stages(), ","); got != "bootstrap,pretrain,pretrain,posttrain,posttrain,posttrain" {
 		t.Fatalf("stages = %s", got)
 	}
 	if plan.Floor() != 0.01 || plan.Closers != 2 || plan.ClaimMinutes != 60 {
@@ -295,7 +295,7 @@ func TestPlanBaseStartsTheRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No bootstrap: round 0 is the first pretraining round, from the base.
-	if got := strings.Join(plan.Stages(), ","); got != "pretrain,pretrain,posttrain,posttrain,posttrain" || plan.start().ModelSHA256 != digest {
+	if got := strings.Join(plan.stages(), ","); got != "pretrain,pretrain,posttrain,posttrain,posttrain" || plan.start().ModelSHA256 != digest {
 		t.Fatalf("stages %s, start %+v", got, plan.start())
 	}
 	merge := MergeRecord{Kind: MergeKind, Schema: RecordSchema, Run: "run", Stage: "pretrain", Model: "m", ModelSHA256: strings.Repeat("c", 64),

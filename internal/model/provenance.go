@@ -17,24 +17,17 @@ import (
 	"github.com/openwaldo/waldo/internal/corpus"
 )
 
-// ClosureRole marks the training closure a release publishes and a pulled or merged origin keeps.
+// ClosureRole marks the training closure a release publishes and an origin keeps.
 const ClosureRole = "training-closure"
 
-// ClosureFile is the training closure's name in a release package.
 const ClosureFile = "TRAINING-CLOSURE.json"
 
-// RoundRole marks a distributed run's round record, which a release made by
-// `waldo model join` publishes and a pulled origin keeps: the link from the
-// weights back to the run and the signed records that produced them.
+// RoundRole marks a join merge's round record, linking its weights to the signed records behind them.
 const RoundRole = "join-round"
 
-// RoundFile is the round record's name in a release package.
 const RoundFile = "JOIN-ROUND.json"
 
-// TrainingClosure is every distinct corpus a model's weights were trained on,
-// across its whole lineage: its own runs, its parents', theirs, and so on.
-// Keyed by corpus BOM, it grows with the corpora a history uses, not with its
-// length. Complete is false when part of the history is not recorded.
+// TrainingClosure is every corpus behind a model's weights; Complete is false where history isn't recorded.
 type TrainingClosure struct {
 	Kind     string          `json:"kind"`
 	Schema   int             `json:"schema"`
@@ -53,7 +46,6 @@ func emptyClosure(complete bool) TrainingClosure {
 	return TrainingClosure{Kind: "openwaldo-bom", Schema: 1, Subject: "training-closure", Complete: complete, Corpora: []ClosureCorpus{}}
 }
 
-// unionClosures sums uses per corpus; the union is complete only if every part is.
 func unionClosures(closures ...TrainingClosure) TrainingClosure {
 	result := emptyClosure(true)
 	byHash := map[string]*ClosureCorpus{}
@@ -79,7 +71,6 @@ func unionClosures(closures ...TrainingClosure) TrainingClosure {
 	return result
 }
 
-// ownClosure is the corpora of the model's own completed real runs.
 func ownClosure(inspection Inspection) TrainingClosure {
 	closure := emptyClosure(true)
 	for position, runBOM := range inspection.RunBOMs {
@@ -90,18 +81,14 @@ func ownClosure(inspection Inspection) TrainingClosure {
 	return unionClosures(closure)
 }
 
-// InheritedClosure is the training history behind a model's starting
-// weights: a local parent's whole closure, the closure a pulled release or a
-// merge recorded, or nothing for weights initialized at random. Without those,
-// as for a deleted parent or a release made before closures, it is what the
-// model's lineage records, incomplete rather than silently empty where that has gaps.
+// InheritedClosure is the training behind a model's starting weights, from lineage where no closure was recorded.
 func InheritedClosure(inspection Inspection) (TrainingClosure, error) {
 	if parent := inspection.Model.Parent; parent != nil {
 		ancestor, err := Inspect(filepath.Dir(inspection.Path), parent.Model)
 		if err != nil || ancestor.Model.ID != parent.ModelID {
 			return historyClosure(inspection), nil
 		}
-		// Only the parent's training up to the run its weights came from, not what it trained since.
+		// Only the parent's training up to the run its weights came from.
 		kept := 0
 		for position, run := range ancestor.Runs {
 			if run.ID == parent.RunID {
@@ -131,7 +118,6 @@ func InheritedClosure(inspection Inspection) (TrainingClosure, error) {
 	return historyClosure(inspection), nil
 }
 
-// historyClosure is the closure of the training the model's lineage records before its own runs.
 func historyClosure(inspection Inspection) TrainingClosure {
 	history := TrainingHistory(filepath.Dir(inspection.Path), inspection)
 	closure := emptyClosure(history.Complete)
@@ -145,8 +131,7 @@ func historyClosure(inspection Inspection) TrainingClosure {
 	return unionClosures(closure)
 }
 
-// ModelClosure is the model's whole training history: what its starting
-// weights inherited and its own runs.
+// ModelClosure is what the model's starting weights inherited plus its own runs.
 func ModelClosure(inspection Inspection) (TrainingClosure, error) {
 	inherited, err := InheritedClosure(inspection)
 	if err != nil {
@@ -155,7 +140,6 @@ func ModelClosure(inspection Inspection) (TrainingClosure, error) {
 	return unionClosures(inherited, ownClosure(inspection)), nil
 }
 
-// writeClosure places a closure in origin/ under temporary and inventories it.
 func writeClosure(temporary string, closure TrainingClosure) ([]OriginArtifact, error) {
 	logical := "origin/" + ClosureFile
 	if err := writeJSONAtomic(filepath.Join(temporary, filepath.FromSlash(logical)), closure); err != nil {
@@ -168,8 +152,7 @@ func writeClosure(temporary string, closure TrainingClosure) ([]OriginArtifact, 
 	return artifacts, err
 }
 
-// PublishedRunBOMs reads the run BOMs a model carries: its own runs, or a pulled
-// release's, which the pull checked against the canonical hashes they are named by.
+// PublishedRunBOMs reads the run BOMs a model carries, checked against the hashes that name them.
 func PublishedRunBOMs(inspection Inspection) ([]RunBOM, error) {
 	paths, err := ProvenanceRecords(inspection)
 	if err != nil {
@@ -195,11 +178,7 @@ func PublishedRunBOMs(inspection Inspection) ([]RunBOM, error) {
 	return runs, nil
 }
 
-// CheckClosure verifies a model's recorded training history against what it
-// must be: the closure of the weights it started from (none for weights
-// initialized at random), plus the corpora of its own run BOMs, complete. A
-// release whose closure leaves out or adds a corpus, or whose history is not
-// recorded, fails.
+// CheckClosure checks a model's recorded closure is its start's closure plus its own runs, complete.
 func CheckClosure(inspection Inspection, parent *Inspection) error {
 	runs, err := PublishedRunBOMs(inspection)
 	if err != nil {
@@ -246,11 +225,7 @@ func provenanceName(digest string) string {
 	return "provenance-" + digest + ".json"
 }
 
-// ProvenanceRecords are the run BOMs a release of this model publishes,
-// keyed by hash: a trained model's own runs; a merged model's parents' own
-// runs, so a merge carries its round; a pulled model's release runs. Older
-// history is published by the releases it came from, so a release never
-// grows with its history.
+// ProvenanceRecords are the run BOMs a release publishes: its own, a merge's parents', or a pull's release runs.
 func ProvenanceRecords(inspection Inspection) (map[string]string, error) {
 	records := map[string]string{}
 	trained := false
@@ -264,9 +239,6 @@ func ProvenanceRecords(inspection Inspection) (map[string]string, error) {
 	if trained || inspection.Origin == nil {
 		return records, nil
 	}
-	// A merge publishes every run BOM it carries. A pulled release whose node
-	// names a run came from a trained model, which published its own runs;
-	// any other release's run BOMs belong to the releases it came from.
 	if !IsMerge(inspection.Origin) && !releaseTrained(inspection) {
 		return records, nil
 	}
@@ -279,7 +251,6 @@ func ProvenanceRecords(inspection Inspection) (map[string]string, error) {
 	return records, nil
 }
 
-// copyProvenance places run BOMs in origin/provenance under temporary and inventories them.
 func copyProvenance(temporary string, records map[string]string) ([]OriginArtifact, error) {
 	var paths []string
 	for digest, source := range records {
@@ -297,8 +268,6 @@ func copyProvenance(temporary string, records map[string]string) ([]OriginArtifa
 	return artifacts, err
 }
 
-// releaseTrained reports whether a pulled origin's release, as its history
-// holds it, was exported from a trained model's run.
 func releaseTrained(inspection Inspection) bool {
 	for _, artifact := range inspection.Origin.SourceArtifacts {
 		if artifact.Role != "source-bom" {
@@ -312,9 +281,7 @@ func releaseTrained(inspection Inspection) bool {
 	return false
 }
 
-// CheckHistory is whether a model's lineage records the training its closure
-// does: both complete or neither, over the same corpora. A package's lineage is
-// not part of what pins it, so a package can carry its weights with another history.
+// CheckHistory is whether a model's lineage and closure record the same training; lineage isn't pinned.
 func CheckHistory(root string, inspection Inspection) error {
 	closure, err := ModelClosure(inspection)
 	if err != nil {

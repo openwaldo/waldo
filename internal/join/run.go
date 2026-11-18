@@ -13,13 +13,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Budget is how much one piece of work trains, as compose parameters.
 type Budget struct {
 	Key   string // "tokens", "steps", or "epochs"
 	Value int64
 }
 
-// stageKind is the compose stage type a round's stage trains.
 func stageKind(stage string) string {
 	if stage == "posttrain" {
 		return "fine-tuning"
@@ -27,16 +25,13 @@ func stageKind(stage string) string {
 	return "pre-training"
 }
 
-// unitCompose cuts one piece of work from the run file: the round's stage
-// alone, starting from base, with the unit's data, seed, and budget. Everything
-// else in the compose stands as the run file wrote it.
+// unitCompose cuts one piece of work from the run file: the round's stage, base, data, seed, and budget.
 func (plan Plan) unitCompose(stage, unit, base string, seed int, budget Budget) (string, error) {
 	compose := clone(plan.Compose)
 	mapDelete(compose, "join")
 	mapDelete(compose, "base")
 	if base != "" {
-		// A unit inherits its base's architecture, the tokenizer the bootstrap trained included, rather
-		// than restate one: a pulled base records no initialization or dropout to compare with.
+		// A unit inherits its base's architecture; a pulled base records no initialization or dropout to compare.
 		mapSet(compose, "base", mapping("model", scalar(base)))
 		mapDelete(compose, "architecture")
 	}
@@ -51,21 +46,17 @@ func (plan Plan) unitCompose(stage, unit, base string, seed int, budget Budget) 
 	}
 	mapSet(parameters, budget.Key, scalar(strconv.FormatInt(budget.Value, 10)))
 	if budget.Key == "steps" {
-		// Fixed steps over a small unit repeat its data rather than stop short.
 		mapSet(parameters, "epochs", scalar("1000"))
 	}
 	mapSet(parameters, "seed", scalar(strconv.Itoa(seed)))
-	// A unit holds out the same records every round, so its losses compare across rounds; the
-	// training shuffle still changes each round. Units hold out by their own seeds, so a bootstrap
-	// over every unit's data may train on records a later unit holds out.
+	// A unit holds out the same records every round, so its losses compare; units hold out by their own
+	// seeds, so a bootstrap over every unit's data may train on records a later unit holds out.
 	mapSet(parameters, "evaluation_seed", scalar(strconv.Itoa(pieceSeed(plan.Name, unit))))
 	if budget != probeBudget {
-		// A round's work is its last weights: picking the best held-out checkpoint can hand back
-		// the round's starting weights when a few records misjudge it.
+		// A round's work is its last weights; the best held-out checkpoint can be the round's start.
 		mapSet(parameters, "artifact_selection", scalar("final"))
 	}
 	if budget == probeBudget {
-		// A probe only evaluates, so schedule lengths that must fit within a real run's steps don't apply.
 		for _, key := range []string{"warmup_steps", "warmdown_steps", "checkpoint_every", "evaluate_every"} {
 			mapDelete(parameters, key)
 		}
@@ -100,10 +91,8 @@ func (plan Plan) unitCompose(stage, unit, base string, seed int, budget Budget) 
 	return string(data), err
 }
 
-// probeBudget is the one step a closer's evaluate-only probe declares.
 var probeBudget = Budget{"tokens", 16384}
 
-// budget is what a unit of a round's stage trains.
 func (plan Plan) budget(stage string) (Budget, error) {
 	switch stage {
 	case "bootstrap":
@@ -115,7 +104,6 @@ func (plan Plan) budget(stage string) (Budget, error) {
 	return Budget{"steps", steps}, err
 }
 
-// pretrainSteps converts tokens_per_round into the fixed steps every replica trains.
 func (plan Plan) pretrainSteps() (int64, error) {
 	parameters := mapGet(stageNode(plan.Compose, "pre-training"), "parameters")
 	batch, sequence := intAt(parameters, "batch_size"), intAt(parameters, "sequence_length")
@@ -125,12 +113,10 @@ func (plan Plan) pretrainSteps() (int64, error) {
 	return (plan.Rounds.TokensPerRound + batch*sequence - 1) / (batch * sequence), nil
 }
 
-// vocabulary is the architecture's vocabulary size, whose uniform loss a bootstrap starts from.
 func (plan Plan) vocabulary() int64 {
 	return intAt(mapGet(plan.Compose, "architecture"), "vocabulary_size")
 }
 
-// interaction is the run file's interaction block as compose YAML, so merged models chat like trained ones.
 func (plan Plan) interaction() (string, error) {
 	node := mapGet(plan.Compose, "interaction")
 	if node == nil {
@@ -140,7 +126,6 @@ func (plan Plan) interaction() (string, error) {
 	return string(data), err
 }
 
-// stageNode is the compose's first stage of a type, or nil.
 func stageNode(compose *yaml.Node, kind string) *yaml.Node {
 	stages := mapGet(compose, "stages")
 	if stages == nil {
@@ -185,7 +170,6 @@ func mapDelete(node *yaml.Node, key string) {
 	}
 }
 
-// ensureMapping is the mapping under key, created when missing.
 func ensureMapping(node *yaml.Node, key string) *yaml.Node {
 	if child := mapGet(node, key); child != nil && child.Kind == yaml.MappingNode {
 		return child
@@ -226,7 +210,6 @@ func sequence(items ...*yaml.Node) *yaml.Node {
 	return &yaml.Node{Kind: yaml.SequenceNode, Content: items}
 }
 
-// clone deep-copies a node tree, so editing one unit's compose leaves the run file untouched.
 func clone(node *yaml.Node) *yaml.Node {
 	if node == nil {
 		return nil

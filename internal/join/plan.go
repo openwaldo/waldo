@@ -3,9 +3,7 @@
 // Copyright (c) 2026 Gregory M. Kurtzer
 // SPDX-License-Identifier: Apache-2.0
 
-// Package join contributes to a training run kept in a git repository: each
-// pass reads the run's plan and signed records, does the next unit of work,
-// and commits its own signed record. No process coordinates the run.
+// Package join contributes to a training run kept in a git repository of signed records.
 package join
 
 import (
@@ -23,13 +21,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// RunFile is a run's one file in its directory of the runs repository: a WALDO
-// compose with a join block.
+// RunFile is a run's one file: a WALDO compose with a join block.
 const RunFile = "run.yaml"
 
-// Plan is how a run is divided and checked, from its run file's join block:
-// units, rounds, identities, store, and verification. Compose is the run file
-// itself, the training each unit's work is cut from.
+// Plan is a run's join block; Compose is the run file each unit's work is cut from.
 type Plan struct {
 	Name             string              `yaml:"name"`
 	UnitData         map[string][]string `yaml:"units"` // unit to the sources its pre-training stage reads
@@ -49,10 +44,7 @@ type Plan struct {
 	Compose *yaml.Node `yaml:"-"` // the run file's compose mapping
 }
 
-// Gate is what a stage's merged model must meet before the run moves on: a
-// held-out loss, or an evaluation's metrics checked by waldo model gate. The
-// stage's last round checks it; failing, the run adds up to ExtraRounds more of
-// the stage, each checked again, and stops if none passes.
+// Gate is what a stage's last merge must meet, or the stage gets up to ExtraRounds more rounds.
 type Gate struct {
 	After             string   `yaml:"after"` // pretrain or posttrain
 	HeldoutLossAtMost *float64 `yaml:"heldout_loss_at_most"`
@@ -61,8 +53,6 @@ type Gate struct {
 	ExtraRounds       int      `yaml:"extra_rounds"`
 }
 
-// RoundsPlan sizes the run: the bootstrap, then pretraining rounds of the
-// pre-training stage, then post-training rounds of the fine-tuning stage.
 type RoundsPlan struct {
 	BootstrapTokens int64 `yaml:"bootstrap_tokens"`
 	Pretrain        int   `yaml:"pretrain"`
@@ -71,8 +61,7 @@ type RoundsPlan struct {
 	EpochsPerRound  int   `yaml:"epochs_per_round"` // each post-training unit's budget over its slice
 }
 
-// PlanBase is an existing model a run starts from instead of random weights: a
-// published package in a file store, pinned by its weights and every file's SHA-256.
+// PlanBase is a published package a run starts from instead of random weights.
 type PlanBase struct {
 	Model       string            `yaml:"model"`
 	URL         string            `yaml:"url"`
@@ -103,8 +92,7 @@ func (identity *Identity) UnmarshalYAML(node *yaml.Node) error {
 	return node.Decode((*plain)(identity))
 }
 
-// LoadRun reads a run file: a compose, valid as one, whose join block is
-// decoded strictly into the run's plan.
+// LoadRun reads a run file, a valid compose whose join block is decoded strictly.
 func LoadRun(path string) (Plan, error) {
 	if _, _, err := model.LoadCompose(path); err != nil {
 		return Plan{}, err
@@ -143,7 +131,6 @@ func LoadRun(path string) (Plan, error) {
 	return plan, nil
 }
 
-// check fills the plan's defaults and refuses one join cannot run.
 func (plan *Plan) check() error {
 	if plan.Replicas == 0 {
 		plan.Replicas = 1
@@ -160,7 +147,6 @@ func (plan *Plan) check() error {
 	if !strings.HasPrefix(plan.Store, "file://") {
 		return fmt.Errorf("join store %q: expected file:///path", plan.Store)
 	}
-	// Run, unit, and identity names become directory, model, and branch names.
 	names := append([]string{plan.Name}, plan.Units...)
 	for name, identity := range plan.Identities {
 		if identity.Key == "" {
@@ -173,7 +159,7 @@ func (plan *Plan) check() error {
 			return fmt.Errorf("%q must use lowercase letters, digits, '.', '_', and '-'", name)
 		}
 	}
-	// Join names models from these, and imports each one it fetches under its name and weights' hash.
+	// Derived names add round, unit, identity, and hash suffixes, so they must fit too.
 	derived := []string{"merge-" + strings.Repeat("0", 12)}
 	for _, unit := range append([]string{"all"}, plan.Units...) {
 		for identity := range plan.Identities {
@@ -212,23 +198,20 @@ func (plan *Plan) check() error {
 		}
 		seen[gate.After] = true
 	}
-	if plan.Compose != nil {
-		if (plan.Base == nil || rounds.Pretrain > 0) && stageNode(plan.Compose, "pre-training") == nil {
-			return fmt.Errorf("a bootstrap or pretraining rounds need a pre-training stage")
-		}
-		if rounds.Posttrain > 0 && stageNode(plan.Compose, "fine-tuning") == nil {
-			return fmt.Errorf("post-training rounds need a fine-tuning stage")
-		}
-		if rounds.Pretrain > 0 && plan.MinStepsPerRound > 0 {
-			if steps, err := plan.pretrainSteps(); err != nil || steps < int64(plan.MinStepsPerRound) {
-				return fmt.Errorf("pretraining rounds of %d steps are under min_steps_per_round %d (%v)", steps, plan.MinStepsPerRound, err)
-			}
+	if (plan.Base == nil || rounds.Pretrain > 0) && stageNode(plan.Compose, "pre-training") == nil {
+		return fmt.Errorf("a bootstrap or pretraining rounds need a pre-training stage")
+	}
+	if rounds.Posttrain > 0 && stageNode(plan.Compose, "fine-tuning") == nil {
+		return fmt.Errorf("post-training rounds need a fine-tuning stage")
+	}
+	if rounds.Pretrain > 0 && plan.MinStepsPerRound > 0 {
+		if steps, err := plan.pretrainSteps(); err != nil || steps < int64(plan.MinStepsPerRound) {
+			return fmt.Errorf("pretraining rounds of %d steps are under min_steps_per_round %d (%v)", steps, plan.MinStepsPerRound, err)
 		}
 	}
 	return nil
 }
 
-// Slot is one round of the schedule: its stage, and the gate its merge checks.
 type Slot struct {
 	Stage string
 	Gate  *Gate
@@ -243,10 +226,7 @@ func (plan Plan) gate(stage string) *Gate {
 	return nil
 }
 
-// Stages lists the planned rounds in order: the bootstrap, unless the run
-// starts from a base, then pretraining, then post-training. Gates may add
-// rounds; Schedule says which.
-func (plan Plan) Stages() []string {
+func (plan Plan) stages() []string {
 	slots, _ := plan.Schedule(nil)
 	var stages []string
 	for _, slot := range slots {
@@ -255,10 +235,7 @@ func (plan Plan) Stages() []string {
 	return stages
 }
 
-// Schedule is every round as far as the decided merges determine it: a stage's
-// last round checks its gate, and while the gate fails another round of the
-// stage follows, up to the gate's extra rounds. The schedule ends at a gate
-// round not yet decided, and stops the run at a gate that never passed.
+// Schedule is every round the decided merges determine, a failed gate adding rounds of its stage.
 func (plan Plan) Schedule(decided []*MergeRecord) ([]Slot, bool) {
 	var slots []Slot
 	if plan.Base == nil {
@@ -296,7 +273,6 @@ func (plan Plan) Schedule(decided []*MergeRecord) ([]Slot, bool) {
 	return slots, false
 }
 
-// RoundUnits is the bootstrap's single shared unit, or the plan's units.
 func (plan Plan) RoundUnits(stage string) []string {
 	if stage == "bootstrap" {
 		return []string{"all"}
@@ -311,8 +287,7 @@ func (plan Plan) Tolerance() float64 {
 	return *plan.ReplicaTolerance
 }
 
-// Floor is the loss gap below which honest replicas always agree, since a
-// converged round moves the loss less than replica noise.
+// Floor is the loss gap below which honest replicas always agree.
 func (plan Plan) Floor() float64 {
 	if plan.ReplicaFloor == nil {
 		return 0.001
@@ -320,18 +295,12 @@ func (plan Plan) Floor() float64 {
 	return *plan.ReplicaFloor
 }
 
-// Quorum is how many closers must sign the same merge for a round to close:
-// a majority of the plan's closers, or of its identities if it has fewer.
+// Quorum is a majority of the closing slots.
 func (plan Plan) Quorum() int {
-	closers := plan.Closers
-	if count := len(plan.Identities); count > 0 && count < closers {
-		closers = count
-	}
-	return closers/2 + 1
+	return plan.Closing()/2 + 1
 }
 
-// Closing is how many closing slots are open before any disagreement: the
-// plan's closers, or every identity if it has fewer.
+// Closing is the plan's closers, or every identity if it has fewer.
 func (plan Plan) Closing() int {
 	if count := len(plan.Identities); count > 0 && count < plan.Closers {
 		return count
@@ -339,10 +308,7 @@ func (plan Plan) Closing() int {
 	return plan.Closers
 }
 
-// Pin is what every record pins: the SHA-256 of a manifest of the run file
-// and the files its gates use (each evaluation BOM, and each evaluator argument
-// that is a file in the run directory), one "<path> <sha256>" line per file,
-// so the run's training, rules, and bar are all fixed.
+// Pin is the SHA-256 of a manifest of the run file and every file its gates use.
 func Pin(runDir string, plan Plan) (string, error) {
 	files := []string{RunFile}
 	for _, gate := range plan.Gates {
@@ -368,7 +334,6 @@ func Pin(runDir string, plan Plan) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-// start is the plan's base as the record round 0 starts from, or nil for a bootstrap.
 func (plan Plan) start() *MergeRecord {
 	if plan.Base == nil {
 		return nil

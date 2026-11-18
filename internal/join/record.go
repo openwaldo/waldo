@@ -16,12 +16,9 @@ import (
 	"strings"
 )
 
-// Every record carries the Pin of the plan and templates it was made under; a
-// record counts only under that exact plan, so editing either starts the run
-// afresh rather than rereading its history under other rules.
+// Every record pins its plan, so editing the run file starts the run afresh.
 
-// SigningNamespace scopes record signatures to waldo model join, so a
-// signature made for anything else never verifies as a record.
+// SigningNamespace scopes record signatures to waldo model join.
 const SigningNamespace = "waldo-join"
 
 const (
@@ -51,11 +48,7 @@ type Submission struct {
 	Plan        string            `json:"plan_sha256"`
 }
 
-// Claim reserves one slot of a round for one identity before it does the
-// work: replica n of a unit (slot <unit>-<n>) or closer n (slot close-<n>).
-// A slot's file name is fixed, so a second claim on it conflicts in git; a
-// claim not followed by its record within the plan's claim_minutes may be
-// retaken as the slot's next attempt.
+// Claim reserves a slot (<unit>-<n> or close-<n>) before the work; one that expires may be retaken.
 type Claim struct {
 	Kind      string `json:"kind"`
 	Schema    int    `json:"schema"`
@@ -69,7 +62,6 @@ type Claim struct {
 	Plan      string `json:"plan_sha256"`
 }
 
-// claimFile is a slot's first attempt as <slot>.yaml and later ones as <slot>.<attempt>.yaml.
 func claimFile(slot string, attempt int) string {
 	if attempt == 1 {
 		return slot + ".yaml"
@@ -77,7 +69,7 @@ func claimFile(slot string, attempt int) string {
 	return fmt.Sprintf("%s.%d.yaml", slot, attempt)
 }
 
-// MergeRecord is one closer's proposed close of a round: the accepted submissions, the dropped units, and the merged weights.
+// MergeRecord is one closer's close of a round.
 type MergeRecord struct {
 	Kind        string            `json:"kind"`
 	Schema      int               `json:"schema"`
@@ -101,8 +93,7 @@ type MergeRecord struct {
 	Plan        string            `json:"plan_sha256"`
 }
 
-// GateResult is a closer's check of the merged weights against a stage's gate.
-// Whether it passed is part of the decision; the value and report are evidence.
+// GateResult is a closer's gate check; whether it passed is part of the decision.
 type GateResult struct {
 	After  string   `json:"after"`
 	Passed bool     `json:"passed"`
@@ -118,8 +109,7 @@ type AcceptedUnit struct {
 	Tokens      int64  `json:"tokens"`
 }
 
-// UnitEvidence is what the closer measured to judge one unit's replicas: the
-// round's starting loss and each replica's held-out loss on the same records.
+// UnitEvidence is the round's start loss and each replica's held-out loss on one unit.
 type UnitEvidence struct {
 	Unit                string            `json:"unit"`
 	StartLoss           float64           `json:"start_loss"`
@@ -140,11 +130,7 @@ type DroppedUnit struct {
 	Identities []string `json:"identities,omitempty"`
 }
 
-// RoundRecord is a merge package's link back to the run that produced it: the
-// run, round, and plan, and every accepted submission's signed record by path
-// and hash, never where a closer keeps the runs repository. Every honest closer
-// writes the same one, so the majority's decision covers it, and pulls and
-// exports keep it with the weights.
+// RoundRecord links a merge's weights to its run, plan, and accepted submissions' signed records.
 type RoundRecord struct {
 	Kind       string            `json:"kind"`
 	Schema     int               `json:"schema"`
@@ -166,7 +152,6 @@ type RoundSubmission struct {
 	RecordSHA256 string `json:"record_sha256"`
 }
 
-// writeAllowedSigners lists every plan identity's key for ssh-keygen -Y verify.
 func writeAllowedSigners(path string, identities map[string]Identity) error {
 	names := make([]string, 0, len(identities))
 	for name := range identities {
@@ -180,7 +165,6 @@ func writeAllowedSigners(path string, identities map[string]Identity) error {
 	return os.WriteFile(path, []byte(lines.String()), 0o644)
 }
 
-// writeSigned writes record as indented JSON beside its ssh signature.
 func writeSigned(path string, record any, key string) error {
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
@@ -199,8 +183,7 @@ func writeSigned(path string, record any, key string) error {
 	return nil
 }
 
-// readSigned decodes the record at path if identityOf names a plan identity
-// whose key signed it; ok is false for anything unsigned or forged.
+// readSigned decodes path if a plan identity's key signed it; ok is false otherwise.
 func readSigned(path, allowedSigners string, identities map[string]Identity, record any, identityOf func() string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

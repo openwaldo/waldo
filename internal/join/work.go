@@ -29,7 +29,6 @@ import (
 	"github.com/openwaldo/waldo/internal/model"
 )
 
-// pieceSeed is the same for every replica of one piece of work and different across pieces.
 func pieceSeed(parts ...any) int {
 	words := make([]string, len(parts))
 	for index, part := range parts {
@@ -47,9 +46,7 @@ func roundModel(run string, number int, suffix string) string {
 	return fmt.Sprintf("waldo-%s-r%04d-%s", run, number, suffix)
 }
 
-// environment runs waldo with this identity's own config, while the workers it
-// starts read live settings, such as gpu.throttle, from the config that
-// `waldo config set` changes.
+// environment runs waldo with the identity's config; workers read live settings, like gpu.throttle, from the user's.
 func (joiner *Joiner) environment() []string {
 	environment := append(os.Environ(), "WALDO_CONFIG="+joiner.config())
 	if live, err := config.Path(); err == nil {
@@ -69,7 +66,6 @@ func (joiner *Joiner) waldo(ctx context.Context, args ...string) error {
 	return nil
 }
 
-// waldoOutput runs waldo like waldo() but returns its standard output.
 func (joiner *Joiner) waldoOutput(ctx context.Context, args ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, joiner.Waldo, args...)
 	command.Env = joiner.environment()
@@ -90,15 +86,12 @@ func (joiner *Joiner) models() string {
 	return filepath.Join(joiner.Home, "models")
 }
 
-// built is whether an earlier pass already built name: a completed training run,
-// or a merged origin. A run that failed leaves a model holding only its starting
-// weights, which must be trained again, not taken as the result.
+// built is whether an earlier pass trained or merged name; a failed run's model holds only its start.
 func (joiner *Joiner) built(name string) bool {
 	inspection, err := model.Inspect(joiner.models(), name)
 	return err == nil && (inspection.BOM.CurrentRunID != "" || model.IsMerge(inspection.Origin))
 }
 
-// savedStep is the furthest checkpoint a model's unfailed runs kept.
 func savedStep(inspection model.Inspection) int64 {
 	var step int64
 	for _, run := range inspection.Runs {
@@ -111,10 +104,9 @@ func savedStep(inspection model.Inspection) int64 {
 	return step
 }
 
-// train trains name from the compose text unless an earlier pass already did.
 func (joiner *Joiner) train(ctx context.Context, name, text string) error {
 	path := filepath.Join(joiner.workDir(), "composes", name+".yaml")
-	// A model of this name trained from another compose, as after an edit to the run file, is not this one.
+	// A model of this name trained from another compose, as after a run-file edit, is not this one.
 	if previous, err := os.ReadFile(path); err == nil && string(previous) != text {
 		if _, err := model.Inspect(joiner.models(), name); err == nil {
 			fmt.Fprintf(joiner.Log, "   %s was trained from another compose; training it afresh\n", name)
@@ -130,15 +122,13 @@ func (joiner *Joiner) train(ctx context.Context, name, text string) error {
 		fmt.Fprintf(joiner.Log, "   %s already trained\n", name)
 		return nil
 	}
-	// A pass cut short (a closed laptop, a killed process) leaves training to resume from its newest
-	// checkpoint; waldo refuses a run that failed outright, and that one starts over.
+	// A pass cut short resumes from its newest checkpoint; a run that failed outright starts over.
 	if inspection, err := model.Inspect(joiner.models(), name); err == nil {
 		fmt.Fprintf(joiner.Log, "   %s did not finish training; resuming it\n", name)
 		resumed := joiner.waldo(ctx, "model", "continue", name)
 		if resumed == nil && joiner.built(name) {
 			return nil
 		}
-		// A stop, or a resume that fails for now, keeps the checkpoints for the next pass.
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -159,7 +149,6 @@ func (joiner *Joiner) train(ctx context.Context, name, text string) error {
 	return joiner.waldo(ctx, "model", "train", name, path)
 }
 
-// maxTelemetry is the largest value of a column in the last run's TELEMETRY.csv.
 func (joiner *Joiner) maxTelemetry(name, column string) (float64, error) {
 	runs, err := filepath.Glob(filepath.Join(joiner.models(), name, "runs", "*", "TELEMETRY.csv"))
 	if err != nil || len(runs) == 0 {
@@ -196,7 +185,6 @@ func (joiner *Joiner) export(ctx context.Context, name string) (string, error) {
 	return target, joiner.waldo(ctx, "model", "export", name, target, "--format", "huggingface", "--allow-incomplete")
 }
 
-// fileHashes pins every file a record publishes, so none can be swapped afterwards.
 func fileHashes(directory string) (map[string]string, error) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
@@ -233,15 +221,13 @@ func (joiner *Joiner) store() string {
 	return filepath.Join(strings.TrimPrefix(joiner.plan.Store, "file://"), joiner.plan.Name)
 }
 
-// publish copies an export into the run's store and returns its URL.
 func (joiner *Joiner) publish(ctx context.Context, directory string) (string, error) {
-	// Each identity's packages live apart, so closers of one round never share a directory.
 	target := filepath.Join(joiner.store(), joiner.Identity, filepath.Base(directory))
 	files, err := fileHashes(directory)
 	if err != nil {
 		return "", err
 	}
-	// A copy from an earlier pass serves only if it holds what this pass pins; a re-closed merge may not.
+	// A copy from an earlier pass serves only if it holds what this pass pins.
 	if stored, err := fileHashes(target); err != nil || !maps.Equal(stored, files) {
 		fmt.Fprintf(joiner.Log, "   publishing %s to %s\n", filepath.Base(directory), target)
 		if err := os.RemoveAll(target); err != nil {
@@ -254,8 +240,7 @@ func (joiner *Joiner) publish(ctx context.Context, directory string) (string, er
 	return "file://" + target, nil
 }
 
-// fetched is where a record's package is kept once fetched: by publisher, since
-// closers of one round publish packages of one name that differ in their metadata.
+// fetched is kept by publisher: closers of a round publish same-named packages with different metadata.
 func (joiner *Joiner) fetched(identity, name string) string {
 	if identity == "" {
 		identity = "_plan" // the plan's own base; no identity name starts with _
@@ -263,8 +248,6 @@ func (joiner *Joiner) fetched(identity, name string) string {
 	return filepath.Join(joiner.workDir(), "fetched", identity, name)
 }
 
-// fetch brings a record's package from the store, exactly the files it pins,
-// each checked against its hash, and keeps it for later passes.
 func (joiner *Joiner) fetch(ctx context.Context, name, identity, sha string, files map[string]string, url string) (string, error) {
 	if files["model.safetensors"] != sha {
 		return "", fmt.Errorf("%s: its files and model_sha256 disagree", name)
@@ -280,7 +263,6 @@ func (joiner *Joiner) fetch(ctx context.Context, name, identity, sha string, fil
 	return target, nil
 }
 
-// sameFiles is whether a kept package still holds every pinned file unchanged.
 func sameFiles(actual, pinned map[string]string) bool {
 	for file, digest := range pinned {
 		if actual[file] != digest {
@@ -290,28 +272,22 @@ func sameFiles(actual, pinned map[string]string) bool {
 	return true
 }
 
-// published is the local name of a model taken from the network: its record's
-// name and weights. It never resolves to a model this identity trained or merged
-// itself, so every identity imports the same published package and records the
-// same lineage for it.
+// published is a network model's local name, by record name and weights, the same for every identity.
 func published(name, sha256 string) string {
 	return name + "-" + sha256[:12]
 }
 
-// ensure imports a fetched package as a local model so composes can name it as a base.
 func (joiner *Joiner) ensure(name, directory string) error {
 	if inspection, err := model.Inspect(joiner.models(), name); err == nil && (inspection.BOM.CurrentRunID != "" || inspection.BOM.CurrentOriginSHA256 != "") {
 		return nil
 	}
-	// The origin names the package by run and name in the runs repository, never
-	// by where this identity keeps it, so every identity records the same origin.
+	// The origin names the package by its place in the runs repository, the same for every identity.
 	source := model.OriginSource{Provider: "waldo-join", Repository: path.Join(joiner.run, name)}
 	_, err := (model.Puller{Root: joiner.models()}).PullDirectory(name, directory, source)
 	return err
 }
 
-// base fetches and imports the round's starting weights: the previous round's
-// majority merge, from the store of any closer who signed it.
+// base imports the previous round's majority merge from any closer who signed it.
 func (joiner *Joiner) base(ctx context.Context, state State, number int) (*MergeRecord, error) {
 	if number == 0 {
 		return joiner.planBase(ctx)
@@ -328,7 +304,7 @@ func (joiner *Joiner) base(ctx context.Context, state State, number int) (*Merge
 		if err := joiner.ensure(name, directory); err != nil {
 			return nil, err
 		}
-		// A package's lineage is not pinned, so one whose lineage tells another history than its closure is set aside.
+		// A package's lineage isn't pinned, so one whose lineage disagrees with its closure is set aside.
 		inspection, inspectErr := model.Inspect(joiner.models(), name)
 		if err = inspectErr; err == nil {
 			err = model.CheckHistory(joiner.models(), inspection)
@@ -344,9 +320,7 @@ func (joiner *Joiner) base(ctx context.Context, state State, number int) (*Merge
 	return nil, fmt.Errorf("round %d's merged weights could not be fetched from any closer who signed them: %w", number-1, err)
 }
 
-// planBase fetches and imports the model a run starts from, checking its files
-// against the plan's pins; nil when the run bootstraps from random weights. Its
-// training history must be completely recorded, since every round inherits it.
+// planBase imports the plan's base, whose history must be complete; nil for a bootstrap.
 func (joiner *Joiner) planBase(ctx context.Context) (*MergeRecord, error) {
 	start := joiner.plan.start()
 	if start == nil {
@@ -432,11 +406,8 @@ func (joiner *Joiner) timestamp() string {
 	return joiner.Now().UTC().Format("2006-01-02T15:04:05+00:00")
 }
 
-// probe is the held-out loss the verifier itself measures on an export's
-// exact weights, never the contributor's own report. seed must be the unit's
-// training seed, so the probe scores the records every replica held out.
+// probe is the closer's own held-out loss on an export's weights, on the unit's held-out records.
 func (joiner *Joiner) probe(ctx context.Context, stage, unit, export string, seed int) (model.Evaluation, error) {
-	// Named by the weights it holds, like every package taken from the network, so no record's name reaches another's weights.
 	weights, err := hashFile(filepath.Join(export, "model.safetensors"))
 	if err != nil {
 		return model.Evaluation{}, err
@@ -448,7 +419,6 @@ func (joiner *Joiner) probe(ctx context.Context, stage, unit, export string, see
 	return joiner.score(ctx, stage, unit, name, seed)
 }
 
-// score measures a local model's held-out loss on a unit's records.
 func (joiner *Joiner) score(ctx context.Context, stage, unit, name string, seed int) (model.Evaluation, error) {
 	text, err := joiner.plan.unitCompose(stage, unit, name, seed, probeBudget)
 	if err != nil {
@@ -472,9 +442,8 @@ func (joiner *Joiner) score(ctx context.Context, stage, unit, name string, seed 
 	return evaluation, nil
 }
 
-// verify returns the index of the replica most others agree with, among
-// those agreeing with at least half of the others, or -1 without a majority. Honest replicas improve alike from the round's start; a
-// free-rider does not, so gaps are judged against each round's progress.
+// verify returns the replica most others agree with, or -1 without a majority; gaps are judged
+// against each round's progress, since honest replicas improve alike and a free-rider doesn't.
 func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports []string, records []Submission, corpora []string, base *MergeRecord, round int, unit string) (int, []int, []int, *UnitEvidence, error) {
 	seed := pieceSeed(joiner.plan.Name, round, unit)
 	evidence := &UnitEvidence{Unit: unit}
@@ -486,7 +455,6 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 		}
 		start = measured.Loss
 	} else {
-		// A bootstrap starts from random weights, whose loss is about uniform over the vocabulary.
 		vocabulary := joiner.plan.vocabulary()
 		if vocabulary < 2 {
 			return -1, nil, nil, nil, fmt.Errorf("the run file's architecture needs vocabulary_size to judge bootstrap replicas")
@@ -505,7 +473,6 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 		evidence.Replicas = append(evidence.Replicas, ReplicaEvidence{Identity: records[index].Identity, ModelSHA256: records[index].ModelSHA256, HeldoutLoss: measured.Loss})
 	}
 	fmt.Fprintf(joiner.Log, "   round start probe loss %.4f on this unit's data\n", start)
-	// A replica whose run BOM records another corpus selection did not train this unit.
 	var elsewhere []int
 	eligible := len(exports)
 	for index := range exports {
@@ -546,7 +513,6 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 			continue
 		}
 		if count >= eligible/2 {
-			// The most widely agreed replica wins, so one that some peers dispute never beats one none dispute.
 			if winner < 0 || count > agree[winner] {
 				winner = index
 			}
@@ -568,10 +534,7 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 	return winner, disagreeing, elsewhere, evidence, nil
 }
 
-// checkProvenance imports a submission's published package and verifies its
-// training closure is exactly the round base's plus its own run BOMs, so no
-// replica can drop or invent a corpus from the history every later round inherits.
-// It returns the submission's one training run.
+// checkProvenance checks a submission's closure is the round base's plus its one run, and returns that run.
 func (joiner *Joiner) checkProvenance(record Submission, directory string, base *MergeRecord) (model.RunBOM, error) {
 	name := published(record.Model, record.ModelSHA256)
 	if err := joiner.ensure(name, directory); err != nil {
@@ -602,9 +565,7 @@ func (joiner *Joiner) checkProvenance(record Submission, directory string, base 
 	return runs[0], nil
 }
 
-// budgets sets aside replicas whose run trained with other parameters than a
-// majority of replicas, or another step count than the plan gives the unit: a
-// replica that trained a fraction of the budget and claims all of it.
+// budgets sets aside replicas trained with other parameters or another step count than the unit's.
 func (joiner *Joiner) budgets(stage, unit string, exports []string, present []Submission, runs []model.RunBOM, refused []DroppedUnit) ([]string, []Submission, []model.RunBOM, []DroppedUnit) {
 	steps := int64(0)
 	if stage == "pretrain" {
@@ -636,10 +597,8 @@ func (joiner *Joiner) budgets(stage, unit string, exports []string, present []Su
 	return keptExports, keptPresent, keptRuns, refused
 }
 
-// screen sets aside the replicas that cannot be judged on their loss: one that
-// did not start from the round's merged weights, and one whose tokens trained
-// differ from a majority's. Identical weights are agreement, not copying:
-// training on the same hardware and software can reproduce weights bit for bit.
+// screen sets aside replicas that can't be judged on loss: another start, or other tokens trained.
+// Identical weights are agreement, not copying; the same hardware and software reproduce them.
 func screen(records []Submission, base *MergeRecord) ([]Submission, []DroppedUnit) {
 	var kept []Submission
 	var refused []DroppedUnit
@@ -680,11 +639,6 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 		for _, record := range records {
 			identities = append(identities, record.Identity)
 		}
-		if len(records) < joiner.plan.Replicas {
-			dropped = append(dropped, DroppedUnit{Unit: unit, Reason: fmt.Sprintf("%d of %d replicas by the deadline", len(records), joiner.plan.Replicas)})
-			continue
-		}
-		// Each bad replica costs only itself; the rest still decide the unit.
 		kept, refused := screen(records, base)
 		var exports []string
 		var present []Submission
@@ -712,7 +666,6 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 			corpora = append(corpora, run.CorpusBOMSHA256)
 		}
 		rejected = append(rejected, refused...)
-		// A unit needs a majority of its planned replicas left to compare.
 		if len(present) < joiner.plan.Replicas/2+1 {
 			dropped = append(dropped, DroppedUnit{Unit: unit, Reason: fmt.Sprintf("%d of %d replicas left after rejections", len(present), joiner.plan.Replicas), Identities: identities})
 			continue
@@ -739,7 +692,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	if len(accepted) == 0 {
 		return fmt.Errorf("round %d: no unit was accepted; the run cannot continue without new submissions", action.Round)
 	}
-	// Named by the units it merges, so a retried close with a different accepted set never reuses another set's merge.
+	// Named by the units it merges, so a retry with another accepted set never reuses this merge.
 	digest := sha256.New()
 	for _, submission := range accepted {
 		fmt.Fprintf(digest, "%s %s\n", submission.Unit, submission.ModelSHA256)
@@ -750,7 +703,6 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	if _, err := os.Stat(filepath.Join(target, "model.safetensors")); os.IsNotExist(err) {
 		_ = os.RemoveAll(target)
 		if len(accepted) == 1 {
-			// One accepted unit (always so for the bootstrap) is the merge.
 			if err := copyDirectory(joiner.fetched(accepted[0].Identity, accepted[0].Model), target); err != nil {
 				return err
 			}
@@ -803,14 +755,9 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	return nil
 }
 
-// GateReportFile is an evaluation gate's report in a merge package.
 const GateReportFile = "GATE-REPORT.json"
 
-// checkGate measures the merged weights against the round's gate. A held-out
-// loss gate averages the merge's loss on every unit's held-out records; an
-// evaluation gate runs the plan's evaluator on the merge, then waldo model gate,
-// which checks the evaluation against everything the lineage trained on and
-// writes its report into the package, so the merge publishes the bar it met.
+// checkGate measures the merge against the round's gate: a held-out loss, or an evaluation through waldo model gate.
 func (joiner *Joiner) checkGate(ctx context.Context, gate Gate, action Action, name, target string) (*GateResult, error) {
 	result := &GateResult{After: gate.After}
 	if gate.HeldoutLossAtMost != nil {
@@ -845,8 +792,7 @@ func (joiner *Joiner) checkGate(ctx context.Context, gate Gate, action Action, n
 	}
 	report := filepath.Join(target, GateReportFile)
 	_ = os.Remove(report)
-	// waldo model gate exits non-zero when the model does not pass; the report says so either way,
-	// so its output is kept back unless it wrote no report.
+	// waldo model gate exits non-zero on a failure; its output is kept back unless it wrote no report.
 	command = exec.CommandContext(ctx, joiner.Waldo, "--json", "model", "gate", name, evaluation, results, report)
 	command.Env = joiner.environment()
 	var gateOutput bytes.Buffer
@@ -871,7 +817,6 @@ func (joiner *Joiner) checkGate(ctx context.Context, gate Gate, action Action, n
 	return result, nil
 }
 
-// writeRound writes the merge package's RoundRecord.
 func (joiner *Joiner) writeRound(target string, action Action, base *MergeRecord, method string, accepted []Submission) error {
 	round := RoundRecord{Kind: "openwaldo-bom", Schema: 1, Subject: "join-round",
 		Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, PlanSHA256: joiner.planSHA256, Method: method}
@@ -898,9 +843,7 @@ func (joiner *Joiner) writeRound(target string, action Action, base *MergeRecord
 	return os.WriteFile(filepath.Join(target, model.RoundFile), append(data, '\n'), 0o644)
 }
 
-// merge imports the accepted exports and composes their token-weighted
-// merge in waldo, whose records pin every parent and their shared ancestry;
-// the exported merge carries that lineage to the next round.
+// merge composes the accepted exports' token-weighted merge, whose lineage carries to the next round.
 func (joiner *Joiner) merge(ctx context.Context, name string, accepted []Submission, target string) error {
 	interaction, err := joiner.plan.interaction()
 	if err != nil {

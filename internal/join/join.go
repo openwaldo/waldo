@@ -20,11 +20,9 @@ import (
 	"github.com/openwaldo/waldo/internal/config"
 )
 
-// Joiner is one identity's view of a run: its own clone of the runs repo,
-// signing key, and working directory under Home.
+// Joiner is one identity's view of a run.
 type Joiner struct {
-	// Home is everything of one identity: its signing key, its clone of the
-	// runs repo, models, and exports.
+	// Home holds the identity's signing key, runs-repo clone, models, and exports.
 	Home     string
 	Identity string
 	Key      string // ssh signing key; Home/signing-key when empty
@@ -32,8 +30,7 @@ type Joiner struct {
 	Waldo    string // this waldo executable, run with the identity's own config
 	Log      io.Writer
 	Now      func() time.Time
-	// Rounds, when positive, is how many rounds this identity takes part in,
-	// counting from the first round still open when it starts; then it stops.
+	// Rounds, when positive, is how many rounds this identity takes part in.
 	Rounds int
 
 	lastRound int // the last round to work in when Rounds is set, once known
@@ -45,7 +42,6 @@ type Joiner struct {
 	plan       Plan
 }
 
-// Open clones the runs repo when needed and makes sure the signing key exists.
 func (joiner *Joiner) Open(ctx context.Context, url, runDir string) error {
 	if joiner.Now == nil {
 		joiner.Now = time.Now
@@ -88,8 +84,7 @@ func (joiner *Joiner) Open(ctx context.Context, url, runDir string) error {
 	return nil
 }
 
-// configure gives the identity its own copy of the waldo config with its own
-// model store, so identities on one machine never share a model name.
+// configure gives the identity its own waldo config and model store.
 func (joiner *Joiner) configure(ctx context.Context) error {
 	if _, err := os.Stat(joiner.config()); os.IsNotExist(err) {
 		if source, err := config.Path(); err == nil {
@@ -103,14 +98,11 @@ func (joiner *Joiner) configure(ctx context.Context) error {
 	if err := joiner.waldo(ctx, "config", "set", "model.root", joiner.models()); err != nil {
 		return err
 	}
-	// Every round reads the same corpus shards, so keep them between commands rather than
-	// purging and re-downloading them, which would also pull them from under another
-	// identity sharing this machine's cache.
+	// Every round reads the same shards; keep them rather than pull them from under another identity.
 	return joiner.waldo(ctx, "config", "set", "lookaside.cache.retain-completed", "true")
 }
 
-// ready checks, with waldo status, that this identity's machine can train
-// before it claims any work, so a missing backend fails now, not an hour in.
+// ready checks the machine can train before the identity claims any work.
 func (joiner *Joiner) ready(ctx context.Context) error {
 	output, err := joiner.waldoOutput(ctx, "--json", "status")
 	if err != nil {
@@ -137,8 +129,7 @@ func (joiner *Joiner) ready(ctx context.Context) error {
 	return nil
 }
 
-// Step does one unit of work and reports "done", "stopped", "idle", or "worked". Work
-// is claimed first, so a pass that wins its claim goes straight on to the work.
+// Step does one unit of work and reports "done", "stopped", "idle", or "worked".
 func (joiner *Joiner) Step(ctx context.Context) (string, error) {
 	for {
 		if err := joiner.sync(ctx); err != nil {
@@ -186,8 +177,6 @@ func (joiner *Joiner) Step(ctx context.Context) (string, error) {
 	}
 }
 
-// stops is whether action is past the rounds this identity was asked to take part in.
-// Rounds are the run's pause points: a merged round leaves nothing in flight.
 func (joiner *Joiner) stops(action Action) bool {
 	if joiner.Rounds <= 0 || action.Kind == "done" {
 		return false
@@ -198,7 +187,6 @@ func (joiner *Joiner) stops(action Action) bool {
 	return action.Round >= joiner.lastRound
 }
 
-// claim commits this identity's claim on a slot; false if another identity's claim landed first.
 func (joiner *Joiner) claim(ctx context.Context, action Action) (bool, error) {
 	record := Claim{
 		Kind: ClaimKind, Schema: RecordSchema, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage,
@@ -212,7 +200,7 @@ func (joiner *Joiner) claim(ctx context.Context, action Action) (bool, error) {
 	return won, err
 }
 
-// load reads the run file as of this pass, since amendments land through git, and checks this identity is in it.
+// load rereads the run file, since amendments land through git.
 func (joiner *Joiner) load() (State, error) {
 	plan, err := LoadRun(filepath.Join(joiner.runDir, RunFile))
 	if err != nil {
@@ -244,7 +232,6 @@ func (joiner *Joiner) workDir() string {
 	return filepath.Join(joiner.Home, "work", filepath.Base(joiner.runDir))
 }
 
-// commit signs record into path and pushes it; false if another identity's claim on the same slot won the race.
 func (joiner *Joiner) commit(ctx context.Context, path string, record any, message string) (bool, error) {
 	if err := writeSigned(path, record, joiner.Key); err != nil {
 		return false, err
@@ -270,9 +257,7 @@ func (joiner *Joiner) push(ctx context.Context) (bool, error) {
 	return false, fmt.Errorf("push kept being rejected; try again later")
 }
 
-// rebase replays unpushed records onto the runs repo. Only another identity's
-// claim on the same slot can conflict, and theirs stands: this identity's
-// unpushed records are dropped and lost is true.
+// rebase replays unpushed records; lost is true when another identity's claim won a slot.
 func (joiner *Joiner) rebase(ctx context.Context) (bool, error) {
 	for attempt := 0; ; attempt++ {
 		_, err := joiner.git(ctx, joiner.clone, "pull", "-q", "--rebase")
@@ -289,21 +274,18 @@ func (joiner *Joiner) rebase(ctx context.Context) (bool, error) {
 		if _, abortErr := joiner.git(ctx, joiner.clone, "rebase", "--abort"); abortErr != nil {
 			return false, err // no rebase stopped on a conflict; the pull itself failed
 		}
-		// The first stop may be a rebase a killed pass left under way, so replay once before standing down.
+		// The first stop may be a rebase a killed pass left under way.
 		if attempt > 0 {
 			return true, joiner.standDown(ctx)
 		}
 	}
 }
 
-// standDown drops this identity's unpushed records for the runs repo's.
 func (joiner *Joiner) standDown(ctx context.Context) error {
 	_, err := joiner.git(ctx, joiner.clone, "reset", "-q", "--hard", "@{u}")
 	return err
 }
 
-// displaced is whether an unpushed claim of this identity's would retake a slot
-// from a holder that has landed its record.
 func (joiner *Joiner) displaced(ctx context.Context) (bool, error) {
 	output, err := joiner.git(ctx, joiner.clone, "diff", "--name-only", "@{u}", "HEAD", "--", joiner.run)
 	if err != nil {
@@ -331,7 +313,7 @@ func (joiner *Joiner) displaced(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
-// sync brings the clone up to date and pushes any record a cut-short pass committed but never pushed.
+// sync brings the clone up to date and pushes what a cut-short pass committed.
 func (joiner *Joiner) sync(ctx context.Context) error {
 	if _, err := joiner.rebase(ctx); err != nil {
 		return err
