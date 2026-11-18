@@ -743,7 +743,11 @@ schema 1, the evaluation BOM SHA-256, and a `results` array of metric/value
 pairs. The gate scans every corpus in the model's training closure, inherited
 ones included, for exact and fuzzy overlap, and fails promotion on
 contamination or threshold errors. A model with incompletely recorded history
-cannot be gated, and simulated runs can never pass.
+cannot be gated, and simulated runs can never pass. That includes any model
+whose weights descend from one trained outside WALDO, such as a fine-tune or a
+merge of an open-weight Hugging Face model: what that base was trained on isn't
+recorded, so contamination can't be ruled out. Models trained from scratch, and
+those built on WALDO releases with a complete history, can be gated.
 
 Model composes never select MLX, PyTorch, TensorFlow, or TorchTitan. Before a
 run is written, the environment-aware resolver chooses an adapter and records

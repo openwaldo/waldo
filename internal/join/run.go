@@ -55,8 +55,9 @@ func (plan Plan) unitCompose(stage, unit, base string, seed int, budget Budget) 
 		mapSet(parameters, "epochs", scalar("1000"))
 	}
 	mapSet(parameters, "seed", scalar(strconv.Itoa(seed)))
-	// A unit holds out the same records every round, so its losses compare across rounds and
-	// no round trains on what another measures; the training shuffle still changes each round.
+	// A unit holds out the same records every round, so its losses compare across rounds; the
+	// training shuffle still changes each round. Units hold out by their own seeds, so a bootstrap
+	// over every unit's data may train on records a later unit holds out.
 	mapSet(parameters, "evaluation_seed", scalar(strconv.Itoa(pieceSeed(plan.Name, unit))))
 	if budget != probeBudget {
 		// A round's work is its last weights: picking the best held-out checkpoint can hand back
