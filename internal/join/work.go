@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"os/exec"
@@ -109,10 +110,8 @@ func (joiner *Joiner) train(ctx context.Context, name, text string) error {
 				return err
 			}
 		}
-		for _, stale := range []string{filepath.Join(joiner.workDir(), "exports", name), filepath.Join(joiner.store(), joiner.Identity, name)} {
-			if err := os.RemoveAll(stale); err != nil {
-				return err
-			}
+		if err := os.RemoveAll(filepath.Join(joiner.workDir(), "exports", name)); err != nil {
+			return err
 		}
 	}
 	if joiner.built(name) {
@@ -226,8 +225,16 @@ func (joiner *Joiner) store() string {
 func (joiner *Joiner) publish(ctx context.Context, directory string) (string, error) {
 	// Each identity's packages live apart, so closers of one round never share a directory.
 	target := filepath.Join(joiner.store(), joiner.Identity, filepath.Base(directory))
-	if _, err := os.Stat(target); os.IsNotExist(err) {
+	files, err := fileHashes(directory)
+	if err != nil {
+		return "", err
+	}
+	// A copy from an earlier pass serves only if it holds what this pass pins; a re-closed merge may not.
+	if stored, err := fileHashes(target); err != nil || !maps.Equal(stored, files) {
 		fmt.Fprintf(joiner.Log, "   publishing %s to %s\n", filepath.Base(directory), target)
+		if err := os.RemoveAll(target); err != nil {
+			return "", err
+		}
 		if err := copyDirectory(directory, target); err != nil {
 			return "", err
 		}
@@ -305,7 +312,22 @@ func (joiner *Joiner) base(ctx context.Context, state State, number int) (*Merge
 			fmt.Fprintf(joiner.Log, "   %v\n", err)
 			continue
 		}
-		return &record, joiner.ensure(published(record.Model, record.ModelSHA256), directory)
+		name := published(record.Model, record.ModelSHA256)
+		if err := joiner.ensure(name, directory); err != nil {
+			return nil, err
+		}
+		// A package's lineage is not pinned, so one whose lineage tells another history than its closure is set aside.
+		inspection, inspectErr := model.Inspect(joiner.models(), name)
+		if err = inspectErr; err == nil {
+			err = model.CheckHistory(joiner.models(), inspection)
+		}
+		if err == nil {
+			return &record, nil
+		}
+		fmt.Fprintf(joiner.Log, "   %s's package: %v\n", record.Identity, err)
+		if err := joiner.waldo(ctx, "model", "rm", name); err != nil {
+			return nil, err
+		}
 	}
 	return nil, fmt.Errorf("round %d's merged weights could not be fetched from any closer who signed them: %w", number-1, err)
 }
@@ -416,7 +438,7 @@ func (joiner *Joiner) probe(ctx context.Context, stage, unit, export string, see
 
 // score measures a local model's held-out loss on a unit's records.
 func (joiner *Joiner) score(ctx context.Context, stage, unit, name string, seed int) (model.Evaluation, error) {
-	text, err := joiner.plan.unitCompose(stage, unit, "", seed, probeBudget)
+	text, err := joiner.plan.unitCompose(stage, unit, name, seed, probeBudget)
 	if err != nil {
 		return model.Evaluation{}, err
 	}

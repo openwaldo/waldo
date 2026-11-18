@@ -35,12 +35,10 @@ func (plan Plan) unitCompose(stage, unit, base string, seed int, budget Budget) 
 	mapDelete(compose, "join")
 	mapDelete(compose, "base")
 	if base != "" {
+		// A unit inherits its base's architecture, the tokenizer the bootstrap trained included, rather
+		// than restate one: a pulled base records no initialization or dropout to compare with.
 		mapSet(compose, "base", mapping("model", scalar(base)))
-		// The bootstrap trained the run's tokenizer into its architecture; every later unit inherits
-		// that architecture from its base rather than training the tokenizer again.
-		if mapGet(mapGet(mapGet(compose, "architecture"), "tokenizer"), "training") != nil {
-			mapDelete(compose, "architecture")
-		}
+		mapDelete(compose, "architecture")
 	}
 	selected := stageNode(compose, stageKind(stage))
 	if selected == nil {

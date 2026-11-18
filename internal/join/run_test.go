@@ -242,12 +242,12 @@ func TestUnitsInheritATrainedTokenizerFromTheirBase(t *testing.T) {
 			t.Fatalf("%s architecture = %+v", stage, compose.Architecture)
 		}
 	}
-	// A byte-tokenizer run keeps its architecture, which must match the base's.
-	plan, err = LoadRun(writeRun(t, runCompose+runJoin))
+	// So do a byte-tokenizer run's, so a declared initialization or dropout, which a pulled base doesn't record, never mismatches.
+	plan, err = LoadRun(writeRun(t, strings.Replace(runCompose, "vocabulary_size: 259", "vocabulary_size: 259\n  dropout: 0.1", 1)+runJoin))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if compose, _ := unitStage(t, plan, "pretrain", "u1", "round-base"); compose.Architecture.VocabularySize != 259 {
+	if compose, _ := unitStage(t, plan, "pretrain", "u1", "round-base"); compose.Architecture != (model.Architecture{}) {
 		t.Fatalf("byte architecture = %+v", compose.Architecture)
 	}
 }
@@ -421,5 +421,28 @@ func TestTheE2EComposeIsARunFile(t *testing.T) {
 	}
 	if _, stage := unitStage(t, plan, "pretrain", "u0", "base"); strings.Join(stage.Filter.Sources.Include, ",") != "TheAlgorithms/Python" {
 		t.Fatalf("stage = %+v", stage)
+	}
+}
+
+// A run file that inherits its architecture from a base still gives closers a probe compose that loads.
+func TestProbesOfAnInheritedArchitectureLoad(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	start, end := strings.Index(runCompose, "architecture:"), strings.Index(runCompose, "stages:")
+	inherited := runCompose[:start] + "base:\n  model: python-base\n" + runCompose[end:]
+	base := "  base:\n    model: python-base\n    url: file:///srv/python-base\n    model_sha256: " + digest + "\n    files:\n      model.safetensors: " + digest + "\n"
+	plan, err := LoadRun(writeRun(t, inherited+strings.Replace(runJoin, "bootstrap_tokens: 2000000, ", "", 1)+base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := plan.unitCompose("pretrain", "u1", "waldo-run-r0001-u1-alice-0123456789ab", 7, probeBudget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "probe.yaml")
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := model.LoadCompose(path); err != nil {
+		t.Fatalf("probe compose: %v\n%s", err, text)
 	}
 }

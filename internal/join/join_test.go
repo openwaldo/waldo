@@ -6,9 +6,11 @@
 package join
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"os/exec"
@@ -676,5 +678,87 @@ func TestSyncRecoversFromAnUnpushedClaimThatLostItsSlot(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(work, "bob", "claims", "u0-1.yaml")); err != nil || string(data) != "carol\n" {
 		t.Fatalf("bob's clone holds %q, %v; carol's claim stands", data, err)
+	}
+}
+
+// After an edit to the run file, closers whose merges were signed under the old one can close again.
+func TestEditedRunLetsEarlierClosersCloseAgain(t *testing.T) {
+	keys, identities := map[string]string{}, map[string]Identity{}
+	for _, name := range []string{"alice", "bob"} {
+		key, public := signingKey(t, name)
+		keys[name], identities[name] = key, Identity{Key: public}
+	}
+	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Closers: 1, ClaimMinutes: 60, Rounds: RoundsPlan{Pretrain: 1}, Identities: identities}
+	runDir := runDirectory(t)
+	allowed := filepath.Join(t.TempDir(), "allowed_signers")
+	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
+		t.Fatal(err)
+	}
+	write := signer(t, runDir)
+	// Under the earlier run file, alice and bob each closed round 0.
+	for _, name := range []string{"alice", "bob"} {
+		old := mergeFixture(name, strings.Repeat("c", 64))
+		old.Plan = strings.Repeat("9", 64)
+		write("merges/"+name+".yaml", old, keys[name])
+	}
+	// Under the edited one, alice trained round 0 again.
+	write("claims/all-1.yaml", claimFixture("all-1", 1, "alice"), keys["alice"])
+	write("submissions/all-alice.yaml", submissionFixture("all", "alice"), keys["alice"])
+	state, err := ReadState(runDir, plan, allowed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Rounds[0].Merges) != 0 {
+		t.Fatal("fixture: old-plan merges counted")
+	}
+	now := time.Date(2026, 10, 21, 10, 30, 0, 0, time.UTC)
+	for _, name := range []string{"alice", "bob"} {
+		if got := state.Next(name, now); got.Kind != "claim" {
+			t.Fatalf("%s = %+v under the edited run, want a claim on a closing slot; nobody can ever close round 0", name, got)
+		}
+	}
+}
+
+// A merge re-closed with a rewritten JOIN-ROUND.json is published again, so its URL serves what its record pins.
+func TestRepublishedMergeServesWhatItsRecordPins(t *testing.T) {
+	store := t.TempDir()
+	joiner := &Joiner{Identity: "alice", Log: io.Discard, plan: Plan{Name: "run", Store: "file://" + store}}
+	export := filepath.Join(t.TempDir(), "waldo-run-r0000-merge-abc")
+	if err := os.MkdirAll(export, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(round string) {
+		if err := os.WriteFile(filepath.Join(export, "JOIN-ROUND.json"), []byte(round), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"plan_sha256":"old"}`)
+	if _, err := joiner.publish(context.Background(), export); err != nil {
+		t.Fatal(err)
+	}
+	write(`{"plan_sha256":"new"}`)
+	url, err := joiner.publish(context.Background(), export)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, _ := fileHashes(export)
+	files := map[string]string{"JOIN-ROUND.json": pinned["JOIN-ROUND.json"]}
+	target := filepath.Join(t.TempDir(), "fetched")
+	if err := (model.Puller{}).FetchPinned(context.Background(), url, files, target); err != nil {
+		t.Fatalf("the record's own URL fails its pins: %v", err)
+	}
+}
+
+// An expired earlier holder's late submission does not change which replica a full round's slot holds.
+func TestLateSubmissionKeepsTheJudgedReplicaSet(t *testing.T) {
+	round := Round{Claims: map[string][]Claim{"u0-1": {
+		{Slot: "u0-1", Attempt: 1, Identity: "alice", CreatedAt: "2026-10-21T09:00:00+00:00"},
+		{Slot: "u0-1", Attempt: 2, Identity: "bob", CreatedAt: "2026-10-21T10:10:00+00:00"},
+	}}, Submissions: map[string][]Submission{"u0": {{Unit: "u0", Identity: "bob"}}}}
+	before := round.replicas("u0", 1)
+	round.Submissions["u0"] = append(round.Submissions["u0"], Submission{Unit: "u0", Identity: "alice"})
+	after := round.replicas("u0", 1)
+	if before[0].Identity != after[0].Identity {
+		t.Fatalf("the full round judged %s's replica; after alice's late submission closers judge %s's", before[0].Identity, after[0].Identity)
 	}
 }
