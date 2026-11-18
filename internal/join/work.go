@@ -109,8 +109,10 @@ func (joiner *Joiner) train(ctx context.Context, name, text string) error {
 				return err
 			}
 		}
-		if err := os.RemoveAll(filepath.Join(joiner.workDir(), "exports", name)); err != nil {
-			return err
+		for _, stale := range []string{filepath.Join(joiner.workDir(), "exports", name), filepath.Join(joiner.store(), joiner.Identity, name)} {
+			if err := os.RemoveAll(stale); err != nil {
+				return err
+			}
 		}
 	}
 	if joiner.built(name) {
@@ -409,6 +411,11 @@ func (joiner *Joiner) probe(ctx context.Context, stage, unit, export string, see
 	if err := joiner.ensure(name, export); err != nil {
 		return model.Evaluation{}, err
 	}
+	return joiner.score(ctx, stage, unit, name, seed)
+}
+
+// score measures a local model's held-out loss on a unit's records.
+func (joiner *Joiner) score(ctx context.Context, stage, unit, name string, seed int) (model.Evaluation, error) {
 	text, err := joiner.plan.unitCompose(stage, unit, "", seed, probeBudget)
 	if err != nil {
 		return model.Evaluation{}, err
@@ -776,7 +783,7 @@ func (joiner *Joiner) checkGate(ctx context.Context, gate Gate, action Action, n
 		units := joiner.plan.RoundUnits(action.Stage)
 		total := 0.0
 		for _, unit := range units {
-			measured, err := joiner.probe(ctx, action.Stage, unit, target, pieceSeed(joiner.plan.Name, action.Round, unit))
+			measured, err := joiner.score(ctx, action.Stage, unit, name, pieceSeed(joiner.plan.Name, action.Round, unit))
 			if err != nil {
 				return nil, err
 			}

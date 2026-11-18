@@ -162,14 +162,15 @@ func TestReadStateIgnoresMalformedRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*Submission){
-		"model path":    func(record *Submission) { record.Model = "../../.." },
-		"file path":     func(record *Submission) { record.Files["../../.bashrc"] = strings.Repeat("d", 64) },
-		"hidden file":   func(record *Submission) { record.Files[".git"] = strings.Repeat("d", 64) },
-		"other run":     func(record *Submission) { record.Run = "another-run" },
-		"wrong kind":    func(record *Submission) { record.Kind = MergeKind },
-		"wrong stage":   func(record *Submission) { record.Stage = "pretrain" },
-		"unpinned file": func(record *Submission) { record.Files["model.safetensors"] = strings.Repeat("e", 64) },
-		"other plan":    func(record *Submission) { record.Plan = strings.Repeat("f", 64) },
+		"model path":     func(record *Submission) { record.Model = "../../.." },
+		"file path":      func(record *Submission) { record.Files["../../.bashrc"] = strings.Repeat("d", 64) },
+		"hidden file":    func(record *Submission) { record.Files[".git"] = strings.Repeat("d", 64) },
+		"other run":      func(record *Submission) { record.Run = "another-run" },
+		"wrong kind":     func(record *Submission) { record.Kind = MergeKind },
+		"wrong stage":    func(record *Submission) { record.Stage = "pretrain" },
+		"unpinned file":  func(record *Submission) { record.Files["model.safetensors"] = strings.Repeat("e", 64) },
+		"other plan":     func(record *Submission) { record.Plan = strings.Repeat("f", 64) },
+		"another's name": func(record *Submission) { record.Model = "waldo-run-r0000-all-alice" },
 	} {
 		runDir := runDirectory(t)
 		record := submissionFixture("all", "bob")
@@ -518,6 +519,44 @@ func TestLateMergeFromAnExpiredClaimKeepsTheDecision(t *testing.T) {
 	}
 }
 
+// A retake stands down once the slot's holder has landed its merge, so it never takes that holder's vote.
+func TestRetakeAfterTheHolderMergedStandsDown(t *testing.T) {
+	keys, identities := map[string]string{}, map[string]Identity{}
+	for _, name := range []string{"alice", "bob", "carol", "dave"} {
+		key, public := signingKey(t, name)
+		keys[name], identities[name] = key, Identity{Key: public}
+	}
+	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Closers: 3, ClaimMinutes: 60, Rounds: RoundsPlan{Pretrain: 1}, Identities: identities}
+	runDir := runDirectory(t)
+	allowed := filepath.Join(t.TempDir(), "allowed_signers")
+	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
+		t.Fatal(err)
+	}
+	write := signer(t, runDir)
+	write("claims/all-1.yaml", claimFixture("all-1", 1, "alice"), keys["alice"])
+	write("submissions/all-alice.yaml", submissionFixture("all", "alice"), keys["alice"])
+	write("claims/close-1.yaml", claimFixture("close-1", 1, "alice"), keys["alice"])
+	// Dave saw close-1 expired and retook it; whether he must stand down depends on alice's merge.
+	retake := claimFixture("close-1", 2, "dave")
+	retake.CreatedAt = "2026-10-21T11:30:00+00:00"
+	write("claims/close-1.2.yaml", retake, keys["dave"])
+	displaces := func() bool {
+		t.Helper()
+		state, err := ReadState(runDir, plan, allowed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state.displaces(0, "close-1.2.yaml")
+	}
+	if displaces() {
+		t.Fatal("a retake of an expired claim with no merge stood down")
+	}
+	write("merges/alice.yaml", mergeFixture("alice", strings.Repeat("c", 64)), keys["alice"])
+	if !displaces() {
+		t.Fatal("a retake landing after the holder's merge would take its vote")
+	}
+}
+
 // A majority of the plan's closers decides the round whichever of their slots they took.
 func TestClosersDecideWhicheverSlotsTheyHold(t *testing.T) {
 	keys, identities := map[string]string{}, map[string]Identity{}
@@ -629,7 +668,7 @@ func TestSyncRecoversFromAnUnpushedClaimThatLostItsSlot(t *testing.T) {
 	claim("bob", "bob")
 	claim("carol", "carol")
 	run(filepath.Join(work, "carol"), "push", "-q")
-	joiner := &Joiner{clone: filepath.Join(work, "bob")}
+	joiner := &Joiner{clone: filepath.Join(work, "bob"), run: "runs/r"}
 	for pass := range 2 {
 		if err := joiner.sync(t.Context()); err != nil {
 			t.Fatalf("pass %d: %v", pass+1, err)

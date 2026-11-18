@@ -274,15 +274,61 @@ func (joiner *Joiner) push(ctx context.Context) (bool, error) {
 // claim on the same slot can conflict, and theirs stands: this identity's
 // unpushed records are dropped and lost is true.
 func (joiner *Joiner) rebase(ctx context.Context) (bool, error) {
-	_, err := joiner.git(ctx, joiner.clone, "pull", "-q", "--rebase")
-	if err == nil {
+	for attempt := 0; ; attempt++ {
+		_, err := joiner.git(ctx, joiner.clone, "pull", "-q", "--rebase")
+		if err == nil {
+			// A record that landed meanwhile may have filled a slot an unpushed claim retakes.
+			if displaced, err := joiner.displaced(ctx); displaced || err != nil {
+				if err == nil {
+					err = joiner.standDown(ctx)
+				}
+				return displaced, err
+			}
+			return false, nil
+		}
+		if _, abortErr := joiner.git(ctx, joiner.clone, "rebase", "--abort"); abortErr != nil {
+			return false, err // no rebase stopped on a conflict; the pull itself failed
+		}
+		// The first stop may be a rebase a killed pass left under way, so replay once before standing down.
+		if attempt > 0 {
+			return true, joiner.standDown(ctx)
+		}
+	}
+}
+
+// standDown drops this identity's unpushed records for the runs repo's.
+func (joiner *Joiner) standDown(ctx context.Context) error {
+	_, err := joiner.git(ctx, joiner.clone, "reset", "-q", "--hard", "@{u}")
+	return err
+}
+
+// displaced is whether an unpushed claim of this identity's would retake a slot
+// from a holder that has landed its record.
+func (joiner *Joiner) displaced(ctx context.Context) (bool, error) {
+	output, err := joiner.git(ctx, joiner.clone, "diff", "--name-only", "@{u}", "HEAD", "--", joiner.run)
+	if err != nil {
+		return false, err
+	}
+	var claims []string
+	for _, path := range strings.Fields(output) {
+		if filepath.Base(filepath.Dir(path)) == "claims" {
+			claims = append(claims, path)
+		}
+	}
+	if len(claims) == 0 {
 		return false, nil
 	}
-	if _, abortErr := joiner.git(ctx, joiner.clone, "rebase", "--abort"); abortErr != nil {
-		return false, err // no rebase stopped on a conflict; the pull itself failed
+	state, err := joiner.load()
+	if err != nil {
+		return false, err
 	}
-	_, err = joiner.git(ctx, joiner.clone, "reset", "-q", "--hard", "@{u}")
-	return true, err
+	for _, path := range claims {
+		var number int
+		if _, err := fmt.Sscanf(filepath.Base(filepath.Dir(filepath.Dir(path))), "round-%d", &number); err == nil && state.displaces(number, filepath.Base(path)) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // sync brings the clone up to date and pushes any record a cut-short pass committed but never pushed.

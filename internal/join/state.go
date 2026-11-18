@@ -261,8 +261,9 @@ var decidedFiles = map[string]bool{
 }
 
 // decide returns the first decision, in slot order, that a quorum of votes
-// signs. Votes are only ever added, so once a round is decided no later record
-// changes its decision.
+// signs. A slot's vote is its latest holder's, and a slot is retaken only before
+// its holder lands a merge, so once a round is decided no later record changes
+// its decision.
 func decide(votes []MergeRecord, quorum int) *MergeRecord {
 	byDecision := map[string][]MergeRecord{}
 	for _, record := range votes {
@@ -311,7 +312,7 @@ func validFiles(files map[string]string, modelSHA256 string) bool {
 
 func validSubmission(record Submission, plan Plan, number int, stage string) bool {
 	return record.Kind == SubmissionKind && record.Schema == RecordSchema && record.Run == plan.Name && record.Stage == stage &&
-		slices.Contains(plan.RoundUnits(stage), record.Unit) && model.ValidateName(record.Model) == nil &&
+		slices.Contains(plan.RoundUnits(stage), record.Unit) && record.Model == roundModel(plan.Name, number, record.Unit+"-"+record.Identity) &&
 		validFiles(record.Files, record.ModelSHA256)
 }
 
@@ -372,16 +373,32 @@ func (state State) expired(claim Claim, now time.Time) bool {
 // filled is whether any holder of slot has landed its record; a closing
 // slot's must be its latest holder's, the one whose merge votes.
 func (round Round) filled(slot string) bool {
-	unit := slotUnit(slot)
-	if unit == "close" {
-		return slices.ContainsFunc(round.Merges, func(record MergeRecord) bool { return record.Identity == round.holder(slot) })
+	if slotUnit(slot) == "close" {
+		return round.landed(slot, round.holder(slot))
 	}
-	for _, claim := range round.Claims[slot] {
-		if slices.ContainsFunc(round.Submissions[unit], func(record Submission) bool { return record.Identity == claim.Identity }) {
-			return true
-		}
+	return slices.ContainsFunc(round.Claims[slot], func(claim Claim) bool { return round.landed(slot, claim.Identity) })
+}
+
+// landed is whether identity has landed the record a holder of slot owes.
+func (round Round) landed(slot, identity string) bool {
+	if unit := slotUnit(slot); unit != "close" {
+		return slices.ContainsFunc(round.Submissions[unit], func(record Submission) bool { return record.Identity == identity })
 	}
-	return false
+	return slices.ContainsFunc(round.Merges, func(record MergeRecord) bool { return record.Identity == identity })
+}
+
+// displaces is whether a claim file in round number would retake its slot from
+// an earlier holder that has since landed its record. Such a claim must stand
+// down, or it would take that holder's vote away.
+func (state State) displaces(number int, file string) bool {
+	if number >= len(state.Rounds) {
+		return false
+	}
+	round := state.Rounds[number]
+	slot, attempt := claimAttempt(file)
+	return slices.ContainsFunc(round.Claims[slot], func(claim Claim) bool {
+		return claim.Attempt < attempt && round.landed(slot, claim.Identity)
+	})
 }
 
 // replicas are a unit's submissions in slot order, one per slot from its
