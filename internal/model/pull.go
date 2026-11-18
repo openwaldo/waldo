@@ -164,7 +164,9 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 	// The release's history isn't pinned in the origin, so origin IDs match an earlier WALDO's pull.
 	if release, err := os.ReadFile(filepath.Join(sourceDirectory, "BOM.json")); err == nil && listedLineage(release) != "" {
 		fileURL := endpoint + "/" + repository + "/resolve/" + metadata.SHA + "/" + lineageFile
-		_, _, _ = downloadFile(ctx, client, fileURL, token, filepath.Join(sourceDirectory, lineageFile), sizes[lineageFile])
+		if _, _, err := downloadFile(ctx, client, fileURL, token, filepath.Join(sourceDirectory, lineageFile), sizes[lineageFile]); err != nil {
+			return Inspection{}, fmt.Errorf("download %s, which the release lists: %w", lineageFile, err)
+		}
 	}
 	architecture, err := loadHuggingFaceArchitecture(filepath.Join(sourceDirectory, "config.json"))
 	if err != nil {

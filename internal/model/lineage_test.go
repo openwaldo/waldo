@@ -487,15 +487,23 @@ func TestPullLinksAReleaseOfAnUntrainedOrigin(t *testing.T) {
 	holdsRuns(t, walk, base)
 }
 
-func TestPullOriginMatchesAPullThatIgnoresLineage(t *testing.T) {
+func TestPullKeepsTheReleaseHistoryOutOfItsIdentity(t *testing.T) {
 	exporter := t.TempDir()
 	base := trainTwice(t, lineageBuilder(exporter), "base")
 	files := releaseFiles(t, exporter, base, true, nil)
-	with := pullRelease(t, t.TempDir(), files, nil)
-	delete(files, lineageFile) // listed in BOM.json, but not fetched, as by an earlier WALDO
-	without := pullRelease(t, t.TempDir(), files, nil)
-	if with.Model.OriginBOMSHA256 != without.Model.OriginBOMSHA256 || with.Model.ID != without.Model.ID {
-		t.Fatal("fetching the release history changed the pulled model's identity")
+	pulled := pullRelease(t, t.TempDir(), files, nil)
+	// The history isn't a source artifact, so the origin matches an earlier WALDO's pull of the release.
+	for _, artifact := range pulled.Origin.SourceArtifacts {
+		if artifact.Path == lineageFile {
+			t.Fatal("the release history is part of the pulled model's identity")
+		}
+	}
+	// A history the release lists but the pull can't fetch fails the pull, to be run again.
+	delete(files, lineageFile)
+	isolateHuggingFaceToken(t)
+	client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
+	if _, err := (Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: client}).Pull(context.Background(), "pulled", "huggingface://org/tiny"); err == nil || !strings.Contains(err.Error(), lineageFile) {
+		t.Fatalf("pull without the listed history: %v", err)
 	}
 }
 
