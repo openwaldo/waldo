@@ -32,7 +32,9 @@ untrusted distributed training.
   that does not rebuild, another unit's corpus, short budget), score the rest
   with `--evaluate-only`, and merge the agreed ones with
   `base.merge` (0085). A round is decided by the first decision, in slot order,
-  that a majority of closing slots sign, including the published provenance.
+  that a majority of closing slots sign, including the configuration, tokenizer,
+  and provenance published with the weights. A retaken slot votes with its latest
+  holder's merge.
 - Gates make runs training ladders: a stage's last round checks its merge
   against a held-out loss, or an evaluation through `waldo model gate`; a failed
   gate adds rounds of the stage up to a limit, and a gate that never passes stops

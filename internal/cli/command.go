@@ -221,7 +221,7 @@ func newModelCommand(state *cobraState) *cobra.Command {
 			textFlag("rendezvous-id", "", "run label naming the shared plan path the secondaries consume; must match on every node (required when --nodes > 1)"),
 			booleanFlag("audit", "audit shard structure, attestations, and declared totals before training"),
 			booleanFlag("evaluate-only", "score the model's current weights on the compose's first-stage held-out records; trains nothing and records no run")),
-		leaf(state, "join <runs-repo> <run-dir>", "Contribute to a training run kept in a git repo", "Each pass reads the run's plan and signed records, then trains the next unit, or verifies and merges a full round, and commits its own signed record. Several identities may share one machine: each keeps everything in ~/.waldo/join/<identity>: its signing key, an optional github-token (mode 600), its clone of the runs repo, models, and exports.", cobra.ExactArgs(2), runModelJoin,
+		leaf(state, "join <runs-repo> <run-dir>", "Contribute to a training run kept in a git repo", "Each pass reads the run's plan and signed records, then trains the next unit, or verifies and merges a full round, and commits its own signed record. Several identities may share one machine: each keeps everything in ~/.waldo/join/<identity>: its signing key, its clone of the runs repo, models, and exports.", cobra.ExactArgs(2), runModelJoin,
 			requiredTextFlag("identity", "name listed under the plan's identities"),
 			textFlag("key", "", "ssh signing key; default ~/.waldo/join/<identity>/signing-key, created if missing"),
 			textFlag("email", "", "commit author email; default <identity>@waldo.invalid"),

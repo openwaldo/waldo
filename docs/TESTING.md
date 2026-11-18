@@ -53,8 +53,8 @@ Individual end-to-end tests are available under `testing/e2e/`:
 ```
 
 `model-join.sh` is opt-in because it trains for real on the configured index
-and keeps two test identities under `~/.waldo/join/e2e-*`; it needs an MLX
-Python on `PATH`:
+and keeps three test identities under `~/.waldo/join/e2e-*`; it needs Apple
+Silicon and an MLX Python on `PATH`:
 
 ```bash
 WALDO_E2E_JOIN=1 uv run --with mlx sh ./testing/e2e/model-join.sh

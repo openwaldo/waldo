@@ -59,7 +59,8 @@ join:
 Round 0 bootstraps on every unit's sources (training the tokenizer, if the run
 file asks), or starts from `base`. Each later round starts from the previous
 merge. An identity claims a slot, then trains a unit or closes the round; a
-claim not followed by its record within `claim_minutes` can be retaken.
+claim not followed by its record within `claim_minutes` can be retaken, and a
+retaken closing slot votes with its new holder's merge.
 
 Every record pins a hash of the run file and its gate files, so editing the run
 starts it afresh. Each unit holds out the same records every round, so its
@@ -73,7 +74,8 @@ rest with `--evaluate-only`;
 and accepts the replica most others agree with. Accepted units merge by
 token-weighted mean ([ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)).
 
-The round is decided by the first merge a majority of closing slots sign.
+The round is decided by the first merge a majority of closing slots sign: the
+same weights, configuration, tokenizer, and provenance.
 Each merge publishes its accepted units' run BOMs, the union of their training
 closures ([ADR 0089](adr/0089-publish-training-provenance-across-lineage.md)), and
 `JOIN-ROUND.json`, linking the weights back to the signed records.
