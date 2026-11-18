@@ -1409,6 +1409,10 @@ func finishCompletedComposeNoop(context Context, name, composePath string, reque
 			Skipped []model.SkippedCorpus `json:"skipped"`
 		}{Compose: composePath, Result: inspection, Skipped: skipped})
 	}
+	if len(requested.Stages) == 0 {
+		fmt.Fprintf(stdout, "model %s unchanged; verified it is still the merge compose %s describes\n", name, composePath)
+		return true, nil
+	}
 	fmt.Fprintf(stdout, "model %s unchanged; verified all %d stages of compose %s were already completed\n", name, len(requested.Stages), composePath)
 	return true, nil
 }
@@ -1709,7 +1713,7 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 	}
 	// A fine-tune or merge also carries its ancestors' training data.
 	for _, digest := range slices.Sorted(maps.Keys(history.Corpora)) {
-		if used := history.Corpora[digest]; !attributed[digest] {
+		if used := history.Corpora[digest][0]; !attributed[digest] {
 			if _, err := corpus.ReviewDistributable(used.BOM); err != nil {
 				return fmt.Errorf("build training data attribution: ancestor %s run %s trained on a corpus that can't be redistributed: %w", used.Model, used.Run, err)
 			}

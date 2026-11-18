@@ -8,6 +8,7 @@ package disclosure
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -61,7 +62,10 @@ func TestAMergeReportsItsAncestorsAndWhereItCameFrom(t *testing.T) {
 		Origin: &model.OriginBOM{Source: model.OriginSource{Provider: "merge", Revision: strings.Repeat("4", 64)}},
 	}
 	history := model.History{
-		Corpora:  map[string]model.HistoryCorpus{strings.Repeat("c", 64): {ModelID: strings.Repeat("5", 64), Model: "left", Run: "r1", Stage: "python", BOM: bom}},
+		Corpora: map[string][]model.HistoryCorpus{strings.Repeat("c", 64): {
+			{ModelID: strings.Repeat("5", 64), Model: "left", Run: "r1", Stage: "python", BOM: bom},
+			{ModelID: strings.Repeat("6", 64), Model: "right", Run: "r2", Stage: "python", BOM: bom},
+		}},
 		Upstream: &model.OriginSource{Provider: "huggingface", URL: "https://huggingface.co/org/tiny"},
 	}
 	release := ReleaseFromModel(merged, history)
@@ -72,7 +76,7 @@ func TestAMergeReportsItsAncestorsAndWhereItCameFrom(t *testing.T) {
 	if release.Origin != "modified" || release.OriginalSummaryURL != "https://huggingface.co/org/tiny" || hasGap(report.Gaps, "model.original-summary") {
 		t.Fatalf("a merge of fine-tunes of a pulled model isn't a modification of it: %+v, gaps %+v", release, report.Gaps)
 	}
-	if len(report.Training.UniqueCorpora) != 1 || report.Training.UniqueCorpora[0].Stages[0] != "ancestor left python" || hasGap(report.Gaps, "training.stages") {
+	if used := report.Training.UniqueCorpora; len(used) != 1 || used[0].Uses != 2 || !slices.Equal(used[0].Stages, []string{"ancestor left python", "ancestor right python"}) || hasGap(report.Gaps, "training.stages") {
 		t.Fatalf("the merge's report leaves out what its parents trained on: %+v", report.Training)
 	}
 	// With its whole history recorded, it is a new model.

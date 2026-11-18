@@ -654,8 +654,35 @@ func TestAMergeCarriesItsParentsTrainingData(t *testing.T) {
 		if _, own := parents[next.RunBOMs[0].CorpusBOMSHA256]; own {
 			t.Fatal("the fine-tune of the merge trained on a parent's corpus; the test can't tell the walk from its own run")
 		}
-		if used, ok := history[digest]; !ok || used.Model != name {
+		if used, ok := history[digest]; !ok || used[0].Model != name {
 			t.Fatalf("a model made from a merge lost %s's corpus BOM %s: %+v", name, digest[:12], used)
+		}
+	}
+}
+
+// A release pulled without its history is where the recorded history ends, for its fine-tunes and their merges alike.
+func TestAReleaseWithoutHistoryIsUpstreamOfItsFamily(t *testing.T) {
+	exporter := t.TempDir()
+	base := trainTwice(t, lineageBuilder(exporter), "base")
+	root := t.TempDir()
+	// Small weights, so averaging the fine-tunes can't overflow.
+	small := func(weights []byte) []byte {
+		for index := 8 + int(binary.LittleEndian.Uint64(weights)) + 1; index < len(weights); index += 2 {
+			weights[index] &= 0x3f
+		}
+		return weights
+	}
+	pullRelease(t, root, releaseFiles(t, exporter, base, false, small), nil)
+	builder := flipWeightsBuilder(root)
+	left := tune(t, builder, ComposeBase{Model: "pulled"}, "left", "left")
+	tune(t, builder, ComposeBase{Model: "pulled"}, "right", "right")
+	merged, err := builder.Compose(t.Context(), "merged", mergeOf("left", "right"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, inspection := range []Inspection{left, merged} {
+		if TrainingHistory(root, inspection).Upstream == nil {
+			t.Fatalf("%s is made from a release whose training isn't recorded, yet names no upstream", inspection.Model.Name)
 		}
 	}
 }

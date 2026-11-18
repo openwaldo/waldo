@@ -373,7 +373,10 @@ func (walk *lineageWalk) origin(digest, weights string) {
 	for _, artifact := range origin.SourceArtifacts {
 		switch artifact.Role {
 		case "source-bom":
-			walk.release(artifact.SHA256, pinned, origin)
+			// A release whose history doesn't link is a model from outside, as far as this history knows.
+			if !walk.release(artifact.SHA256, pinned, origin) {
+				walk.outside = append(walk.outside, origin)
+			}
 			return
 		case "source-merge":
 			walk.merge(artifact.SHA256, pinned)
@@ -441,11 +444,11 @@ func (release releaseBOM) listed(role string) []string {
 	return digests
 }
 
-// release links only when BOM.json lists the pulled weights.
-func (walk *lineageWalk) release(digest, weights string, origin OriginBOM) {
+// release links only when BOM.json lists the pulled weights, and reports whether it did.
+func (walk *lineageWalk) release(digest, weights string, origin OriginBOM) bool {
 	var release releaseBOM
 	if !walk.fetch(digest, "release-bom", &release) {
-		return
+		return false
 	}
 	var pulled []string
 	for _, artifact := range origin.SourceArtifacts {
@@ -455,18 +458,18 @@ func (walk *lineageWalk) release(digest, weights string, origin OriginBOM) {
 	}
 	if release.Kind != "openwaldo-bom" || release.Schema != 1 || release.Subject != "model-release" || len(pulled) != 1 || !slices.Equal(release.listed("weights"), pulled) {
 		walk.gap(digest, "release-bom")
-		return
+		return false
 	}
 	plan := walk.plan(release.ModelID)
 	anchor := walk.anchor(release.SourceBOM, release.ModelID)
 	if anchor == nil {
-		return
+		return false
 	}
 	for _, run := range anchor.Runs {
 		if exported, ok := bomRunWeights(run); release.RunID != "" && run.ID == release.RunID && ok {
 			walk.edge(weights, exported)
 			walk.run(run.BOMSHA256, release.ModelID, run.ID, exported)
-			return
+			return true
 		}
 	}
 	if release.RunID == "" && plan != nil && anchor.Origin != nil && anchor.Origin.SHA256 == plan.OriginBOMSHA256 {
@@ -477,9 +480,10 @@ func (walk *lineageWalk) release(digest, weights string, origin OriginBOM) {
 		exported, _ := originWeights(artifacts)
 		walk.edge(weights, exported)
 		walk.origin(anchor.Origin.SHA256, exported)
-		return
+		return true
 	}
 	walk.gap(release.SourceBOM, "model-bom")
+	return false
 }
 
 func bomRunWeights(run ModelBOMRun) (string, bool) {
@@ -567,11 +571,11 @@ func fillLineage(root string, inspection Inspection, base *Inspection, warn func
 // behind them, its own runs' and every ancestor's through fine-tunes, merges and pulled releases,
 // and the nearest pull whose training isn't recorded, which makes it a modification of that model.
 type History struct {
-	Corpora  map[string]HistoryCorpus // by corpus BOM hash
+	Corpora  map[string][]HistoryCorpus // by corpus BOM hash, one per run that trained on it
 	Upstream *OriginSource
 }
 
-// HistoryCorpus is a corpus BOM and the run that trained on it.
+// HistoryCorpus is a corpus BOM and a run that trained on it.
 type HistoryCorpus struct {
 	ModelID string
 	Model   string // the model's name when its plan is held, otherwise its ID
@@ -583,14 +587,14 @@ type HistoryCorpus struct {
 func TrainingHistory(root string, inspection Inspection) History {
 	walk := newLineageWalk(newLineageIndex(root, nil))
 	walk.model(inspection, inspection.BOM.CurrentRunID)
-	history := History{Corpora: map[string]HistoryCorpus{}}
+	history := History{Corpora: map[string][]HistoryCorpus{}}
 	for _, run := range walk.runs {
 		name := run.ModelID
 		var plan Plan
 		if data := walk.index.document(run.ModelID); data != nil && json.Unmarshal(data, &plan) == nil && plan.Name != "" {
 			name = plan.Name
 		}
-		history.Corpora[run.CorpusBOMSHA256] = HistoryCorpus{ModelID: run.ModelID, Model: name, Run: run.ID, Stage: run.Stage, BOM: run.CorpusBOM}
+		history.Corpora[run.CorpusBOMSHA256] = append(history.Corpora[run.CorpusBOMSHA256], HistoryCorpus{ModelID: run.ModelID, Model: name, Run: run.ID, Stage: run.Stage, BOM: run.CorpusBOM})
 	}
 	if len(walk.outside) > 0 {
 		source := walk.outside[0].Source

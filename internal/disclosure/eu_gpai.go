@@ -228,18 +228,19 @@ func BuildEUGPAIReport(inspection model.Inspection, history model.History, provi
 	// A fine-tune or merge also describes what its ancestors trained on, as far as it's recorded,
 	// pulled WALDO releases included; a pulled model without that history is the one it modifies.
 	for _, digest := range slices.Sorted(maps.Keys(history.Corpora)) {
-		used := history.Corpora[digest]
-		if used.ModelID == inspection.Model.ID {
-			continue
+		for _, used := range history.Corpora[digest] {
+			if used.ModelID == inspection.Model.ID {
+				continue
+			}
+			entry := corpora[digest]
+			if entry == nil {
+				entry = corpusUse(digest, used.BOM)
+				corpora[digest] = entry
+				report.addCorpusGaps(*entry)
+			}
+			entry.Uses++
+			entry.Stages = append(entry.Stages, "ancestor "+used.Model+" "+used.Stage)
 		}
-		entry := corpora[digest]
-		if entry == nil {
-			entry = corpusUse(digest, used.BOM)
-			corpora[digest] = entry
-			report.addCorpusGaps(*entry)
-		}
-		entry.Uses++
-		entry.Stages = append(entry.Stages, "ancestor "+used.Model+" "+used.Stage)
 	}
 	if len(corpora) == 0 {
 		report.gap("1.3", "training.stages", inspection.Model.Name, "the model records no training stages")
@@ -335,9 +336,6 @@ func ReleaseFromModel(inspection model.Inspection, history model.History) Releas
 	if history.Upstream != nil {
 		release.Origin = "modified"
 		release.OriginalSummaryURL = history.Upstream.URL
-	} else if inspection.Origin != nil && inspection.Origin.Source.Provider != "merge" {
-		release.Origin = "modified"
-		release.OriginalSummaryURL = inspection.Origin.Source.URL
 	}
 	return release
 }
