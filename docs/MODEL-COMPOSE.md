@@ -590,6 +590,10 @@ must use one representation or the other, never both.
 | `evaluation_seed` | no | unsigned integer; default `seed` | Picks the held-out records instead of `seed`, so runs that shuffle differently hold out the same records and their held-out losses compare. |
 | `artifact_selection` | no | `final`; default lowest held-out | Which weights the run publishes. By default, the checkpoint with the lowest held-out loss; `final`, the last step's weights, still verified against their held-out loss. |
 
+WALDO versions before `evaluation_seed` and `artifact_selection` reject a
+compose that declares either as an unknown field, including the copy a model
+keeps of the compose it trained on.
+
 Exactly one of `tokens`, `epochs`, or legacy `steps` is normally declared. A
 legacy compose may declare both `steps` and `epochs`; steps remains the exact
 stop while epochs limits the finite source passes available to reach it.
