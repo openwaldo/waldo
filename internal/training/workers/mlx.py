@@ -83,6 +83,9 @@ GPU_THROTTLE = read_gpu_throttle()
 
 # The waldo config, for settings `waldo config set` may change while the worker runs.
 def config_path():
+    # Join runs workers under its own config; live settings come from the one `waldo config set` changes.
+    if os.environ.get("WALDO_LIVE_CONFIG"):
+        return os.environ["WALDO_LIVE_CONFIG"]
     if os.environ.get("WALDO_CONFIG"):
         return os.environ["WALDO_CONFIG"]
     if sys.platform == "darwin":

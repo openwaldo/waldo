@@ -211,6 +211,16 @@ class LiveGPUThrottleTest(unittest.TestCase):
             namespace, _ = self.load(ceiling, configured)
             self.assertEqual(namespace["live_gpu_throttle"](), want, (ceiling, configured))
 
+    def test_join_reads_the_config_waldo_config_set_changes(self):
+        namespace, _ = self.load(0.25, 0.2)  # WALDO_CONFIG is join's own copy
+        directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, directory)
+        live = os.path.join(directory, "config.json")
+        self.write(live, 0.1)
+        self.addCleanup(os.environ.pop, "WALDO_LIVE_CONFIG", None)
+        os.environ["WALDO_LIVE_CONFIG"] = live
+        self.assertEqual(namespace["live_gpu_throttle"](), 0.1)
+
     def test_chat_worker_reads_the_same_budget(self):
         namespace, _ = self.load(0.25, 0.1, MLX_CHAT_WORKER_PATH, ("config_path", "live_config", "live_gpu_throttle"))
         self.assertEqual(namespace["live_gpu_throttle"](), 0.1)

@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/model"
 )
 
@@ -46,9 +47,20 @@ func roundModel(run string, number int, suffix string) string {
 	return fmt.Sprintf("waldo-%s-r%04d-%s", run, number, suffix)
 }
 
+// environment runs waldo with this identity's own config, while the workers it
+// starts read live settings, such as gpu.throttle, from the config that
+// `waldo config set` changes.
+func (joiner *Joiner) environment() []string {
+	environment := append(os.Environ(), "WALDO_CONFIG="+joiner.config())
+	if live, err := config.Path(); err == nil {
+		environment = append(environment, "WALDO_LIVE_CONFIG="+live)
+	}
+	return environment
+}
+
 func (joiner *Joiner) waldo(ctx context.Context, args ...string) error {
 	command := exec.CommandContext(ctx, joiner.Waldo, args...)
-	command.Env = append(os.Environ(), "WALDO_CONFIG="+joiner.config())
+	command.Env = joiner.environment()
 	command.Stdout, command.Stderr = joiner.Log, joiner.Log
 	fmt.Fprintf(joiner.Log, "$ waldo %s\n", strings.Join(args, " "))
 	if err := command.Run(); err != nil {
@@ -60,7 +72,7 @@ func (joiner *Joiner) waldo(ctx context.Context, args ...string) error {
 // waldoOutput runs waldo like waldo() but returns its standard output.
 func (joiner *Joiner) waldoOutput(ctx context.Context, args ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, joiner.Waldo, args...)
-	command.Env = append(os.Environ(), "WALDO_CONFIG="+joiner.config())
+	command.Env = joiner.environment()
 	command.Stderr = joiner.Log
 	fmt.Fprintf(joiner.Log, "$ waldo %s\n", strings.Join(args, " "))
 	output, err := command.Output()
@@ -825,7 +837,7 @@ func (joiner *Joiner) checkGate(ctx context.Context, gate Gate, action Action, n
 	results := filepath.Join(scratch, "results.json")
 	command := exec.CommandContext(ctx, gate.Evaluator[0], append(append([]string{}, gate.Evaluator[1:]...), name, evaluation, results)...)
 	command.Dir = joiner.runDir
-	command.Env = append(os.Environ(), "WALDO="+joiner.Waldo, "WALDO_CONFIG="+joiner.config())
+	command.Env = append(joiner.environment(), "WALDO="+joiner.Waldo)
 	command.Stdout, command.Stderr = joiner.Log, joiner.Log
 	fmt.Fprintf(joiner.Log, "$ %s %s %s %s\n", strings.Join(gate.Evaluator, " "), name, gate.Evaluation, results)
 	if err := command.Run(); err != nil {
@@ -836,7 +848,7 @@ func (joiner *Joiner) checkGate(ctx context.Context, gate Gate, action Action, n
 	// waldo model gate exits non-zero when the model does not pass; the report says so either way,
 	// so its output is kept back unless it wrote no report.
 	command = exec.CommandContext(ctx, joiner.Waldo, "--json", "model", "gate", name, evaluation, results, report)
-	command.Env = append(os.Environ(), "WALDO_CONFIG="+joiner.config())
+	command.Env = joiner.environment()
 	var gateOutput bytes.Buffer
 	command.Stdout, command.Stderr = io.Discard, &gateOutput
 	fmt.Fprintf(joiner.Log, "$ waldo model gate %s %s %s %s\n", name, gate.Evaluation, filepath.Base(results), GateReportFile)
