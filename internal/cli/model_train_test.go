@@ -261,3 +261,12 @@ func TestEvaluateOnlyRefusesAComposeForAnotherModel(t *testing.T) {
 		}
 	}
 }
+
+func TestEvaluateOnlyRejectsTrainingAndClusterFlags(t *testing.T) {
+	for _, flags := range [][]string{{"--hostfile", "hosts"}, {"--nodes", "2"}, {"--rendezvous", "primary:29500"}, {"--rendezvous-id", "r1"}, {"--rendezvous-port", "29501"}, {"--audit"}, {"--epochs", "2"}, {"--seed", "3"}} {
+		var stdout, stderr bytes.Buffer
+		if code := Run(append([]string{"model", "train", "foo", "compose.yaml", "--evaluate-only"}, flags...), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), flags[0]+" cannot be used with --evaluate-only") {
+			t.Fatalf("%v: code %d, stderr %q", flags, code, stderr.String())
+		}
+	}
+}

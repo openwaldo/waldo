@@ -11,11 +11,27 @@ import (
 
 	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/model"
-	"github.com/openwaldo/waldo/internal/training"
 )
 
 // runModelEvaluate prepares the compose's first stage as training would and scores the model on it.
-func runModelEvaluate(context Context, name, path string, cluster training.Cluster, stdout, stderr io.Writer) error {
+func runModelEvaluate(context Context, args []string, stdout, stderr io.Writer) error {
+	for _, flag := range []string{"epochs", "batch-size", "learning-rate", "seed", "hostfile", "rendezvous-port", "nodes", "rendezvous", "rendezvous-id", "audit"} {
+		if context.Command != nil && context.Command.Flags().Changed(flag) {
+			return fmt.Errorf("--%s cannot be used with --evaluate-only, which scores the compose's first stage on this host", flag)
+		}
+	}
+	name := args[0]
+	path, err := trainingComposeInput(args[1:])
+	if err != nil {
+		return err
+	}
+	if path == "" {
+		return fmt.Errorf("--evaluate-only needs a compose file that selects the held-out records")
+	}
+	cluster, err := trainingClusterFromFlags(context, 0)
+	if err != nil {
+		return err
+	}
 	compose, _, err := model.LoadCompose(path)
 	if err != nil {
 		return err
@@ -27,9 +43,7 @@ func runModelEvaluate(context Context, name, path string, cluster training.Clust
 	if err := compose.Validate(); err != nil {
 		return err
 	}
-	if len(compose.Stages) == 0 {
-		return fmt.Errorf("--evaluate-only needs a compose with a stage that selects held-out records")
-	}
+	compose.Stages = compose.Stages[:1]
 	stage := compose.Stages[0]
 	if err := builder.CheckEvaluation(context.Execution, name, compose); err != nil {
 		return err

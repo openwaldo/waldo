@@ -729,11 +729,11 @@ func runModelBOM(context Context, args []string, stdout, stderr io.Writer) error
 }
 
 func runModelTrain(context Context, args []string, stdout, stderr io.Writer) error {
-	hostfilePath := strings.TrimSpace(stringOption(context, "hostfile"))
-	if boolOption(context, "evaluate-only") && hostfilePath != "" {
-		return fmt.Errorf("--evaluate-only scores on this host; drop --hostfile")
+	if boolOption(context, "evaluate-only") {
+		return runModelEvaluate(context, args, stdout, stderr)
 	}
-	if !boolOption(context, "evaluate-only") && (hostfilePath != "" || strings.TrimSpace(os.Getenv("MULTINODE_HOSTLIST_NOSLOTS")) != "") {
+	hostfilePath := strings.TrimSpace(stringOption(context, "hostfile"))
+	if hostfilePath != "" || strings.TrimSpace(os.Getenv("MULTINODE_HOSTLIST_NOSLOTS")) != "" {
 		return runModelTrainHostfile(context, args, hostfilePath, stdout, stderr)
 	}
 	if context.Command != nil && context.Command.Flags().Changed("rendezvous-port") {
@@ -752,9 +752,6 @@ func runModelTrainWithCluster(context Context, args []string, cluster training.C
 	if err != nil {
 		return err
 	}
-	if boolOption(context, "evaluate-only") && composePath == "" {
-		return fmt.Errorf("--evaluate-only needs a compose file that selects the held-out records")
-	}
 	if composePath != "" {
 		if context.Command != nil && context.Command.Flags().Changed("epochs") {
 			return fmt.Errorf("--epochs cannot be used with compose %q; set each stage budget in the compose file", composePath)
@@ -763,9 +760,6 @@ func runModelTrainWithCluster(context Context, args []string, cluster training.C
 			if context.Command != nil && context.Command.Flags().Changed(flag) {
 				return fmt.Errorf("--%s cannot be used with compose %q; compose stages define their own parameters", flag, composePath)
 			}
-		}
-		if boolOption(context, "evaluate-only") {
-			return runModelEvaluate(context, name, composePath, cluster, stdout, stderr)
 		}
 		return runModelComposeTrainingWithHandoff(context, name, composePath, cluster, handoff, stdout, stderr)
 	}
