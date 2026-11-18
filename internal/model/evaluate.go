@@ -29,20 +29,21 @@ func (builder Builder) CheckEvaluation(ctx context.Context, name string, compose
 		return err
 	}
 	if compose.Architecture != (Architecture{}) {
-		declared, recorded := composeModelArchitecture(compose.Architecture), inspection.Model.ArchitectureSHA256
-		// A compose that trains its tokenizer can't name the one the model ended up with; compare the rest.
-		if declared.Tokenizer.Training != nil {
-			trained := inspection.Model.Architecture
-			declared.Tokenizer, trained.Tokenizer = Tokenizer{}, Tokenizer{}
-			if recorded, err = canonicalHash(trained); err != nil {
+		// Compare what the weights are, not how they were trained: a pulled model records no initialization
+		// or dropout, and a compose that trains its tokenizer can't name the one the model ended up with.
+		declared, recorded := composeModelArchitecture(compose.Architecture), composeModelArchitecture(inspection.Model.Architecture)
+		trainsTokenizer := declared.Tokenizer.Training != nil
+		var hashes [2]string
+		for index, architecture := range []Architecture{declared, recorded} {
+			architecture.Initialization, architecture.Dropout = "", 0
+			if trainsTokenizer {
+				architecture.Tokenizer = Tokenizer{}
+			}
+			if hashes[index], err = canonicalHash(architecture); err != nil {
 				return err
 			}
 		}
-		architectureHash, err := canonicalHash(declared)
-		if err != nil {
-			return err
-		}
-		if architectureHash != recorded {
+		if hashes[0] != hashes[1] {
 			return fmt.Errorf("compose architecture or tokenizer does not match model %q", name)
 		}
 	}

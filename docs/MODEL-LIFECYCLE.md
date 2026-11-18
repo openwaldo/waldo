@@ -201,8 +201,10 @@ through the selected backend's worker, and prints the held-out loss, the
 held-out set's size and SHA-256, and the weights' SHA-256. It trains nothing,
 writes no weights, records no run, and runs on this host on MLX or PyTorch, not
 TorchTitan or simulated backends; the training-parameter, `--hostfile`,
-multi-node, and `--audit` flags are refused. The compose must declare the model's architecture and tokenizer or
-inherit them, and only its first stage's corpora need to be available.
+multi-node, and `--audit` flags are refused. The compose must declare the
+model's architecture or inherit it; `initialization` and `dropout` are not
+compared, nor is the tokenizer when the compose trains one. Only its first
+stage's corpora need to be available.
 Held-out selection depends on the corpus, filters, objective, evaluation
 parameters, and seed, not on the training budget, so different models scored
 with the same compose see the same records; with a training stage's own seed

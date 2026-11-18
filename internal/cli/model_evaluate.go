@@ -43,6 +43,9 @@ func runModelEvaluate(context Context, args []string, stdout, stderr io.Writer) 
 	if err := compose.Validate(); err != nil {
 		return err
 	}
+	if len(compose.Stages) == 0 {
+		return fmt.Errorf("--evaluate-only needs a compose with a stage that selects held-out records")
+	}
 	compose.Stages = compose.Stages[:1]
 	stage := compose.Stages[0]
 	if err := builder.CheckEvaluation(context.Execution, name, compose); err != nil {

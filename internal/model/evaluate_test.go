@@ -125,10 +125,12 @@ func TestCheckEvaluationComparesATrainedTokenizersArchitecture(t *testing.T) {
 	trains.Tokenizer = Tokenizer{Training: &TokenizerTraining{Algorithm: TokenizerAlgorithmByteBPEV1}}
 	wider := trains
 	wider.Layers++
+	initialized := byteArchitecture()
+	initialized.Initialization, initialized.Dropout = "depth-scaled", 0.1
 	for _, test := range []struct {
 		architecture Architecture
 		want         string
-	}{{trains, "no weights to evaluate"}, {wider, "does not match model"}} {
+	}{{trains, "no weights to evaluate"}, {initialized, "no weights to evaluate"}, {wider, "does not match model"}} {
 		compose := Compose{Architecture: test.architecture, Stages: []Stage{testStage("pretrain")}}
 		if err := builder.CheckEvaluation(context.Background(), "pulled", compose); err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Fatalf("layers %d: CheckEvaluation error = %v, want %q", test.architecture.Layers, err, test.want)
