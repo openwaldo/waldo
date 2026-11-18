@@ -591,8 +591,9 @@ must use one representation or the other, never both.
 | `artifact_selection` | no | `final`; default lowest held-out | Which weights the run publishes. By default, the checkpoint with the lowest held-out loss; `final`, the last step's weights, still verified against their held-out loss. |
 
 WALDO versions before `evaluation_seed` and `artifact_selection` reject a
-compose that declares either as an unknown field, including the copy a model
-keeps of the compose it trained on.
+compose that declares either as an unknown field. They also can't read a model
+trained with either: they report its run as not matching its model pin and
+refuse to list the model store that holds it.
 
 Exactly one of `tokens`, `epochs`, or legacy `steps` is normally declared. A
 legacy compose may declare both `steps` and `epochs`; steps remains the exact
