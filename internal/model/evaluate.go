@@ -28,6 +28,15 @@ func (builder Builder) CheckEvaluation(ctx context.Context, name string, compose
 	if err != nil {
 		return err
 	}
+	if compose.Architecture != (Architecture{}) {
+		architectureHash, err := canonicalHash(composeModelArchitecture(compose.Architecture))
+		if err != nil {
+			return err
+		}
+		if architectureHash != inspection.Model.ArchitectureSHA256 {
+			return fmt.Errorf("compose architecture or tokenizer does not match model %q", name)
+		}
+	}
 	_, _, _, err = builder.evaluationBackend(ctx, name, inspection, compose.Stages[0].Objective)
 	return err
 }

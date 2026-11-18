@@ -245,3 +245,19 @@ func TestEvaluateOnlyRefusesAModelBeforeCheckingTheCorpus(t *testing.T) {
 		}
 	}
 }
+
+func TestEvaluateOnlyRefusesAComposeForAnotherModel(t *testing.T) {
+	compose := evaluateOnlyFixture(t)
+	for _, change := range []struct{ from, to string }{{"layers: 2", "layers: 3"}, {"name: byte", "name: other"}} {
+		data, err := os.ReadFile(compose)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := filepath.Join(t.TempDir(), "other.yaml")
+		writeCLIFile(t, other, strings.Replace(string(data), change.from, change.to, 1))
+		var stdout, stderr bytes.Buffer
+		if code := Run([]string{"model", "train", "untrained", other, "--evaluate-only"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "does not match model") {
+			t.Fatalf("%s: code %d, stderr %q", change.to, code, stderr.String())
+		}
+	}
+}
