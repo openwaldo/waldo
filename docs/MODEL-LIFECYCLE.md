@@ -189,7 +189,27 @@ and evaluates that saved file again before completion. `RUN.json` records the
 selected step, token count, metric, and value. Summaries distinguish the last
 optimizer-step metric from the selected and reloaded artifact metrics. The
 full requested training budget still runs when validation passes; this
-selection rule is not early stopping.
+selection rule is not early stopping. A stage that declares
+`artifact_selection: final` publishes its last optimizer step instead, for
+runs whose last weights are what matters, such as a fine-tune that will be
+continued or a run whose weights are combined with others afterwards; that
+artifact is reloaded and verified against its held-out loss the same way.
+
+`waldo model train <name> <compose-file> --evaluate-only` scores the model's
+current weights on the held-out records the compose's first stage selects,
+through the selected backend's worker, and prints the held-out loss, the
+held-out set's size and SHA-256, and the weights' SHA-256. It trains nothing,
+writes no weights, records no run, and runs on this host on MLX or PyTorch, not
+TorchTitan or simulated backends; the training-parameter, `--hostfile`,
+multi-node, and `--audit` flags are refused. The compose must declare the
+model's architecture or inherit it; `initialization` and `dropout` are not
+compared, nor is the tokenizer when the compose trains one. Only its first
+stage's corpora need to be available.
+Held-out selection depends on the corpus, filters, objective, evaluation
+parameters, and seed, not on the training budget, so different models scored
+with the same compose see the same records; with a training stage's own seed
+they see exactly the records that training held out. The result compares
+weights; it does not promote a model.
 
 PyTorch/TorchTitan training, artifact verification, and chat inference execute
 one embedded model implementation owned by `internal/pytorchruntime`. Runtime
