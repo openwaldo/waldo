@@ -1,14 +1,14 @@
-# ADR 0085: Merge models of one family into a merged origin
+# ADR 0085: Merge models that share an ancestor into a new origin
 
 Status: accepted
 - Date: 2026-11-05
 
 ## Context
 
-Averaging the weights of models fine-tuned from the same starting weights is
-an established way to combine what each learned. Done outside WALDO, the
-merged model loses its provenance: nothing records which models went into it,
-or how. A merge has no training run either, and ADR 0026 forbids inventing one.
+Models fine-tuned from the same starting weights can be combined by averaging
+their weights. The merged model must stay traceable to the models that went
+into it and to how they were combined. A merge is not a training run, and
+ADR 0026 forbids inventing one.
 
 ## Decision
 
