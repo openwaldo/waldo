@@ -188,6 +188,9 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 		}
 		roles["Modelfile"] = "ollama-configuration"
 	}
+	if err := writeLineage(temporary, options.Lineage, roles); err != nil {
+		return "", err
+	}
 	sourceBOM, err := hashJSON(inspection.BOM)
 	if err != nil {
 		return "", err

@@ -1397,15 +1397,16 @@ func validateComposeCompatibility(target Inspection, compose Compose) error {
 	return nil
 }
 
-// ResolveCompose resolves an inherited base architecture. When acquire is
-// true, external origin weights are acquired through the same importer used by
-// model pull and cached outside the visible managed-model namespace.
-func (builder Builder) ResolveCompose(ctx context.Context, compose Compose, acquire bool) (Compose, error) {
-	resolved, _, err := builder.resolveCompose(ctx, compose, acquire)
+// ResolveCompose resolves an inherited base architecture for the model name,
+// which may not exist yet. When acquire is true, external origin weights are
+// acquired through the same importer used by model pull and cached outside the
+// visible managed-model namespace.
+func (builder Builder) ResolveCompose(ctx context.Context, name string, compose Compose, acquire bool) (Compose, error) {
+	resolved, _, err := builder.resolveCompose(ctx, name, compose, acquire)
 	return resolved, err
 }
 
-func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acquire bool) (Compose, *Inspection, error) {
+func (builder Builder) resolveCompose(ctx context.Context, name string, compose Compose, acquire bool) (Compose, *Inspection, error) {
 	if err := compose.Validate(); err != nil {
 		return Compose{}, nil, err
 	}
@@ -1422,7 +1423,30 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		compose.Base.Source = "huggingface://" + repository + "@" + strings.ToLower(revision)
 	}
 	var base Inspection
-	if compose.Base.Model != "" {
+	recorded, err := builder.recordedMerge(name, *compose.Base)
+	if err != nil {
+		return Compose{}, nil, err
+	}
+	if recorded != nil {
+		base = *recorded
+	} else if len(compose.Base.Merge) > 0 {
+		if !acquire {
+			parents, err := builder.mergeParents(*compose.Base)
+			if err != nil {
+				return Compose{}, nil, err
+			}
+			if compose.Architecture != (Architecture{}) && !reflect.DeepEqual(compose.Architecture, parents[0].inspection.Model.Architecture) {
+				return Compose{}, nil, fmt.Errorf("compose architecture does not match the base.merge parents")
+			}
+			compose.Architecture = parents[0].inspection.Model.Architecture
+			return compose, nil, compose.Validate()
+		}
+		merged, err := builder.mergeOrigin(*compose.Base)
+		if err != nil {
+			return Compose{}, nil, err
+		}
+		base = merged
+	} else if compose.Base.Model != "" {
 		resolved, err := Inspect(builder.Root, compose.Base.Model)
 		if err != nil {
 			return Compose{}, nil, fmt.Errorf("resolve compose base model %q: %w", compose.Base.Model, err)
@@ -1534,7 +1558,7 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 func (builder Builder) Compose(ctx context.Context, name string, compose Compose, stages []PreparedStage) (Inspection, error) {
 	var base *Inspection
 	var err error
-	compose, base, err = builder.resolveCompose(ctx, compose, true)
+	compose, base, err = builder.resolveCompose(ctx, name, compose, true)
 	if err != nil {
 		return Inspection{}, err
 	}
@@ -1688,6 +1712,11 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	staged, err := Inspect(builder.Root, name)
 	if err != nil {
 		return Inspection{}, fmt.Errorf("inspect composing model %s: %w", destination, err)
+	}
+	if err := fillLineage(builder.Root, staged, base, func(message string) {
+		builder.report(Progress{Phase: "lineage", Message: message})
+	}); err != nil {
+		return Inspection{}, fmt.Errorf("record model history: %w", err)
 	}
 	architectureHash, err := canonicalHash(composeModelArchitecture(compose.Architecture))
 	if err != nil {
