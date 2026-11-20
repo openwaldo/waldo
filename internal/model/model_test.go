@@ -398,6 +398,33 @@ func TestComposeAcceptsConfiguredCorporaWithoutBreakingScalarForm(t *testing.T) 
 	}
 }
 
+func TestComposeAcceptsCorpusSliceFilter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "slice.yaml")
+	document := strings.Replace(composeYAML(""), "      - core/books\n", "      - path: core/books\n        filter:\n          slice: {index: 1, count: 3}\n", 1)
+	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	compose, _, err := LoadCompose(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := compose.Stages[0].RecordFilterPolicy([]string{"core/books.yaml", "science/papers"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slice := policy.Corpora["core/books.yaml"].Slice; slice == nil || slice.Index == nil || *slice.Index != 1 || slice.Count != 3 {
+		t.Fatalf("corpus slice = %+v", slice)
+	}
+
+	bad := strings.Replace(document, "count: 3", "size: 3", 1)
+	if err := os.WriteFile(path, []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadCompose(path); err == nil || !strings.Contains(err.Error(), "field size not found") {
+		t.Fatalf("unknown slice field error = %v", err)
+	}
+}
+
 func TestComposeAcceptsUnifiedExclusionFilterStrictly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "exclude.yaml")
 	document := strings.Replace(composeYAML(""), "    corpora:\n", "    filter:\n      main_content: true\n      exclude:\n        repetitive_content: true\n        boilerplate_content: true\n        licenses: [CC-BY-NC-*, LicenseRef-Restricted-*]\n    corpora:\n", 1)

@@ -82,3 +82,4 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0083: Infer from explicitly selected interrupted checkpoints](0083-interrupted-checkpoint-inference.md)
 - [0084: Keep model history as documents beside the records](0084-record-model-lineage.md)
 - [0085: Merge models that share an ancestor into a new origin](0085-merge-models-with-a-common-ancestor.md)
+- [0086: Select deterministic hashed slices of a corpus](0086-deterministic-corpus-slices.md)
