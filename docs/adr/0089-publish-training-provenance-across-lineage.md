@@ -19,10 +19,11 @@ A release publishes, beside its weights:
 
 - `provenance-<sha256>.json`: each run BOM behind the weights, named by its
   hash. A trained model's own runs; a merge's parents' runs.
-- `TRAINING-CLOSURE.json`: every corpus in the history, with use counts and
-  whether the history is complete.
+- `TRAINING-CLOSURE.json`: a summary of every corpus in the history, with use
+  counts and whether the history is complete.
 
-Pulls verify and keep both; merges keep their parents'.
+Pulls verify and keep both; merges keep their parents'. The lineage decides:
+a pull refuses a closure that disagrees with it.
 
 `EU-BOM.json`, `ATTRIBUTION.md` with its distributable review, and
 `waldo model gate` cover every corpus in the history. A non-distributable
