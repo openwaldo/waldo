@@ -229,7 +229,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	}
 	selectionIdentity, err := hashJSON(stageSelectionIdentity{
 		Schema: 1, ArchitectureSHA256: inspection.Model.ArchitectureSHA256, CorpusBOMSHA256: bomHash,
-		Objective: stage.Objective, Conversation: conversation, Seed: resolvedParameters.Seed, Evaluation: resolvedParameters.Evaluation,
+		Objective: stage.Objective, Conversation: conversation, Seed: resolvedParameters.EvaluationSeed(), Evaluation: resolvedParameters.Evaluation,
 	})
 	if err != nil {
 		return Inspection{}, err

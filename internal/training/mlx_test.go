@@ -44,6 +44,7 @@ func TestMLXWorkerPublishesBestEvaluatedCheckpoint(t *testing.T) {
 	for _, expected := range []string{
 		`"model_id": self.begin["model_id"]`,
 		`state.get("model_id") != self.begin["model_id"]`,
+		`candidates = [evaluation for evaluation in candidates if evaluation["step"] == self.step_number]`,
 		`selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"])`,
 		`self.model.load_weights(selected_path)`,
 		`"selected_checkpoint": selection`,

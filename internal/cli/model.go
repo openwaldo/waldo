@@ -733,6 +733,9 @@ func runModelBOM(context Context, args []string, stdout, stderr io.Writer) error
 }
 
 func runModelTrain(context Context, args []string, stdout, stderr io.Writer) error {
+	if boolOption(context, "evaluate-only") {
+		return runModelEvaluate(context, args, stdout, stderr)
+	}
 	hostfilePath := strings.TrimSpace(stringOption(context, "hostfile"))
 	if hostfilePath != "" || strings.TrimSpace(os.Getenv("MULTINODE_HOSTLIST_NOSLOTS")) != "" {
 		return runModelTrainHostfile(context, args, hostfilePath, stdout, stderr)

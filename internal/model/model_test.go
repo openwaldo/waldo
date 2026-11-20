@@ -726,6 +726,28 @@ func TestTrainingRunPinsConfiguredRecordFilter(t *testing.T) {
 	}
 }
 
+func TestTrainingRunRecordsItsEvaluationSeed(t *testing.T) {
+	root := t.TempDir()
+	builder := Builder{Root: root, NewID: func() (string, error) { return "seeded1", nil }, Resolver: training.FakeResolver()}
+	if _, err := builder.Initialize("seeded", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	stage := testStage("pretrain")
+	nine := uint64(9)
+	stage.Parameters.EvaluationSeed = &nine
+	prepared := preparedFixture(t, stage)
+	inspection, err := builder.Train(context.Background(), "seeded", prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inspection.RunBOMs) != 1 || inspection.RunBOMs[0].EvaluationSet == nil || inspection.RunBOMs[0].EvaluationSet.Seed != 9 || inspection.RunBOMs[0].Parameters.Seed != 7 {
+		t.Fatalf("run held-out evidence = %+v", inspection.RunBOMs)
+	}
+	if _, err := Inspect(root, "seeded"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMergeProgressKeepsTerminalArtifactEvaluation(t *testing.T) {
 	progress := &training.Progress{Evaluations: []training.Evaluation{
 		{Step: 10, Tokens: 100, Metrics: map[string]float64{"heldout_loss": 2}},

@@ -629,7 +629,7 @@ must use one representation or the other, never both.
 | `learning_rate` | yes | finite positive number | Peak optimizer learning rate. |
 | `optimizer` | no | `adamw` or `muon-adamw`; default `adamw` | Optimizer recipe. Muon applies orthogonalized momentum updates to hidden matrices and AdamW to embeddings, output heads, and vectors; it currently requires PyTorch data-parallel placement. |
 | `schedule` | no | `cosine` or `warmup-stable-warmdown`; default `cosine` | Learning-rate schedule. |
-| `seed` | no | default `0` | Controls deterministic shuffling, evaluation selection, initialization, and training randomness. Reference composes set it explicitly. |
+| `seed` | no | default `0` | Controls deterministic shuffling, evaluation selection (unless `evaluation_seed` is set), initialization, and training randomness. Reference composes set it explicitly. |
 | `weight_decay` | no | default `0.1`; `0..1` | AdamW weight decay. Explicit zero disables it. |
 | `warmup_steps` | no | `min(100, steps/10)`; `0..steps` | Linear warmup duration. For runs longer than one step, the default is at least one. Explicit zero disables warmup. |
 | `warmdown_steps` | no | half of the run for `warmup-stable-warmdown`, otherwise `0` | Linear warmdown duration. Warmup plus warmdown cannot exceed the run. |
@@ -643,6 +643,13 @@ must use one representation or the other, never both.
 | `evaluation_fraction` | no | default `0.01`; `0 <= value < 1` | Candidate fraction for deterministic held-out selection. |
 | `evaluation_max_records` | no | default `256`; `0..1000000` | Held-out record cap. |
 | `evaluation_max_bytes` | no | default 1 MiB; `0 B..16 GiB` | Held-out text-byte cap. |
+| `evaluation_seed` | no | unsigned integer; default `seed` | Picks the held-out records instead of `seed`, so runs that shuffle differently hold out the same records and their held-out losses compare. |
+| `artifact_selection` | no | `final`; default lowest held-out | Which weights the run publishes. By default, the checkpoint with the lowest held-out loss; `final`, the last step's weights, still verified against their held-out loss. |
+
+WALDO versions before `evaluation_seed` and `artifact_selection` reject a
+compose that declares either as an unknown field. They also can't read a model
+trained with either: they report its run as not matching its model pin and
+refuse to list the model store that holds it.
 
 Exactly one of `tokens`, `epochs`, or legacy `steps` is normally declared. A
 legacy compose may declare both `steps` and `epochs`; steps remains the exact
@@ -671,7 +678,7 @@ Setting any one of `evaluation_fraction`, `evaluation_max_records`, or
 three values to zero.
 
 The default indexed evaluation policies derive deterministic row positions
-from the pinned shard record counts and seed, then read only a bounded sample
+from the pinned shard record counts and seed (or `evaluation_seed`), then read only a bounded sample
 of complete rows. License and content filters are applied to those candidates;
 the selected identities and evaluation evidence are pinned before training.
 There is no corpus-wide evaluation scan. The `stratified-` form distributes

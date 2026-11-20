@@ -723,13 +723,36 @@ class Trainer:
             },
         )
 
-    def finish(self):
+    def verify_evaluation_stream(self):
         evaluation_set = self.begin["evaluation_set"]
         if self.evaluation_record_count != evaluation_set["records"] or self.evaluation_token_targets != evaluation_set["token_targets"]:
             raise ValueError(
                 f"evaluation stream has {self.evaluation_record_count} records and {self.evaluation_token_targets} targets; "
                 f"run BOM pins {evaluation_set['records']} records and {evaluation_set['token_targets']} targets"
             )
+
+    def evaluate_only(self):
+        """Scores the initialization weights on the held-out records; trains and writes nothing."""
+        self.verify_evaluation_stream()
+        if not self.evaluation_sequences:
+            raise ValueError("evaluate-only run has no held-out records")
+        self.record_evaluation(None)
+        emit(
+            "complete",
+            observation={
+                "simulated": False,
+                "steps": 0,
+                "consumed_tokens": 0,
+                "checkpoints": [],
+                "evaluations": self.evaluations,
+                "selected_checkpoint": None,
+                "artifacts": [],
+                "consumption": [],
+            },
+        )
+
+    def finish(self):
+        self.verify_evaluation_stream()
         if self.step_number < self.target_steps and len(self.token_buffer) > 1:
             target_mask = self.loss_buffer[1 : self.sequence_length + 1]
             self.add_sequence(self.token_buffer[: self.sequence_length + 1], target_mask, self.corpus_buffer[1 : self.sequence_length + 1])
@@ -749,7 +772,8 @@ class Trainer:
         # run must validate and select its published inference artifact.
         if self.evaluation_sequences and (not self.evaluations or self.evaluations[-1]["step"] != self.step_number):
             self.record_evaluation(self.final_loss)
-        if self.parameters["checkpoint_every"] > 0 and (
+        # Final selection needs a checkpoint at the last step even without periodic checkpoints.
+        if (self.parameters["checkpoint_every"] > 0 or self.parameters.get("artifact_selection") == "final") and (
             not self.checkpoints or self.checkpoints[-1]["step"] != self.step_number
         ):
             self.save_checkpoint()
@@ -758,6 +782,9 @@ class Trainer:
         weights_path = os.path.join(self.artifact_directory, weights_name)
         evaluated_checkpoints = {checkpoint["step"]: checkpoint for checkpoint in self.checkpoints}
         candidates = [evaluation for evaluation in self.evaluations if evaluation["step"] in evaluated_checkpoints]
+        if self.parameters.get("artifact_selection") == "final":
+            # The run's last weights, still verified against their held-out loss.
+            candidates = [evaluation for evaluation in candidates if evaluation["step"] == self.step_number]
         selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"]) if candidates else None
         selected_checkpoint = None if selected_evaluation is None else evaluated_checkpoints[selected_evaluation["step"]]
         selected_step = self.step_number
@@ -873,7 +900,10 @@ def run():
             raise ValueError(f"unsupported worker input kind {kind!r}")
     if trainer is None or not ended:
         raise ValueError("worker input ended without begin/end framing")
-    trainer.finish()
+    if trainer.begin.get("evaluate_only"):
+        trainer.evaluate_only()
+    else:
+        trainer.finish()
 
 
 Attention = WALDO_SHARED_ATTENTION

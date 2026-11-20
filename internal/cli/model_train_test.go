@@ -39,6 +39,10 @@ func TestParseModelTrainDefaultsAndValidatesEpochs(t *testing.T) {
 	if code := Run([]string{"model", "train", "foo", "core/books", "--epochs", "0"}, &stdout, &stderr); code != 1 {
 		t.Fatal("zero epochs accepted")
 	}
+	stderr.Reset()
+	if code := Run([]string{"model", "train", "foo", "core/books", "--evaluate-only"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "--evaluate-only needs a compose file") {
+		t.Fatalf("evaluate-only without compose: code %d, stderr %q", code, stderr.String())
+	}
 }
 
 func TestTrainingComposeInputRequiresOneIdentifiedCompose(t *testing.T) {
@@ -196,6 +200,92 @@ func TestPendingMergeComposeFinishesThroughCompose(t *testing.T) {
 	} {
 		if got := completesWithoutCompose(test.pending, test.compose); got != test.want {
 			t.Fatalf("%s: completes without Compose = %v, want %v", name, got, test.want)
+		}
+	}
+}
+
+const evaluateOnlyCompose = `kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 128
+  vocabulary_size: 259
+  hidden_size: 64
+  intermediate_size: 192
+  layers: 2
+  attention_heads: 4
+  key_value_heads: 2
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    name: byte
+    revision: builtin-byte-schema-1
+stages:
+  - name: pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    corpora:
+      - books
+    parameters:
+      steps: 2
+      batch_size: 1
+      sequence_length: 64
+      learning_rate: 0.001
+      seed: 7
+`
+
+// evaluateOnlyFixture configures an empty index and an untrained model the compose describes.
+func evaluateOnlyFixture(t *testing.T) string {
+	t.Helper()
+	index, models := t.TempDir(), t.TempDir()
+	writeCLIFile(t, filepath.Join(index, "index.yaml"), "kind: index\nschema: 1\n")
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{Index: index, Model: config.Model{Root: models, Backend: "fake"}}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "compose.yaml")
+	writeCLIFile(t, path, evaluateOnlyCompose)
+	compose, _, err := model.LoadCompose(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (model.Builder{Root: models}).Initialize("untrained", compose.Architecture); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestEvaluateOnlyRefusesAModelBeforeCheckingTheCorpus(t *testing.T) {
+	compose := evaluateOnlyFixture(t)
+	for name, want := range map[string]string{"absent": "absent", "untrained": "no weights to evaluate"} {
+		var stdout, stderr bytes.Buffer
+		if code := Run([]string{"model", "train", name, compose, "--evaluate-only"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), want) || strings.Contains(stderr.String(), "corpus") {
+			t.Fatalf("%s: code %d, stderr %q", name, code, stderr.String())
+		}
+	}
+}
+
+func TestEvaluateOnlyRefusesAComposeForAnotherModel(t *testing.T) {
+	compose := evaluateOnlyFixture(t)
+	for _, change := range []struct{ from, to string }{{"layers: 2", "layers: 3"}, {"name: byte", "name: other"}} {
+		data, err := os.ReadFile(compose)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := filepath.Join(t.TempDir(), "other.yaml")
+		writeCLIFile(t, other, strings.Replace(string(data), change.from, change.to, 1))
+		var stdout, stderr bytes.Buffer
+		if code := Run([]string{"model", "train", "untrained", other, "--evaluate-only"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "does not match model") {
+			t.Fatalf("%s: code %d, stderr %q", change.to, code, stderr.String())
+		}
+	}
+}
+
+func TestEvaluateOnlyRejectsTrainingAndClusterFlags(t *testing.T) {
+	for _, flags := range [][]string{{"--hostfile", "hosts"}, {"--nodes", "2"}, {"--rendezvous", "primary:29500"}, {"--rendezvous-id", "r1"}, {"--rendezvous-port", "29501"}, {"--audit"}, {"--epochs", "2"}, {"--seed", "3"}} {
+		var stdout, stderr bytes.Buffer
+		if code := Run(append([]string{"model", "train", "foo", "compose.yaml", "--evaluate-only"}, flags...), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), flags[0]+" cannot be used with --evaluate-only") {
+			t.Fatalf("%v: code %d, stderr %q", flags, code, stderr.String())
 		}
 	}
 }
