@@ -1,60 +1,50 @@
-# ADR 0088: Coordinate distributed training through signed records in a git repository
+# ADR 0088: Coordinate untrusted training runs through signed records in git
 
 Status: accepted
 - Date: 2026-11-04
 
 ## Context
 
-Training an open model with many contributors' machines needs a way to divide
-the work, check each contribution, combine them, and keep the record of how the
-model was built, without trusting any contributor and without running a
-coordinator. The initial scope in [VISION](../VISION.md) excluded automatic pull
-requests and multi-node orchestration; synchronous multi-host training
-([0025](0025-torchtitan-distributed-adapter.md)) requires trusted, homogeneous
-hosts.
+Many people who don't know each other have a GPU that sits idle much of the
+time, and want models they can control and check rather than depend on access
+to a large cluster. One machine is too small to train a useful model; many
+together could. To do so without trusting any of them, the work would need to
+be divided, each contribution checked, the results combined, and a record kept
+of how the model was built.
+
+Synchronous multi-host training ([0025](0025-torchtitan-distributed-adapter.md))
+needs trusted, identical hosts, and [VISION](../VISION.md)'s initial scope
+excluded multi-node orchestration.
 
 ## Decision
 
 `waldo model join <runs-repo> <run-dir> --identity <name>` contributes to a
-training run kept in a git repository, expanding WALDO's scope to asynchronous,
-untrusted distributed training.
+training run kept in a git repository, extending WALDO's scope to untrusted
+distributed training.
 
-- A run is one file, `run.yaml`: a compose whose `join` block (strict) sets
-  units, replicas, closers, rounds, gates, a store, and the identities allowed to
-  contribute, each an SSH key. Join cuts each
-  unit's work from the compose; the same file trains a single-model baseline.
-- Work is claimed before it is done. Records (`waldo-join-claim`,
-  `-submission`, `-merge`, schema 1) are JSON signed with `ssh-keygen -Y sign`
-  in the `waldo-join` namespace, and count only if they verify, match their file
-  name, run, round, stage, and the pinned run, and, for work, come from the
-  slot's claimant.
-- Closers set aside replicas one at a time (wrong base, odd tokens, provenance
-  that does not rebuild, another unit's corpus, short budget), score the rest
-  with `--evaluate-only`, and merge the agreed ones with
-  `base.merge` (0085). A round is decided by the first decision, in slot order,
-  that a majority of closing slots sign, including the configuration, tokenizer,
-  and provenance published with the weights. A retaken slot votes with its latest
-  holder's merge.
-- Gates make runs training ladders: a stage's last round checks its merge
-  against a held-out loss, or an evaluation through `waldo model gate`; a failed
-  gate adds rounds of the stage up to a limit, and a gate that never passes stops
-  the run. The result is part of the closers' decision.
-- Weights and their provenance (0084) are published to a file store, pinned by
-  hash. Remote stores and runs repositories come later, through a relay.
-- Each identity lives in `~/.waldo/join/<identity>`. Join runs `git` and `ssh-keygen`.
+- A run is one file, `run.yaml`: a compose with a `join` block naming units,
+  replicas, closers, rounds, gates, a store, and the contributors' SSH keys.
+- Contributors claim work, submit it, and close rounds through JSON records
+  (`waldo-join-*`, schema 1) signed with `ssh-keygen -Y sign` in the
+  `waldo-join` namespace. A record counts only if it verifies, fits its place
+  in the run, and, for work, comes from the slot's claimant.
+- Closers reject replicas that fail a check, score the rest with
+  `--evaluate-only`, and merge them with `base.merge` (0085). A majority of
+  closers decides each round.
+- A gate can check a stage's final merge; failing adds rounds, up to a limit.
+- Weights and their provenance are published to a file store, pinned by hash.
 
 ## Consequences
 
-- No process coordinates a run, and no single contributor or closer is trusted;
-  the repository's history is the record of how the model was built.
-- Every model traces back to its corpora: closers rebuild each submission's
-  training closure, and the majority's decision commits to it. Each merge
-  publishes `JOIN-ROUND.json`, linking its weights back to the signed records.
-- Not defended: a colluding majority of closers or replicas, a copied replica
-  (identical weights count as agreement, since honest training can reproduce
-  them; commit-reveal would stop copies), and the plan's author.
+- No process coordinates a run and no contributor is trusted; the repository's
+  history records how the model was built.
+- Every merge traces to its corpora: closers rebuild each submission's training
+  closure, and each merge publishes `JOIN-ROUND.json`, linking its weights to
+  the signed records.
+- Not defended: a colluding majority, a copied replica (identical weights count
+  as agreement), and the plan's author.
 
-`internal/join` is a bounded domain of the one binary ([0001](0001-single-binary.md)) that trains,
-measures, and merges only through the model domain. Relates to [0035](0035-local-s3-credentials.md),
-[0075](0075-immutable-evaluation-and-contamination-gates.md), and
-[0025](0025-torchtitan-distributed-adapter.md).
+`internal/join` trains, measures and merges only through the model domain,
+inside the one binary ([0001](0001-single-binary.md)). Relates to
+[0035](0035-local-s3-credentials.md) and
+[0075](0075-immutable-evaluation-and-contamination-gates.md).

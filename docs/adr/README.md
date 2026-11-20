@@ -84,5 +84,5 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0085: Merge models that share an ancestor into a new origin](0085-merge-models-with-a-common-ancestor.md)
 - [0086: Select deterministic hashed slices of a corpus](0086-deterministic-corpus-slices.md)
 - [0087: Import exported WALDO packages from a local directory](0087-import-exported-packages-from-a-directory.md)
-- [0088: Coordinate distributed training through signed records in a git repository](0088-distributed-training-through-signed-records.md)
+- [0088: Coordinate untrusted training runs through signed records in git](0088-distributed-training-through-signed-records.md)
 - [0089: Publish training provenance across a model's lineage](0089-publish-training-provenance-across-lineage.md)
