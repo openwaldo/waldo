@@ -307,7 +307,7 @@ func (joiner *Joiner) base(ctx context.Context, state State, number int) (*Merge
 		// A package's lineage isn't pinned, so one whose lineage disagrees with its closure is set aside.
 		inspection, inspectErr := model.Inspect(joiner.models(), name)
 		if err = inspectErr; err == nil {
-			err = model.CheckHistory(joiner.models(), inspection)
+			err = model.CheckHistory(inspection)
 		}
 		if err == nil {
 			return &record, nil

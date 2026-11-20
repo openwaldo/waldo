@@ -8,7 +8,6 @@ package model
 import (
 	"encoding/json"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -81,40 +80,8 @@ func ownClosure(inspection Inspection) TrainingClosure {
 	return unionClosures(closure)
 }
 
-// InheritedClosure is the training behind a model's starting weights, from lineage where no closure was recorded.
+// InheritedClosure is the training behind a model's starting weights, as its lineage records it.
 func InheritedClosure(inspection Inspection) (TrainingClosure, error) {
-	if parent := inspection.Model.Parent; parent != nil {
-		ancestor, err := Inspect(filepath.Dir(inspection.Path), parent.Model)
-		if err != nil || ancestor.Model.ID != parent.ModelID {
-			return historyClosure(inspection), nil
-		}
-		// Only the parent's training up to the run its weights came from.
-		kept := 0
-		for position, run := range ancestor.Runs {
-			if run.ID == parent.RunID {
-				kept = position + 1
-			}
-		}
-		ancestor.Runs, ancestor.RunBOMs = ancestor.Runs[:min(kept, len(ancestor.Runs))], ancestor.RunBOMs[:min(kept, len(ancestor.RunBOMs))]
-		return ModelClosure(ancestor)
-	}
-	if inspection.Origin == nil {
-		return emptyClosure(true), nil
-	}
-	for _, artifact := range inspection.Origin.Artifacts {
-		if artifact.Role != ClosureRole {
-			continue
-		}
-		var closure TrainingClosure
-		data, err := os.ReadFile(filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path)))
-		if err != nil {
-			return TrainingClosure{}, err
-		}
-		if err := json.Unmarshal(data, &closure); err != nil || closure.Kind != "openwaldo-bom" || closure.Subject != "training-closure" || closure.Schema != 1 {
-			return TrainingClosure{}, fmt.Errorf("model origin training closure is not a schema-1 training closure")
-		}
-		return closure, nil
-	}
 	return historyClosure(inspection), nil
 }
 
@@ -281,19 +248,44 @@ func releaseTrained(inspection Inspection) bool {
 	return false
 }
 
-// CheckHistory is whether a model's lineage and closure record the same training; lineage isn't pinned.
-func CheckHistory(root string, inspection Inspection) error {
-	closure, err := ModelClosure(inspection)
-	if err != nil {
-		return err
+// CheckHistory is whether the training closure a model's origin recorded agrees with its lineage;
+// the recorded file is a summary for people, never what decides.
+func CheckHistory(inspection Inspection) error {
+	if inspection.Origin == nil {
+		return nil
 	}
-	history := TrainingHistory(root, inspection)
-	var pinned []string
-	for _, entry := range closure.Corpora {
-		pinned = append(pinned, entry.CorpusBOMSHA256)
-	}
-	if history.Complete != closure.Complete || !slices.Equal(slices.Sorted(maps.Keys(history.Corpora)), pinned) {
-		return fmt.Errorf("model %s's lineage and training closure record different histories", inspection.Model.Name)
+	for _, artifact := range inspection.Origin.Artifacts {
+		if artifact.Role != ClosureRole {
+			continue
+		}
+		var recorded TrainingClosure
+		data, err := os.ReadFile(filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path)))
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(data, &recorded); err != nil {
+			return fmt.Errorf("%s is not a training closure: %w", ClosureFile, err)
+		}
+		lineage, err := ModelClosure(inspection)
+		if err != nil {
+			return err
+		}
+		has := func(closure TrainingClosure, digest string) bool {
+			return slices.ContainsFunc(closure.Corpora, func(entry ClosureCorpus) bool { return entry.CorpusBOMSHA256 == digest })
+		}
+		for _, entry := range lineage.Corpora {
+			if !has(recorded, entry.CorpusBOMSHA256) {
+				return fmt.Errorf("%s leaves out corpus %s that the lineage records", ClosureFile, entry.CorpusBOMSHA256[:12])
+			}
+		}
+		for _, entry := range recorded.Corpora {
+			if !has(lineage, entry.CorpusBOMSHA256) {
+				return fmt.Errorf("%s names corpus %s that the lineage doesn't record", ClosureFile, entry.CorpusBOMSHA256[:12])
+			}
+		}
+		if recorded.Complete != lineage.Complete {
+			return fmt.Errorf("%s says the history is complete %t, but the lineage says %t", ClosureFile, recorded.Complete, lineage.Complete)
+		}
 	}
 	return nil
 }

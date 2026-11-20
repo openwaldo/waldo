@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -48,11 +49,8 @@ func withClosure(t *testing.T, directory string, corpora ...string) {
 }
 
 func TestTrainingClosureFollowsTheWholeLineage(t *testing.T) {
-	first, second := strings.Repeat("1", 64), strings.Repeat("2", 64)
 	left, right, _ := familyPackages(t, lineageArchitecture(), nil)
 	bare := releasePackage(t, 2)
-	withClosure(t, left, first)
-	withClosure(t, right, first, second)
 	root := t.TempDir()
 	for name, directory := range map[string]string{"left": left, "right": right, "bare": bare} {
 		if _, err := pullDirectory(t, root, name, directory); err != nil {
@@ -67,13 +65,8 @@ func TestTrainingClosureFollowsTheWholeLineage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Both parents trained on the first corpus, so the merge counts it twice and lists it once,
-	// beside the second corpus and the parents' own runs, which share a corpus.
-	uses := map[string]int{}
-	for _, entry := range closure.Corpora {
-		uses[entry.CorpusBOMSHA256] = entry.Uses
-	}
-	if !closure.Complete || len(closure.Corpora) != 3 || uses[first] != 2 || uses[second] != 1 {
+	// Both parents trained once on one corpus, from a base pulled as plain weights from outside WALDO.
+	if closure.Complete || len(closure.Corpora) != 1 || closure.Corpora[0].Uses != 2 {
 		t.Fatalf("merged closure = %+v", closure)
 	}
 	pulled, err := Inspect(root, "bare")
@@ -114,24 +107,11 @@ func TestReleaseClosuresMustCoverTheirRuns(t *testing.T) {
 	if _, err := pullDirectory(t, t.TempDir(), "omits", directory); err == nil || !strings.Contains(err.Error(), "leaves out corpus") {
 		t.Fatalf("omitting closure error = %v", err)
 	}
-	// A closure that covers its run but invents an inherited corpus fails CheckClosure against its true start.
-	root := t.TempDir()
-	honest, padded, _ := familyPackages(t, lineageArchitecture(), nil)
-	withClosure(t, honest)
+	// A closure that covers its run but invents an inherited corpus disagrees with the lineage.
+	_, padded, _ := familyPackages(t, lineageArchitecture(), nil)
 	withClosure(t, padded, strings.Repeat("9", 64))
-	for name, directory := range map[string]string{"honest": honest, "padded": padded} {
-		if _, err := pullDirectory(t, root, name, directory); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for name, want := range map[string]bool{"honest": true, "padded": false} {
-		inspection, err := Inspect(root, name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := CheckClosure(inspection, nil); (err == nil) != want {
-			t.Fatalf("%s: CheckClosure = %v", name, err)
-		}
+	if _, err := pullDirectory(t, t.TempDir(), "padded", padded); err == nil || !strings.Contains(err.Error(), strings.Repeat("9", 12)) {
+		t.Fatalf("padded closure error = %v", err)
 	}
 }
 
@@ -141,7 +121,6 @@ func TestPullKeepsTheRoundRecord(t *testing.T) {
 		"malformed": `{"kind":"something-else"}`,
 	} {
 		directory := releasePackage(t, 0)
-		withClosure(t, directory)
 		if err := os.WriteFile(filepath.Join(directory, RoundFile), []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -364,7 +343,7 @@ func TestClosureSurvivesDeletingTheParent(t *testing.T) {
 	}
 }
 
-// A package that carries agreed weights and closure with another lineage is told apart from the honest one.
+// A package that carries its weights and closure without the lineage behind them is refused on pull.
 func TestCheckHistoryComparesLineageWithTheClosure(t *testing.T) {
 	exporter := t.TempDir()
 	base := trainTwice(t, lineageBuilder(exporter), "base")
@@ -393,13 +372,58 @@ func TestCheckHistoryComparesLineageWithTheClosure(t *testing.T) {
 		writePackage(t, stripped, map[string][]byte{entry.Name(): data})
 	}
 	for directory, agrees := range map[string]bool{honest: true, stripped: false} {
-		root := t.TempDir()
-		pulled, err := pullDirectory(t, root, "waldo-run-r0000-merge-x", directory)
-		if err != nil {
-			t.Fatal(err)
+		if _, err := pullDirectory(t, t.TempDir(), "waldo-run-r0000-merge-x", directory); (err == nil) != agrees {
+			t.Fatalf("package with its lineage %t: pull = %v", agrees, err)
 		}
-		if err := CheckHistory(root, pulled); (err == nil) != agrees {
-			t.Fatalf("package with its lineage %t: CheckHistory = %v", agrees, err)
-		}
+	}
+}
+
+// A release whose recorded closure leaves out a corpus its lineage records is refused on pull.
+func TestPullRefusesAClosureThatDisagreesWithItsLineage(t *testing.T) {
+	exporter := t.TempDir()
+	builder := lineageBuilder(exporter)
+	if _, err := builder.Initialize("base", lineageArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	stage := lineageStage("maker")
+	prepared := preparedFixture(t, stage)
+	bom := prepared.BOM
+	bom.Manifests = append([]corpus.ManifestPin(nil), bom.Manifests...)
+	bom.Manifests[0].Title = "The maker's corpus"
+	own, err := PrepareStage(stage, bom, prepared.Inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := builder.Train(context.Background(), "base", own)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := fineTune(t, builder, "base", "child", nil)
+	closure, err := ModelClosure(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ancestor := base.RunBOMs[0].CorpusBOMSHA256
+	short := closure
+	short.Corpora = slices.DeleteFunc(slices.Clone(closure.Corpora), func(entry ClosureCorpus) bool { return entry.CorpusBOMSHA256 == ancestor })
+	if len(short.Corpora) != len(closure.Corpora)-1 {
+		t.Fatalf("fixture: the child's closure %+v doesn't hold its base's corpus", closure.Corpora)
+	}
+	data, err := json.Marshal(short)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := exportPackage(t, exporter, child, map[string][]byte{ClosureFile: data})
+	root := t.TempDir()
+	pulled, err := pullDirectory(t, root, "child", directory)
+	if err == nil {
+		recorded, _ := ModelClosure(pulled)
+		t.Fatalf("pulled a release whose closure leaves out %s; its closure reads %d corpora", ancestor[:12], len(recorded.Corpora))
+	}
+	if !strings.Contains(err.Error(), ancestor[:12]) {
+		t.Fatalf("pull error %q doesn't name the left-out corpus %s", err, ancestor[:12])
+	}
+	if _, err := os.Stat(filepath.Join(root, "child")); !os.IsNotExist(err) {
+		t.Fatalf("a refused pull left the model behind: %v", err)
 	}
 }

@@ -398,7 +398,19 @@ func (puller Puller) importSource(name, temporary, sourceDirectory string, names
 	if puller.Now != nil {
 		now = puller.Now
 	}
-	return publishOrigin(puller.Root, name, temporary, origin, architecture, now())
+	if err := publishOrigin(puller.Root, name, temporary, origin, architecture, now()); err != nil {
+		return err
+	}
+	// The release's lineage decides its history; a recorded closure that disagrees misstates it.
+	inspection, err := Inspect(puller.Root, name)
+	if err == nil {
+		err = CheckHistory(inspection)
+	}
+	if err != nil {
+		_ = os.RemoveAll(filepath.Join(puller.Root, name))
+		return err
+	}
+	return nil
 }
 
 func (puller Puller) resolveHub(ctx context.Context, source string) (hubModel, string, string, string, string, *http.Client, error) {

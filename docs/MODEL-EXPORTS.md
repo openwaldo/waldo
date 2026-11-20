@@ -234,8 +234,10 @@ replacement for the full technical run provenance.
 Packages also publish the training evidence behind their weights
 ([ADR 0089](adr/0089-publish-training-provenance-across-lineage.md)): each run BOM as
 `provenance-<sha256>.json`, and `TRAINING-CLOSURE.json`, every corpus the
-lineage trained on. Join's merges add `JOIN-ROUND.json`, linking back to the
-run's signed records ([Model join](MODEL-JOIN.md)); pulls keep all three.
+lineage trained on, a summary the lineage decides: a pull refuses a closure
+that disagrees with the package's `LINEAGE.json`. Join's merges add
+`JOIN-ROUND.json`, linking back to the run's signed records
+([Model join](MODEL-JOIN.md)); pulls keep all three.
 
 ### `EU-BOM.json`
 
