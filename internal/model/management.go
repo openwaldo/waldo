@@ -57,18 +57,27 @@ func List(root string, patterns []string) ([]Listing, error) {
 }
 
 func listingFromInspection(inspection Inspection) Listing {
-	listing := Listing{
+	return Listing{
 		Name: inspection.Model.Name, ID: inspection.Model.ID, Path: inspection.Path,
 		Parameters: inspection.Model.Forecast.ApproximateParameters,
 		Runs:       len(inspection.Model.Runs), Updated: inspection.Model.Updated,
+		State: State(inspection),
 	}
-	if inspection.Origin != nil {
-		listing.State = "downloaded"
-	}
+}
+
+// State is the model's newest run state, else "downloaded" or "merged" for an
+// origin, else empty for an untrained model.
+func State(inspection Inspection) string {
 	if len(inspection.Model.Runs) > 0 {
-		listing.State = string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
+		return string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
 	}
-	return listing
+	if inspection.Origin == nil {
+		return ""
+	}
+	if isMerge(inspection.Origin) {
+		return "merged"
+	}
+	return "downloaded"
 }
 
 func matchesAny(name string, patterns []string) bool {
@@ -134,6 +143,7 @@ func Exists(root, name string) (bool, error) {
 type ExportOptions struct {
 	Files    map[string][]byte
 	Finalize func(string) error
+	Warn     func(string) // gaps in the model's history
 }
 
 func Export(root, name, destination string) (string, error) {
@@ -177,6 +187,11 @@ func ExportPackage(root, name, destination string, options ExportOptions) (strin
 	}()
 	if err := copyTree(inspection.Path, temporary); err != nil {
 		return "", err
+	}
+	if inspection.Plan.Parent != nil || inspection.Plan.OriginBOMSHA256 != "" {
+		if err := writeHistory(newLineageIndex(root, options.Warn), inspection, filepath.Join(temporary, lineageFile)); err != nil {
+			return "", err
+		}
 	}
 	if err := os.Remove(filepath.Join(temporary, "MODEL-BOM.json")); err != nil && !os.IsNotExist(err) {
 		return "", err
@@ -237,6 +252,15 @@ func verifyModelArtifacts(inspection Inspection) error {
 		}
 	}
 	return nil
+}
+
+// VerifyCompletedCompose verifies the artifacts a completed compose left: a
+// merge-only model's weights are its merged origin's, which Inspect verifies.
+func VerifyCompletedCompose(compose Compose, inspection Inspection) error {
+	if len(compose.Stages) == 0 && compose.Base != nil && len(compose.Base.Merge) > 0 && isMerge(inspection.Origin) {
+		return nil
+	}
+	return VerifyCurrentModelArtifacts(inspection)
 }
 
 // VerifyCurrentModelArtifacts verifies the published artifacts from the most
