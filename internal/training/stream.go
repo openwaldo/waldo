@@ -409,7 +409,7 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 			partition.eligibleRecords = nil
 			partition.selectionSummary = RecordSelectionSummary{}
 		}
-		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: parameters.Seed, SHA256: emptyEvaluationDigest()}
+		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: parameters.EvaluationSeed(), SHA256: emptyEvaluationDigest()}
 		return partition, nil
 	}
 	if !evaluationDisabled && IsIndexedEvaluationSelection(policy.Selection) {
@@ -433,7 +433,7 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 		go func() {
 			defer scans.Done()
 			for inputPosition := range jobs {
-				result := scanEvaluationInput(scanContext, ordered[inputPosition], inputPosition, parameters.Seed, policy, evaluationDisabled)
+				result := scanEvaluationInput(scanContext, ordered[inputPosition], inputPosition, parameters.EvaluationSeed(), policy, evaluationDisabled)
 				select {
 				case results <- result:
 				case <-scanContext.Done():
@@ -499,7 +499,7 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 		return RecordPartition{}, fmt.Errorf("record filters select no training records")
 	}
 	if evaluationDisabled {
-		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: parameters.Seed, SHA256: emptyEvaluationDigest()}
+		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: parameters.EvaluationSeed(), SHA256: emptyEvaluationDigest()}
 		return partition, nil
 	}
 	if policy.Selection == "contiguous-tail-v1" {
@@ -540,7 +540,7 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 		_, _ = fmt.Fprintf(hasher, "%s:%d\n", candidate.key, offset)
 		partition.evaluationRecords = records
 		partition.Evaluation = EvaluationSet{
-			Selection: policy.Selection, Seed: parameters.Seed, Records: 1,
+			Selection: policy.Selection, Seed: parameters.EvaluationSeed(), Records: 1,
 			TokenTargets: tokenTargets, TextBytes: evaluationBytes, SHA256: hex.EncodeToString(hasher.Sum(nil)),
 		}
 		return partition, nil
@@ -631,11 +631,20 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 		_, _ = fmt.Fprintln(hasher, candidate.key)
 	}
 	partition.Evaluation = EvaluationSet{
-		Selection: policy.Selection, Seed: parameters.Seed, Records: int64(len(selected)),
+		Selection: policy.Selection, Seed: parameters.EvaluationSeed(), Records: int64(len(selected)),
 		TokenTargets: tokenTargets, TextBytes: selectedBytes, SHA256: hex.EncodeToString(hasher.Sum(nil)),
 	}
 	partition.selectionSummary.HeldOutRecords = int64(len(selected))
 	return partition, nil
+}
+
+// EvaluationSeed is the seed that picks held-out records: the evaluation
+// policy's own when set, otherwise the training seed.
+func (parameters ResolvedParameters) EvaluationSeed() uint64 {
+	if parameters.Evaluation != nil && parameters.Evaluation.Seed != nil {
+		return *parameters.Evaluation.Seed
+	}
+	return parameters.Seed
 }
 
 // IsIndexedEvaluationSelection reports whether a policy selects held-out rows
@@ -682,7 +691,7 @@ func newIndexedRecordPartition(ctx context.Context, partition RecordPartition, p
 	if totalRecords < 2 {
 		partition.eligibleRecords = nil
 		partition.selectionSummary = RecordSelectionSummary{}
-		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: partition.parameters.Seed, SHA256: emptyEvaluationDigest()}
+		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: partition.parameters.EvaluationSeed(), SHA256: emptyEvaluationDigest()}
 		return partition, nil
 	}
 	desired := desiredEvaluationRecords(totalRecords, policy.Fraction, policy.MaxRecords)
@@ -700,7 +709,7 @@ func newIndexedRecordPartition(ctx context.Context, partition RecordPartition, p
 	for groupPosition, group := range groups {
 		probeLimit := int64(max(1024, perGroupTarget*16))
 		probeLimit = min(probeLimit, group.records)
-		candidateGroups[groupPosition] = indexedEvaluationCandidates(partition.inputs, *group, partition.parameters.Seed, int(probeLimit))
+		candidateGroups[groupPosition] = indexedEvaluationCandidates(partition.inputs, *group, partition.parameters.EvaluationSeed(), int(probeLimit))
 		maxRounds = max(maxRounds, len(candidateGroups[groupPosition]))
 	}
 	var candidates []indexedCandidate
@@ -786,7 +795,7 @@ func newIndexedRecordPartition(ctx context.Context, partition RecordPartition, p
 	partition.eligibleRecords = nil
 	partition.selectionSummary = RecordSelectionSummary{}
 	partition.Evaluation = EvaluationSet{
-		Selection: policy.Selection, Seed: partition.parameters.Seed, Records: int64(len(selected)),
+		Selection: policy.Selection, Seed: partition.parameters.EvaluationSeed(), Records: int64(len(selected)),
 		TokenTargets: tokenTargets, TextBytes: selectedBytes, SHA256: hex.EncodeToString(hasher.Sum(nil)),
 	}
 	return partition, nil

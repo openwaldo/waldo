@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -108,7 +109,7 @@ func (resolver MLXResolver) Resolve(ctx context.Context, request ResolveRequest)
 		descriptor := backend.Descriptor()
 		return Selection{Backend: backend, Execution: Execution{
 			Backend: descriptor.Identity, Framework: descriptor.Framework,
-			Runtime:      fmt.Sprintf("%s; Python %s; MLX %s", candidate, facts.PythonVersion, facts.MLXVersion),
+			Runtime:      fmt.Sprintf("%s; Python %s; MLX %s", filepath.Base(candidate), facts.PythonVersion, facts.MLXVersion),
 			Host:         Host{OS: hostOS, Architecture: hostArch},
 			Accelerators: []Accelerator{{Manufacturer: "Apple", Model: facts.Accelerator, MemoryBytes: facts.MemoryBytes}},
 			Nodes:        1, WorldSize: 1,

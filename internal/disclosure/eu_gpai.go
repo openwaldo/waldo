@@ -13,8 +13,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -169,7 +171,8 @@ func LoadProvider(path string) (ProviderProfile, error) {
 	return profile, nil
 }
 
-func BuildEUGPAIReport(inspection model.Inspection, provider *ProviderProfile, release ReleaseProfile, now time.Time) (EUGPAIReport, error) {
+// BuildEUGPAIReport describes the model's own runs and, from its history, its ancestors' corpora.
+func BuildEUGPAIReport(inspection model.Inspection, history model.History, provider *ProviderProfile, release ReleaseProfile, now time.Time) (EUGPAIReport, error) {
 	modelBOMHash, err := hashJSON(inspection.BOM)
 	if err != nil {
 		return EUGPAIReport{}, err
@@ -189,9 +192,6 @@ func BuildEUGPAIReport(inspection model.Inspection, provider *ProviderProfile, r
 	}
 	report.addProviderGaps(provider)
 	report.addReleaseGaps(release)
-	if len(inspection.RunBOMs) == 0 {
-		report.gap("1.3", "training.stages", inspection.Model.Name, "the model records no training stages")
-	}
 	if len(inspection.RunBOMs) != len(inspection.Runs) {
 		return EUGPAIReport{}, fmt.Errorf("model inspection has %d run records and %d run BOMs", len(inspection.Runs), len(inspection.RunBOMs))
 	}
@@ -224,6 +224,30 @@ func BuildEUGPAIReport(inspection model.Inspection, provider *ProviderProfile, r
 		}
 		entry.Uses++
 		entry.Stages = append(entry.Stages, runBOM.Stage)
+	}
+	// A fine-tune or merge also describes what its ancestors trained on, as far as it's recorded,
+	// pulled WALDO releases included; a pulled model without that history is the one it modifies.
+	for _, digest := range slices.Sorted(maps.Keys(history.Corpora)) {
+		for _, used := range history.Corpora[digest] {
+			if used.ModelID == inspection.Model.ID {
+				continue
+			}
+			entry := corpora[digest]
+			if entry == nil {
+				entry = corpusUse(digest, used.BOM)
+				corpora[digest] = entry
+				report.addCorpusGaps(*entry)
+			}
+			entry.Uses++
+			entry.Stages = append(entry.Stages, "ancestor "+used.Model+" "+used.Stage)
+		}
+	}
+	// A lineage with gaps that starts at no outside pull leaves some of the weights' training unrecorded.
+	if !history.Complete && history.Upstream == nil {
+		report.gap("1.3", "training.history", inspection.Model.Name, "the model's lineage has gaps, so part of the training behind its weights is not recorded")
+	}
+	if len(corpora) == 0 {
+		report.gap("1.3", "training.stages", inspection.Model.Name, "the model records no training stages")
 	}
 	keys := make([]string, 0, len(corpora))
 	for key := range corpora {
@@ -304,16 +328,18 @@ func (report *EUGPAIReport) addReleaseGaps(profile ReleaseProfile) {
 	}
 }
 
-func ReleaseFromModel(inspection model.Inspection) ReleaseProfile {
+// ReleaseFromModel calls a model a modification of the nearest pulled model whose training its
+// history doesn't record; a model whose whole history is recorded is new.
+func ReleaseFromModel(inspection model.Inspection, history model.History) ReleaseProfile {
 	release := ReleaseProfile{
 		SummaryVersion: "1",
 		PublicName:     inspection.Model.Name,
 		Version:        inspection.Model.ID,
 		Origin:         "new",
 	}
-	if inspection.Origin != nil {
+	if history.Upstream != nil {
 		release.Origin = "modified"
-		release.OriginalSummaryURL = inspection.Origin.Source.URL
+		release.OriginalSummaryURL = history.Upstream.URL
 	}
 	return release
 }

@@ -952,3 +952,17 @@ func TestHostfileStageResumeVerifiesCheckpointsInPrivateScratch(t *testing.T) {
 		t.Fatalf("stage error = %v, want an already staged checkpoint in an unsafe directory to be refused", err)
 	}
 }
+
+// A host that acknowledges its stage and then exits counts as acknowledged, whichever event the wait sees first.
+func TestStageAcknowledgedBeforeExitCounts(t *testing.T) {
+	session := hostfileSession{ctx: context.Background()}
+	plan := model.MultiNodePlan{RunID: "run", Stage: "pretrain", StageOrdinal: 1, StageCount: 1}
+	for attempt := range 200 {
+		worker := &hostfileWorker{host: "node1", ready: make(chan hostfileStageReady, 1), done: make(chan struct{})}
+		worker.ready <- hostfileStageReady{Kind: hostfileStageReadyKind, Schema: 1, RunID: plan.RunID, Stage: plan.Stage, StageOrdinal: 1, StageCount: 1}
+		close(worker.done)
+		if err := session.awaitStageReady(worker, plan); err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+	}
+}

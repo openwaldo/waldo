@@ -88,6 +88,7 @@ func TestPyTorchWorkerFailsEarlyOnNumericalAndExecutionDrift(t *testing.T) {
 func TestPyTorchWorkerPublishesBestEvaluatedCheckpoint(t *testing.T) {
 	source := string(pyTorchWorker)
 	for _, expected := range []string{
+		`candidates = [evaluation for evaluation in candidates if evaluation["step"] == self.step_number]`,
 		`selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"])`,
 		`load_safetensors(selected_path)`,
 		`"selected_checkpoint": selection`,

@@ -93,6 +93,10 @@ file. Source downloads live only in private staging and are removed after the
 managed artifact has been verified. `ORIGIN-BOM.json` retains the repository,
 requested reference, resolved commit, license when declared, and hashes of all
 acquired files; it does not retain a redundant copy of the source weights.
+A WALDO release's origin also keeps its lineage and training evidence
+([ADR 0084](adr/0084-record-model-lineage.md), [ADR 0089](adr/0089-publish-training-provenance-across-lineage.md)). Origins can
+also come from a join run's exported package (provider `waldo-join`; [ADR 0087](adr/0087-import-exported-packages-from-a-directory.md)) or a merge (provider
+`merge`, under `<model.root>/.merges`; [ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)).
 `MODEL-BOM.json` selects the origin until a complete real training run produces
 new current weights.
 
@@ -100,8 +104,10 @@ Schema 1 initially accepts standard bias-free Llama weights with
 `OpenWALDOTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors. Pull
 also accepts the legacy `OpenWALDOByteTokenizer` class name used by older WALDO
 exports; both names identify the same byte tokenizer. That is the format
-produced by WALDO's Hugging Face export. Other tokenizers or architectural
-variants fail before publication rather than being numerically converted or
+produced by WALDO's Hugging Face export, which also carries a trained
+`waldo/byte-bpe` tokenizer as `openwaldo_tokenizer.json`; pull restores it into
+the architecture when its vocabulary size matches `config.json`. Other
+tokenizers or architectural variants fail before publication rather than being numerically converted or
 silently retokenized.
 
 A compose can use this same verified importer without first creating a visible
@@ -118,7 +124,11 @@ architecture as an exact assertion. Acquired origins are content-addressed
 beneath `<model.root>/.origins`, hidden from `model list`, and reused by later
 composes. Target models hard-link cached artifacts when the filesystem permits
 and copy them otherwise. The resulting model retains the same `ORIGIN-BOM.json`
-provenance as an explicit `model pull`.
+provenance as an explicit `model pull`. Merged origins (`base.merge`) live
+beneath `<model.root>/.merges`; `model rm` removes a model, not the cached
+origin or merge it was built from. Unlike a pinned source, a merge cannot be
+fetched again: a merge-based model is composed again or extended only while
+its `.merges` entry is there.
 
 `init` creates an untrained immutable architecture. `train` resolves one or
 more recursive index selections, deduplicates them into an OpenWALDO BOM,
@@ -168,6 +178,15 @@ deterministic prefix-replay fallback. `RUN.json`
 records each attempt. A changed corpus, epoch count, profile, backend, or
 execution environment is a new run rather than an unsafe resume.
 
+A compose's `checkpoint_every` saves by steps. On MLX,
+`waldo config set training.checkpoint-minutes 30` also saves once 30 minutes of
+wall clock have passed since the last save, so a slow run still stops cheaply.
+The running worker rereads the setting at most every 30 seconds, counts a
+resume's minutes from its start, and saves only at the end of an optimizer step;
+a compose with `checkpoint_every: 0` gets no clock-saved checkpoints. Clock-saved
+checkpoints resume like any other but are not artifact-selection candidates
+unless held-out scoring lands on the same step.
+
 PyTorch and TorchTitan resumable checkpoints keep FP32 master weights even
 when the architecture declares a reduced portable `parameter_dtype`. This
 preserves exact optimizer continuation. WALDO converts only the selected
@@ -189,7 +208,27 @@ and evaluates that saved file again before completion. `RUN.json` records the
 selected step, token count, metric, and value. Summaries distinguish the last
 optimizer-step metric from the selected and reloaded artifact metrics. The
 full requested training budget still runs when validation passes; this
-selection rule is not early stopping.
+selection rule is not early stopping. A stage that declares
+`artifact_selection: final` publishes its last optimizer step instead, for
+runs whose last weights are what matters, such as a fine-tune that will be
+continued or a run whose weights are combined with others afterwards; that
+artifact is reloaded and verified against its held-out loss the same way.
+
+`waldo model train <name> <compose-file> --evaluate-only` scores the model's
+current weights on the held-out records the compose's first stage selects,
+through the selected backend's worker, and prints the held-out loss, the
+held-out set's size and SHA-256, and the weights' SHA-256. It trains nothing,
+writes no weights, records no run, and runs on this host on MLX or PyTorch, not
+TorchTitan or simulated backends; the training-parameter, `--hostfile`,
+multi-node, and `--audit` flags are refused. The compose must declare the
+model's architecture or inherit it; `initialization` and `dropout` are not
+compared, nor is the tokenizer when the compose trains one. Only its first
+stage's corpora need to be available.
+Held-out selection depends on the corpus, filters, objective, evaluation
+parameters, and seed, not on the training budget, so different models scored
+with the same compose see the same records; with a training stage's own seed
+they see exactly the records that training held out. The result compares
+weights; it does not promote a model.
 
 PyTorch/TorchTitan training, artifact verification, and chat inference execute
 one embedded model implementation owned by `internal/pytorchruntime`. Runtime
@@ -234,15 +273,16 @@ failure modes, and consumer examples are in
 non-simulated run as a standalone Transformers package. WALDO rewrites only the Safetensors
 header: tensor bytes remain unchanged while names move to the standard Llama
 layout and container metadata identifies PyTorch. The package includes
-`architecture.py`, the schema-1 byte tokenizer implementation and
-configuration, `BOM.json`, and `EU-BOM.json`. The tokenizer is custom code, so
+`architecture.py`, the tokenizer implementation and configuration (the
+schema-1 byte tokenizer, or a trained `waldo/byte-bpe` tokenizer with its
+`openwaldo_tokenizer.json` artifact), `BOM.json`, and `EU-BOM.json`. The tokenizer is custom code, so
 Transformers callers load it with `trust_remote_code=True`; the model itself
 uses the standard Llama configuration. A model without a usable origin or real
 run is rejected rather than exporting simulated or incomplete artifacts.
 
 `--format mlx` emits the same standard Llama tensor names with Safetensors
 metadata for MLX, an executable binding to MLX-LM's Llama model, and the same
-explicit byte tokenizer. It is a separate package, not a second copy bundled
+explicit tokenizer. It is a separate package, not a second copy bundled
 into the Hugging Face export. Tensor data is again copied byte-for-byte; only
 the container header and surrounding runtime files differ.
 
@@ -279,6 +319,7 @@ waldo model chat small
 waldo model chat small "Once upon a time"
 printf 'Once upon a time' | waldo model chat small
 waldo --json model chat small "Once" --max-tokens 64 --temperature 0 --seed 7
+printf '"Once"\n"Linux is"\n' | waldo --json model chat small --prompts --temperature 0
 waldo model chat conversation --run-id <completed-run-id> --raw --temperature 0 "Linux is"
 waldo model chat conversation --run-id <interrupted-run-id> --checkpoint-step 12000 --raw "Linux is"
 ```
@@ -292,6 +333,9 @@ invalid UTF-8 bytes are escaped so model output cannot emit terminal control
 sequences. Redirected output is rendered once without cursor controls. JSON is
 one-shot and includes model and run identity, prompt, text, token count, finish
 reason, and generation duration.
+With `--prompts`, `--json` chat instead reads one JSON string prompt per
+standard-input line and writes one compact JSON result per line, so many
+prompts share a single model open and verification.
 
 `--run-id` selects the verified published artifact from a specific completed
 real run instead of the model's current run. This supports stage-by-stage
@@ -335,8 +379,8 @@ this section describes its place in the model lifecycle:
 kind: waldo-model-compose
 schema: 1
 
-# Optional. Omit this block to initialize a blank architecture. Use either
-# model or source, never both.
+# Optional. Omit this block to initialize a blank architecture. Use exactly one
+# of model, source, or merge (see MODEL-COMPOSE.md).
 base:
   model: llama-base
   # Optional assertion; WALDO always pins the resolved value into PLAN.json.
@@ -435,7 +479,12 @@ When `base.model` is present, WALDO selects its explicitly requested completed
 run or its latest completed run with real weights. If it has no such run, WALDO
 uses the model's verified pulled origin. WALDO pins the parent model ID, run ID,
 run BOM hash, weight hash, and size, then hard-links or copies trained parent
-weights into the destination as `base/model.safetensors`. `base.source` instead
+weights into the destination as `base/model.safetensors`. The new model holds
+the documents behind its base in `LINEAGE.json`, so the base can later be
+deleted without losing its history
+([ADR 0084](adr/0084-record-model-lineage.md)). A model composed before
+`LINEAGE.json` existed has none, so its history reaches only as far as its
+bases still exist. `base.source` instead
 accepts a pinned supported external source and uses the same verified importer
 as `model pull`. In every mode WALDO verifies artifacts and exact architecture
 equality, and a compose never mutates its base model.
@@ -691,9 +740,14 @@ waldo model gate conversation2 core-v1.bom.json core-v1.results.json core-v1.gat
 
 The evaluator-owned results file uses kind `openwaldo-evaluation-results`,
 schema 1, the evaluation BOM SHA-256, and a `results` array of metric/value
-pairs. The gate re-materializes every completed real training BOM, scans each
-corpus once for exact and fuzzy overlap, and fails promotion on contamination
-or threshold errors. Simulated runs can never pass this release gate.
+pairs. The gate scans every corpus in the model's training closure, inherited
+ones included, for exact and fuzzy overlap, and fails promotion on
+contamination or threshold errors. A model with incompletely recorded history
+cannot be gated, and simulated runs can never pass. That includes any model
+whose weights descend from one trained outside WALDO, such as a fine-tune or a
+merge of an open-weight Hugging Face model: what that base was trained on isn't
+recorded, so contamination can't be ruled out. Models trained from scratch, and
+those built on WALDO releases with a complete history, can be gated.
 
 Model composes never select MLX, PyTorch, TensorFlow, or TorchTitan. Before a
 run is written, the environment-aware resolver chooses an adapter and records
@@ -719,6 +773,24 @@ After a resume, `tokens_per_second` and `eta_seconds` are measured from the end 
 the first trained step, so neither replaying the record stream up to the checkpoint
 nor that step's one-time start-up cost distorts them. A progress row that lands on
 that first step reports 0 tokens/s and no ETA.
+
+On a laptop, `WALDO_GPU_THROTTLE` keeps MLX training cool and quiet: `0.25`
+caps training steps, optimizer updates, and held-out scoring to about 25% of
+wall-clock time, idling the GPU between them, and `model chat` generation
+likewise. It is the ceiling for the life of the worker. Under it,
+`waldo config set gpu.throttle` moves the budget while the worker runs, which
+rereads it at most every 30 seconds; `0` pauses at the next step, and says so,
+until the budget is raised again, and `waldo config unset gpu.throttle` returns
+to the ceiling:
+
+```bash
+WALDO_GPU_THROTTLE=0.5 waldo model train small core/books
+waldo config set gpu.throttle 0.25   # cooler, from another terminal
+waldo config set gpu.throttle 0      # pause
+waldo config unset gpu.throttle      # back to 0.5
+```
+
+Only the MLX workers throttle; PyTorch and TorchTitan ignore both settings.
 
 The MLX, PyTorch, and TorchTitan adapters embed their worker source in the
 WALDO binary while using the machine's explicit Python framework runtime. They

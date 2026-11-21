@@ -18,7 +18,7 @@ import (
 func TestMLXResolverSelectsFirstUsableRuntime(t *testing.T) {
 	architecture := json.RawMessage(`{"family":"decoder-transformer","vocabulary_size":259,"tokenizer":{"name":"byte","revision":"builtin-byte-schema-1"}}`)
 	resolver := MLXResolver{
-		OS: "darwin", Arch: "arm64", Candidates: []string{"missing", "mlx-python"},
+		OS: "darwin", Arch: "arm64", Candidates: []string{"missing", "/home/me/.venv/bin/mlx-python"},
 		Probe: func(_ context.Context, candidate string) (mlxProbe, error) {
 			if candidate == "missing" {
 				return mlxProbe{}, errors.New("not installed")
@@ -31,7 +31,7 @@ func TestMLXResolverSelectsFirstUsableRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend, ok := selection.Backend.(MLX)
-	if !ok || backend.Python != "mlx-python" || selection.Execution.Framework != "mlx" || selection.Execution.Accelerators[0].MemoryBytes != 128<<30 || !strings.Contains(selection.Execution.Runtime, "MLX 0.31.2") {
+	if !ok || backend.Python != "/home/me/.venv/bin/mlx-python" || selection.Execution.Framework != "mlx" || selection.Execution.Accelerators[0].MemoryBytes != 128<<30 || !strings.HasPrefix(selection.Execution.Runtime, "mlx-python; ") || !strings.Contains(selection.Execution.Runtime, "MLX 0.31.2") {
 		t.Fatalf("selection = %+v", selection)
 	}
 }
@@ -44,6 +44,7 @@ func TestMLXWorkerPublishesBestEvaluatedCheckpoint(t *testing.T) {
 	for _, expected := range []string{
 		`"model_id": self.begin["model_id"]`,
 		`state.get("model_id") != self.begin["model_id"]`,
+		`candidates = [evaluation for evaluation in candidates if evaluation["step"] == self.step_number]`,
 		`selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"])`,
 		`self.model.load_weights(selected_path)`,
 		`"selected_checkpoint": selection`,
