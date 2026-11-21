@@ -243,9 +243,10 @@ func validateStandardLlamaArchitecture(architecture model.Architecture, format s
 }
 
 // validatePortableTokenizerExport admits the tokenizers tokenization_openwaldo.py implements
-// exactly: the byte tokenizer, and a trained byte-BPE tokenizer carried as its artifact.
+// exactly: the byte tokenizer, and a trained byte-BPE tokenizer, by its current or legacy name,
+// carried as its artifact.
 func validatePortableTokenizerExport(architecture model.Architecture, format string) error {
-	if trained := architecture.Tokenizer.Artifact; architecture.Tokenizer.Name == waldotokenizer.TrainedName && trained != nil && uint64(trained.VocabularySize) == architecture.VocabularySize {
+	if trained := architecture.Tokenizer.Artifact; waldotokenizer.IsTrainedName(architecture.Tokenizer.Name) && trained != nil && uint64(trained.VocabularySize) == architecture.VocabularySize {
 		return nil
 	}
 	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {

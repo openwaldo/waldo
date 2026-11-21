@@ -8,6 +8,7 @@ package modelexport
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -115,7 +116,25 @@ print(json.dumps({"encoded": encoded, "converted": converted}))
 }
 
 func TestLlamaPackageExportsCarryTrainedBPETokenizer(t *testing.T) {
-	artifact, tokenizerPath := writeExportTokenizerFixture(t)
+	trained, trainedPath := writeExportTokenizerFixture(t)
+	// Models trained before the byte-BPE name carry the legacy waldo/bytepiece tokenizer.
+	legacy := waldotokenizer.Artifact{
+		Kind: waldotokenizer.TrainedKind, Schema: 1, Name: waldotokenizer.LegacyTrainedName,
+		VocabularySize: 260, PadID: 0, BOSID: 1, EOSID: 2,
+		TrainingInputSHA256: strings.Repeat("a", 64), CorpusBOMSHA256: strings.Repeat("b", 64), TrainingBytes: 5,
+		Pieces:   []string{base64.StdEncoding.EncodeToString([]byte("hello"))},
+		Revision: "sha256:a19305a3c90e4db82e983b31aef91ed7c615c280511ec24c1db766106fa20665",
+	}
+	for _, fixture := range []struct {
+		artifact      waldotokenizer.Artifact
+		tokenizerPath string
+	}{{trained, trainedPath}, {legacy, writeTokenizerFile(t, legacy)}} {
+		exportTrainedTokenizerPackages(t, fixture.artifact, fixture.tokenizerPath)
+	}
+}
+
+func exportTrainedTokenizerPackages(t *testing.T, artifact waldotokenizer.Artifact, tokenizerPath string) {
+	t.Helper()
 	root := t.TempDir()
 	tokenizerData, err := os.ReadFile(tokenizerPath)
 	if err != nil {
@@ -153,7 +172,7 @@ func TestLlamaPackageExportsCarryTrainedBPETokenizer(t *testing.T) {
 		if err := json.Unmarshal(data, &exported); err != nil {
 			t.Fatal(err)
 		}
-		if exported.Name != waldotokenizer.TrainedName || exported.Artifact == nil || !reflect.DeepEqual(*exported.Artifact, artifact) {
+		if exported.Name != artifact.Name || exported.Artifact == nil || !reflect.DeepEqual(*exported.Artifact, artifact) {
 			t.Fatalf("%s package tokenizer = %+v", format, exported.TokenizerSpec)
 		}
 		var configuration struct {
@@ -196,6 +215,12 @@ func writeExportTokenizerFixture(t *testing.T) (waldotokenizer.Artifact, string)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return artifact, writeTokenizerFile(t, artifact)
+}
+
+// writeTokenizerFile writes artifact as a model's runtime tokenizer.json.
+func writeTokenizerFile(t *testing.T, artifact waldotokenizer.Artifact) string {
+	t.Helper()
 	payload := exportTokenizerFixture{
 		Kind: "waldo-tokenizer", Schema: 1,
 		TokenizerSpec: training.TokenizerSpec{
@@ -211,5 +236,5 @@ func writeExportTokenizerFixture(t *testing.T) (waldotokenizer.Artifact, string)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return artifact, path
+	return path
 }
