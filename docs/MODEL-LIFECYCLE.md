@@ -100,8 +100,10 @@ Schema 1 initially accepts standard bias-free Llama weights with
 `OpenWALDOTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors. Pull
 also accepts the legacy `OpenWALDOByteTokenizer` class name used by older WALDO
 exports; both names identify the same byte tokenizer. That is the format
-produced by WALDO's Hugging Face export. Other tokenizers or architectural
-variants fail before publication rather than being numerically converted or
+produced by WALDO's Hugging Face export, which also carries a trained
+`waldo/byte-bpe` tokenizer as `openwaldo_tokenizer.json`; pull restores it into
+the architecture when its vocabulary size matches `config.json`. Other
+tokenizers or architectural variants fail before publication rather than being numerically converted or
 silently retokenized.
 
 A compose can use this same verified importer without first creating a visible
@@ -171,6 +173,15 @@ only the suffix that will be consumed. Legacy or unavailable caches retain the
 deterministic prefix-replay fallback. `RUN.json`
 records each attempt. A changed corpus, epoch count, profile, backend, or
 execution environment is a new run rather than an unsafe resume.
+
+A compose's `checkpoint_every` saves by steps. On MLX,
+`waldo config set training.checkpoint-minutes 30` also saves once 30 minutes of
+wall clock have passed since the last save, so a slow run still stops cheaply.
+The running worker rereads the setting at most every 30 seconds, counts a
+resume's minutes from its start, and saves only at the end of an optimizer step;
+a compose with `checkpoint_every: 0` gets no clock-saved checkpoints. Clock-saved
+checkpoints resume like any other but are not artifact-selection candidates
+unless held-out scoring lands on the same step.
 
 PyTorch and TorchTitan resumable checkpoints keep FP32 master weights even
 when the architecture declares a reduced portable `parameter_dtype`. This
@@ -258,15 +269,16 @@ failure modes, and consumer examples are in
 non-simulated run as a standalone Transformers package. WALDO rewrites only the Safetensors
 header: tensor bytes remain unchanged while names move to the standard Llama
 layout and container metadata identifies PyTorch. The package includes
-`architecture.py`, the schema-1 byte tokenizer implementation and
-configuration, `BOM.json`, and `EU-BOM.json`. The tokenizer is custom code, so
+`architecture.py`, the tokenizer implementation and configuration (the
+schema-1 byte tokenizer, or a trained `waldo/byte-bpe` tokenizer with its
+`openwaldo_tokenizer.json` artifact), `BOM.json`, and `EU-BOM.json`. The tokenizer is custom code, so
 Transformers callers load it with `trust_remote_code=True`; the model itself
 uses the standard Llama configuration. A model without a usable origin or real
 run is rejected rather than exporting simulated or incomplete artifacts.
 
 `--format mlx` emits the same standard Llama tensor names with Safetensors
 metadata for MLX, an executable binding to MLX-LM's Llama model, and the same
-explicit byte tokenizer. It is a separate package, not a second copy bundled
+explicit tokenizer. It is a separate package, not a second copy bundled
 into the Hugging Face export. Tensor data is again copied byte-for-byte; only
 the container header and surrounding runtime files differ.
 
@@ -303,6 +315,7 @@ waldo model chat small
 waldo model chat small "Once upon a time"
 printf 'Once upon a time' | waldo model chat small
 waldo --json model chat small "Once" --max-tokens 64 --temperature 0 --seed 7
+printf '"Once"\n"Linux is"\n' | waldo --json model chat small --prompts --temperature 0
 waldo model chat conversation --run-id <completed-run-id> --raw --temperature 0 "Linux is"
 waldo model chat conversation --run-id <interrupted-run-id> --checkpoint-step 12000 --raw "Linux is"
 ```
@@ -316,6 +329,9 @@ invalid UTF-8 bytes are escaped so model output cannot emit terminal control
 sequences. Redirected output is rendered once without cursor controls. JSON is
 one-shot and includes model and run identity, prompt, text, token count, finish
 reason, and generation duration.
+With `--prompts`, `--json` chat instead reads one JSON string prompt per
+standard-input line and writes one compact JSON result per line, so many
+prompts share a single model open and verification.
 
 `--run-id` selects the verified published artifact from a specific completed
 real run instead of the model's current run. This supports stage-by-stage
@@ -748,6 +764,24 @@ After a resume, `tokens_per_second` and `eta_seconds` are measured from the end 
 the first trained step, so neither replaying the record stream up to the checkpoint
 nor that step's one-time start-up cost distorts them. A progress row that lands on
 that first step reports 0 tokens/s and no ETA.
+
+On a laptop, `WALDO_GPU_THROTTLE` keeps MLX training cool and quiet: `0.25`
+caps training steps, optimizer updates, and held-out scoring to about 25% of
+wall-clock time, idling the GPU between them, and `model chat` generation
+likewise. It is the ceiling for the life of the worker. Under it,
+`waldo config set gpu.throttle` moves the budget while the worker runs, which
+rereads it at most every 30 seconds; `0` pauses at the next step, and says so,
+until the budget is raised again, and `waldo config unset gpu.throttle` returns
+to the ceiling:
+
+```bash
+WALDO_GPU_THROTTLE=0.5 waldo model train small core/books
+waldo config set gpu.throttle 0.25   # cooler, from another terminal
+waldo config set gpu.throttle 0      # pause
+waldo config unset gpu.throttle      # back to 0.5
+```
+
+Only the MLX workers throttle; PyTorch and TorchTitan ignore both settings.
 
 The MLX, PyTorch, and TorchTitan adapters embed their worker source in the
 WALDO binary while using the machine's explicit Python framework runtime. They

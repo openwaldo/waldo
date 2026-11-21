@@ -635,10 +635,24 @@ func resumableRun(inspection Inspection, stage Stage, parameters training.Resolv
 	if stage.Conversation != nil {
 		conversation = *stage.Conversation
 	}
-	if !resumableRunState(run, parameters) || bom.Stage != stage.Name || bom.StageType != stage.Type || bom.Objective != stage.Objective || !reflect.DeepEqual(bom.Conversation, conversation) || bom.CorpusBOMSHA256 != corpusHash || !equivalentResumeParameters(bom.Parameters, parameters) || bom.EvaluationSet == nil || !reflect.DeepEqual(*bom.EvaluationSet, evaluation) || !reflect.DeepEqual(bom.Execution, execution) {
+	if !resumableRunState(run, parameters) || bom.Stage != stage.Name || bom.StageType != stage.Type || bom.Objective != stage.Objective || !reflect.DeepEqual(bom.Conversation, conversation) || bom.CorpusBOMSHA256 != corpusHash || !equivalentResumeParameters(bom.Parameters, parameters) || bom.EvaluationSet == nil || !reflect.DeepEqual(*bom.EvaluationSet, evaluation) || !sameExecution(bom.Execution, execution) {
 		return 0, false
 	}
 	return index, true
+}
+
+// sameExecution ignores the interpreter's directory, which earlier runs recorded in Runtime.
+func sameExecution(recorded, current training.Execution) bool {
+	recorded.Runtime, current.Runtime = runtimeWithoutDirectory(recorded.Runtime), runtimeWithoutDirectory(current.Runtime)
+	return reflect.DeepEqual(recorded, current)
+}
+
+func runtimeWithoutDirectory(runtime string) string {
+	interpreter, rest, found := strings.Cut(runtime, "; ")
+	if !found {
+		return runtime
+	}
+	return filepath.Base(interpreter) + "; " + rest
 }
 
 func resumableRunState(run RunRecord, parameters training.ResolvedParameters) bool {
