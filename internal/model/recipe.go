@@ -403,21 +403,49 @@ func recordFilterPolicy(global *corpus.RecordFilter, selections []CorpusSelectio
 }
 
 func resolveSelectedPath(declared string, paths []string) (string, error) {
-	var resolved string
-	for _, actual := range paths {
-		logical := strings.TrimSuffix(strings.TrimSuffix(actual, ".yaml"), ".json")
-		if declared != actual && declared != logical {
-			continue
-		}
-		if resolved != "" {
-			return "", fmt.Errorf("corpus path %q resolves ambiguously", declared)
-		}
-		resolved = actual
+	resolved, matches := selectedPath(declared, paths)
+	if matches > 1 {
+		return "", fmt.Errorf("corpus path %q resolves ambiguously", declared)
 	}
-	if resolved == "" {
+	if matches == 0 {
 		return "", fmt.Errorf("corpus path %q is not in the resolved selection", declared)
 	}
 	return resolved, nil
+}
+
+// selectedPath matches a declared corpus to a selected path: exactly, or, for a path on disk
+// (absolute, ./, ../ or ~/), to the longest logical path it ends with. matches counts the best.
+func selectedPath(declared string, paths []string) (string, int) {
+	explicit := filepath.IsAbs(declared) || strings.HasPrefix(declared, "./") || strings.HasPrefix(declared, "../") || strings.HasPrefix(declared, "~/")
+	cleaned := "/" + filepath.ToSlash(filepath.Clean(declared))
+	if explicit {
+		// As the index resolves it: from the current directory, with ~ as the home directory.
+		absolute := declared
+		if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(declared, "~/") {
+			absolute = filepath.Join(home, declared[2:])
+		}
+		if absolute, err := filepath.Abs(absolute); err == nil {
+			cleaned = filepath.ToSlash(absolute)
+		}
+	}
+	resolved, best, matches := "", -1, 0
+	for _, actual := range paths {
+		logical := strings.TrimSuffix(strings.TrimSuffix(actual, ".yaml"), ".json")
+		length := -1
+		if declared == actual || declared == logical {
+			length = math.MaxInt
+		} else if explicit && (strings.HasSuffix(cleaned, "/"+logical) || strings.HasSuffix(cleaned, "/"+actual)) {
+			length = len(logical)
+		}
+		if length < 0 || length < best {
+			continue
+		}
+		if length > best {
+			resolved, best, matches = actual, length, 0
+		}
+		matches++
+	}
+	return resolved, matches
 }
 
 type ArchitectureForecast struct {

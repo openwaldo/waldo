@@ -157,7 +157,7 @@ func resolveCorpusWeights(declared map[string]uint64, paths []string) (map[strin
 	for _, path := range paths {
 		logical := strings.TrimSuffix(strings.TrimSuffix(path, ".yaml"), ".json")
 		for name, weight := range declared {
-			if name != path && name != logical {
+			if match, matches := selectedPath(name, paths); match != path || matches != 1 {
 				continue
 			}
 			if _, exists := resolved[path]; exists || used[name] {

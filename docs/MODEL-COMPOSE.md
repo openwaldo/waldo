@@ -407,8 +407,13 @@ does not change model structure.
 | `parameters` | yes | object | Declares the portable training budget and controls. |
 
 Relative corpus values are logical paths beneath the selected WALDO index.
-Absolute paths may identify another index checkout. Values select indexed
-corpora, never raw source directories or exported corpus files.
+Absolute paths may identify another index checkout. A value written as a path
+on disk (absolute, or starting with `./`, `../`, or `~/`) resolves to the
+longest logical path in the index that it ends with, so per-corpus filters and
+weights apply to it as to its logical path. A stage's first corpus resolves
+relative paths against the current directory; later corpora resolve them against
+that corpus's index root. Values select indexed corpora, never raw source
+directories or exported corpus files.
 
 Before downloading any shard, `model train` refreshes the selected index and
 checks every corpus path in every stage. A failed sanity check reports all
@@ -488,7 +493,7 @@ corpora:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `path` | yes in object form | Logical index path. |
+| `path` | yes in object form | Logical index path, or a path on disk that ends with one. |
 | `weight` | only for `causal-pretrain-weighted` | Positive integer relative token exposure. It replaces the legacy map entry for this corpus. |
 | `filter` | no | Record filter local to this corpus. |
 | `filter.main_content` | no | Requires the canonical main-content boolean to equal the declared value. Normally `true`; older schemas default to `true`. |
