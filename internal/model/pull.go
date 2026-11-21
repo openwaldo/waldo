@@ -6,6 +6,7 @@
 package model
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -409,6 +410,52 @@ func loadHuggingFaceArchitecture(directory string) (Architecture, error) {
 	return architecture, nil
 }
 
+// exactKeys refuses JSON whose object keys repeat or aren't plain lowercase ASCII: encoding/json
+// matches keys with Unicode case folding and merges repeats, while the package's Python reads them exactly.
+func exactKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	var value func() error
+	value = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		switch token {
+		case json.Delim('{'):
+			seen := map[string]bool{}
+			for decoder.More() {
+				key, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				name := key.(string)
+				if seen[name] {
+					return fmt.Errorf("key %q appears twice", name)
+				}
+				if strings.IndexFunc(name, func(r rune) bool { return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' }) >= 0 {
+					return fmt.Errorf("key %q isn't plain lowercase ASCII", name)
+				}
+				seen[name] = true
+				if err := value(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		case json.Delim('['):
+			for decoder.More() {
+				if err := value(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		}
+		return nil
+	}
+	return value()
+}
+
 // downloadedTokenizer is the package's tokenizer: the trained artifact WALDO exports beside
 // a trained-tokenizer model, or the byte tokenizer.
 func downloadedTokenizer(directory string, vocabulary uint64) (Tokenizer, error) {
@@ -426,7 +473,13 @@ func downloadedTokenizer(directory string, vocabulary uint64) (Tokenizer, error)
 		Schema int    `json:"schema"`
 		training.TokenizerSpec
 	}
-	if err := readJSON(filepath.Join(directory, TokenizerArtifactFile), &artifact); err == nil && artifact.Kind == "waldo-tokenizer" && waldotokenizer.IsTrainedName(artifact.Name) {
+	data, err := os.ReadFile(filepath.Join(directory, TokenizerArtifactFile))
+	if err == nil {
+		if err = exactKeys(data); err == nil {
+			err = json.Unmarshal(data, &artifact)
+		}
+	}
+	if err == nil && artifact.Kind == "waldo-tokenizer" && waldotokenizer.IsTrainedName(artifact.Name) {
 		if config.TokenizerClass != HuggingFaceTokenizerClass || config.BOS != "<bos>" || config.EOS != "<eos>" || config.PAD != "<pad>" {
 			return Tokenizer{}, fmt.Errorf("download of trained tokenizer %s requires %s with <bos>, <eos>, and <pad>", artifact.Name, HuggingFaceTokenizerClass)
 		}

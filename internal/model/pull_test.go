@@ -183,6 +183,58 @@ func TestPullKeepsAnExportedTrainedTokenizer(t *testing.T) {
 	}
 }
 
+// A package naming two tokenizers under keys Go's JSON folds together, or a repeated key, would have
+// WALDO record one tokenizer while the package's Python code runs the other.
+func TestPullRefusesATokenizerFileWithTwoTokenizers(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	train := func(text string) waldotokenizer.Artifact {
+		artifact, err := waldotokenizer.TrainByteBPE([]waldotokenizer.Sample{{ID: "one", Text: strings.Repeat(text, 40)}}, 265, 4096, strings.Repeat("a", 64))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return artifact
+	}
+	first, second := train("fn main() { println!(\"hello\"); } "), train("def main():\n    print('hello')\n")
+	if first.VocabularySize != second.VocabularySize || reflect.DeepEqual(first, second) {
+		t.Fatal("fixture: the two tokenizers must differ at one vocabulary size")
+	}
+	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: uint64(first.VocabularySize), HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: first.Name, Revision: first.Revision, Artifact: &first}}
+	exported, err := json.Marshal(struct {
+		Kind   string `json:"kind"`
+		Schema int    `json:"schema"`
+		training.TokenizerSpec
+	}{"waldo-tokenizer", 1, training.TokenizerSpec{Name: second.Name, Revision: second.Revision, VocabularySize: second.VocabularySize, PadID: 0, BOSID: 1, EOSID: 2, Artifact: &first}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Under "Artifact", Python's json reads "artifact", the first; Go keeps the last, which the top-level fields describe.
+	other, err := json.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := strings.Repeat("e", 40)
+	for _, key := range []string{"Artifact", "artifact"} {
+		files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
+		files[TokenizerArtifactFile] = append(append(append(exported[:len(exported)-1:len(exported)-1], []byte(`,"`+key+`":`)...), other...), '}')
+		puller := Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: &http.Client{Transport: huggingFaceTransport(t, files, revision)}}
+		if _, err := puller.Pull(t.Context(), "two", "huggingface://org/tiny@"+revision); err == nil || !strings.Contains(err.Error(), TokenizerArtifactFile) {
+			t.Fatalf("a second tokenizer under %q: pull error = %v", key, err)
+		}
+	}
+}
+
+// Keys Go's JSON folds onto a field name but Python reads as another key are refused, as are repeats.
+func TestExactKeysRefusesKeysGoFoldsTogether(t *testing.T) {
+	for _, document := range []string{`{"artifact":{"merge\u017f":[]}}`, `{"\u212aind":"x"}`, `{"a":{"b":1,"b":2}}`, `{"Kind":"x"}`} {
+		if exactKeys([]byte(document)) == nil {
+			t.Fatalf("exactKeys accepted %s", document)
+		}
+	}
+	if err := exactKeys([]byte(`{"kind":"waldo-tokenizer","artifact":{"merges":[{"left":1,"right":2}],"pieces":["aGVsbG8="],"pad_id":0}}`)); err != nil {
+		t.Fatalf("exactKeys refused WALDO's own keys: %v", err)
+	}
+}
+
 func TestComposeAcquiresPinnedHuggingFaceBaseWithoutVisibleModel(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
