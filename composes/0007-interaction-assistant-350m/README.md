@@ -73,6 +73,18 @@ go run ./cmd/waldo/ index ingest \
   ~/.waldo/index/post-train/sft/interaction-formatting-v1
 ```
 
+The full view ingests the source repository's two-turn `prompt`/`response`
+projection with the `dialogue-pair` adapter. That is the representation of the
+published `post-train/sft/interaction-contract-v1` shard: `waldo index export
+--format jsonl` of this locally prepared corpus and of the published shard
+produce the same 45,000 records (JSONL SHA-256
+`b46d3b97237e4df1774ba5765dfb4dba150ab973926a4a6ff265c1d4918f0450`). The typed
+multi-turn `messages`, including tool calls, stay in the source rows and are
+not part of this rung's training representation. The local Parquet object has
+the published shard's size and differs from it only in the `plan_sha256` of
+the embedded shard BOM, so its container SHA-256 is not the published one. The
+formatting view is unchanged.
+
 ## Training and evaluation
 
 The pinned rung-0006 parent must exist in the configured model store.
