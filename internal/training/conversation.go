@@ -82,8 +82,16 @@ func (transform ConversationTransform) render(conversation record.Conversation, 
 	}
 	var tokens []int
 	var mask []bool
+	var encodeErr error
 	appendPart := func(value string, supervised bool) {
-		part := codec.Encode(value)
+		if encodeErr != nil {
+			return
+		}
+		part, err := encodeChecked(codec, value)
+		if err != nil {
+			encodeErr = err
+			return
+		}
 		tokens = append(tokens, part...)
 		for range part {
 			mask = append(mask, supervised)
@@ -112,6 +120,9 @@ func (transform ConversationTransform) render(conversation record.Conversation, 
 			appendPart("<|im_end|>\n", supervised)
 		}
 	}
+	if encodeErr != nil {
+		return nil, nil, encodeErr
+	}
 	if len(tokens) == 0 {
 		return nil, nil, fmt.Errorf("conversation transformation produced no tokens")
 	}
@@ -125,7 +136,7 @@ func tokenizeRecord(record Record, codec TokenCodec, objective string, transform
 	if record.Conversation != nil {
 		tokens, mask, err := transform.render(*record.Conversation, codec)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("record %s: %w", record.SelectionID, err)
 		}
 		if objective == "causal-language-modeling" {
 			for index := range mask {
@@ -148,7 +159,10 @@ func tokenizeRecord(record Record, codec TokenCodec, objective string, transform
 	if objective == "assistant-response-modeling" {
 		return nil, nil, fmt.Errorf("assistant-response-modeling requires structured conversation records")
 	}
-	tokens := codec.Encode(record.Text)
+	tokens, err := encodeChecked(codec, record.Text)
+	if err != nil {
+		return nil, nil, fmt.Errorf("record %s: %w", record.SelectionID, err)
+	}
 	mask := make([]bool, len(tokens)+1)
 	for index := range mask {
 		mask[index] = true

@@ -6,6 +6,7 @@
 package modelweights
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -35,6 +36,14 @@ func Inspect(path string) (map[string]Descriptor, map[string]string, error) {
 		return nil, nil, err
 	}
 	defer file.Close()
+	return inspectFile(file)
+}
+
+func inspectFile(file *os.File) (map[string]Descriptor, map[string]string, error) {
+	path := file.Name()
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, nil, err
+	}
 	header, dataStart, err := readHeader(file)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: %w", path, err)
@@ -61,7 +70,7 @@ func Inspect(path string) (map[string]Descriptor, map[string]string, error) {
 		if err := json.Unmarshal(raw, &descriptor); err != nil {
 			return nil, nil, fmt.Errorf("%s tensor %s: %w", path, name, err)
 		}
-		if len(descriptor.DataOffsets) != 2 || descriptor.DataOffsets[1] < descriptor.DataOffsets[0] || descriptor.DataOffsets[1] > dataBytes {
+		if descriptor.Shape == nil || len(descriptor.DataOffsets) != 2 || descriptor.DataOffsets[1] < descriptor.DataOffsets[0] || descriptor.DataOffsets[1] > dataBytes {
 			return nil, nil, fmt.Errorf("%s tensor %s has invalid data offsets", path, name)
 		}
 		expected, err := tensorBytes(descriptor)
@@ -130,7 +139,7 @@ func NormalizeHuggingFace(sources []string, destination string) (map[string]Desc
 			if err := json.Unmarshal(raw, &descriptor); err != nil {
 				return nil, fmt.Errorf("%s tensor %s: %w", path, sourceName, err)
 			}
-			if len(descriptor.DataOffsets) != 2 || descriptor.DataOffsets[1] < descriptor.DataOffsets[0] {
+			if descriptor.Shape == nil || len(descriptor.DataOffsets) != 2 || descriptor.DataOffsets[1] < descriptor.DataOffsets[0] {
 				return nil, fmt.Errorf("%s tensor %s has invalid data offsets", path, sourceName)
 			}
 			if descriptor.DataOffsets[1] > dataBytes {
@@ -251,16 +260,51 @@ func readHeader(file *os.File) (map[string]json.RawMessage, int64, error) {
 		return nil, 0, fmt.Errorf("read Safetensors header length: %w", err)
 	}
 	headerLength := binary.LittleEndian.Uint64(length[:])
-	if headerLength == 0 || headerLength > 1<<30 {
+	if headerLength == 0 || headerLength > 100_000_000 {
 		return nil, 0, fmt.Errorf("invalid Safetensors header length %d", headerLength)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	if info.Size() < 8 || headerLength > uint64(info.Size()-8) {
+		return nil, 0, fmt.Errorf("Safetensors header exceeds file size")
 	}
 	header := make([]byte, headerLength)
 	if _, err := io.ReadFull(file, header); err != nil {
 		return nil, 0, fmt.Errorf("read Safetensors header: %w", err)
 	}
-	var decoded map[string]json.RawMessage
-	if err := json.Unmarshal(header, &decoded); err != nil {
-		return nil, 0, fmt.Errorf("decode Safetensors header: %w", err)
+	if len(header) == 0 || header[0] != '{' {
+		return nil, 0, fmt.Errorf("Safetensors header must be an object")
+	}
+	decoded := map[string]json.RawMessage{}
+	decoder := json.NewDecoder(bytes.NewReader(header))
+	if _, err := decoder.Token(); err != nil {
+		return nil, 0, err
+	}
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return nil, 0, err
+		}
+		name, ok := key.(string)
+		if !ok {
+			return nil, 0, fmt.Errorf("invalid tensor name")
+		}
+		if _, exists := decoded[name]; exists {
+			return nil, 0, fmt.Errorf("duplicate tensor %q", name)
+		}
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return nil, 0, err
+		}
+		decoded[name] = raw
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, 0, err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return nil, 0, fmt.Errorf("trailing Safetensors header data")
 	}
 	return decoded, int64(8 + headerLength), nil
 }

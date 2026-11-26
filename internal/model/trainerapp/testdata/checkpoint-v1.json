@@ -1,0 +1,35 @@
+{
+  "kind": "waldo-trainer-checkpoint",
+  "schema": 1,
+  "identity": {
+    "run_bom_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "trainer_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tokenizer_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "environment_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "begin_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "parameters_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "execution": {
+    "micro": 2
+  },
+  "world": {
+    "nodes": 1,
+    "node_rank": 0,
+    "processes_per_node": 1,
+    "world_size": 1
+  },
+  "step": 1,
+  "tokens": 4,
+  "consumption": {
+    "books": 4
+  },
+  "files": [
+    {
+      "path": "step-1/runtime.pkl",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "bytes": 123,
+      "role": "resume-state",
+      "format": "pickle"
+    }
+  ]
+}
