@@ -20,6 +20,11 @@ The run BOM pins the selection algorithm, seed, record count, selected-model
 token targets, content bytes, and digest of the ordered identities. Selected
 records are excluded from every training epoch.
 
+The seed that selects held-out records is the training seed unless a stage
+declares `evaluation_seed`, so runs that shuffle differently can hold out the
+same records and compare their held-out loss. The run BOM pins whichever seed
+selected them.
+
 Evaluation uses the model's configured tokenizer and per-record EOS packing.
 The worker records no-gradient held-out loss and perplexity at the resolved
 cadence.

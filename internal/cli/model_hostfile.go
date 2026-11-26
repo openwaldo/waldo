@@ -671,9 +671,15 @@ func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWor
 		host: host, rank: rank, stdin: stdin, command: command,
 		ready: make(chan hostfileStageReady, 1), done: make(chan struct{}),
 	}
-	go session.copyWorkerStdout(worker, stdout)
+	copied := make(chan struct{})
+	go func() {
+		session.copyWorkerStdout(worker, stdout)
+		close(copied)
+	}()
 	go session.copyWorkerOutput(host, stderr)
 	go func() {
+		// Wait closes stdout, so an acknowledgement must be read into ready before done closes.
+		<-copied
 		worker.err = command.Wait()
 		close(worker.done)
 		if worker.err != nil && session.ctx.Err() == nil {
@@ -788,35 +794,37 @@ func (session *hostfileSession) publish(plan model.MultiNodePlan) error {
 		}
 	}
 	for _, worker := range session.workers {
-		timer := time.NewTimer(hostfileStageReadyTimeout)
-		select {
-		case ready := <-worker.ready:
-			if !timer.Stop() {
-				<-timer.C
-			}
-			if ready.Schema != 1 || ready.RunID != plan.RunID || ready.Stage != plan.Stage || ready.StageOrdinal != plan.StageOrdinal || ready.StageCount != plan.StageCount {
-				_ = rendezvousListener.Close()
-				return fmt.Errorf("host %s acknowledged unexpected stage plan: schema %d, run %q, stage %q (%d/%d); expected schema 1, run %q, stage %q (%d/%d)", worker.host, ready.Schema, ready.RunID, ready.Stage, ready.StageOrdinal, ready.StageCount, plan.RunID, plan.Stage, plan.StageOrdinal, plan.StageCount)
-			}
-		case <-worker.done:
-			if !timer.Stop() {
-				<-timer.C
-			}
+		if err := session.awaitStageReady(worker, plan); err != nil {
 			_ = rendezvousListener.Close()
-			return fmt.Errorf("host %s exited before acknowledging stage %d/%d: %v", worker.host, plan.StageOrdinal, plan.StageCount, worker.err)
-		case <-session.ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
-			_ = rendezvousListener.Close()
-			return fmt.Errorf("host %s did not acknowledge stage %d/%d: %w", worker.host, plan.StageOrdinal, plan.StageCount, session.ctx.Err())
-		case <-timer.C:
-			_ = rendezvousListener.Close()
-			return fmt.Errorf("host %s did not acknowledge stage %d/%d within %s; verify that the host is reachable and its launcher is still running", worker.host, plan.StageOrdinal, plan.StageCount, hostfileStageReadyTimeout)
+			return err
 		}
 	}
 	if err := rendezvousListener.Close(); err != nil {
 		return fmt.Errorf("release rank 0 rendezvous preflight for stage %d/%d: %w", plan.StageOrdinal, plan.StageCount, err)
+	}
+	return nil
+}
+
+// awaitStageReady waits for worker to acknowledge plan; one that acknowledged and then exited counts.
+func (session *hostfileSession) awaitStageReady(worker *hostfileWorker, plan model.MultiNodePlan) error {
+	timer := time.NewTimer(hostfileStageReadyTimeout)
+	defer timer.Stop()
+	var ready hostfileStageReady
+	select {
+	case ready = <-worker.ready:
+	case <-worker.done:
+		select {
+		case ready = <-worker.ready:
+		default:
+			return fmt.Errorf("host %s exited before acknowledging stage %d/%d: %v", worker.host, plan.StageOrdinal, plan.StageCount, worker.err)
+		}
+	case <-session.ctx.Done():
+		return fmt.Errorf("host %s did not acknowledge stage %d/%d: %w", worker.host, plan.StageOrdinal, plan.StageCount, session.ctx.Err())
+	case <-timer.C:
+		return fmt.Errorf("host %s did not acknowledge stage %d/%d within %s; verify that the host is reachable and its launcher is still running", worker.host, plan.StageOrdinal, plan.StageCount, hostfileStageReadyTimeout)
+	}
+	if ready.Schema != 1 || ready.RunID != plan.RunID || ready.Stage != plan.Stage || ready.StageOrdinal != plan.StageOrdinal || ready.StageCount != plan.StageCount {
+		return fmt.Errorf("host %s acknowledged unexpected stage plan: schema %d, run %q, stage %q (%d/%d); expected schema 1, run %q, stage %q (%d/%d)", worker.host, ready.Schema, ready.RunID, ready.Stage, ready.StageOrdinal, ready.StageCount, plan.RunID, plan.Stage, plan.StageOrdinal, plan.StageCount)
 	}
 	return nil
 }

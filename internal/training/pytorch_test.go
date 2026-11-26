@@ -18,7 +18,7 @@ import (
 func TestPyTorchResolverSelectsFirstUsableRuntime(t *testing.T) {
 	architecture := json.RawMessage(`{"family":"decoder-transformer","vocabulary_size":259,"tokenizer":{"name":"byte","revision":"builtin-byte-schema-1"}}`)
 	resolver := PyTorchResolver{
-		OS: "linux", Arch: "amd64", Candidates: []string{"missing", "torch-python"},
+		OS: "linux", Arch: "amd64", Candidates: []string{"missing", "/home/me/.venv/bin/torch-python"},
 		Probe: func(_ context.Context, candidate string) (pyTorchProbe, error) {
 			if candidate == "missing" {
 				return pyTorchProbe{}, errors.New("not installed")
@@ -34,7 +34,7 @@ func TestPyTorchResolverSelectsFirstUsableRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend, ok := selection.Backend.(PyTorch)
-	if !ok || backend.Python != "torch-python" || backend.Device != "cuda" || selection.Execution.Framework != BackendPyTorch || selection.Execution.Accelerators[0].Manufacturer != "NVIDIA" || !strings.Contains(selection.Execution.Runtime, "PyTorch 2.8.0") {
+	if !ok || backend.Python != "/home/me/.venv/bin/torch-python" || backend.Device != "cuda" || selection.Execution.Framework != BackendPyTorch || selection.Execution.Accelerators[0].Manufacturer != "NVIDIA" || !strings.HasPrefix(selection.Execution.Runtime, "torch-python; ") || !strings.Contains(selection.Execution.Runtime, "PyTorch 2.8.0") {
 		t.Fatalf("selection = %+v", selection)
 	}
 }

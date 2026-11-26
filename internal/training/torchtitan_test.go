@@ -18,7 +18,7 @@ import (
 func TestTorchTitanResolverRecordsEveryVisibleAccelerator(t *testing.T) {
 	architecture := json.RawMessage(`{"family":"decoder-transformer","vocabulary_size":259,"tokenizer":{"name":"byte","revision":"builtin-byte-schema-1"}}`)
 	resolver := TorchTitanResolver{
-		OS: "linux", Arch: "amd64", Candidates: []string{"missing", "titan-python"},
+		OS: "linux", Arch: "amd64", Candidates: []string{"missing", "/home/me/.venv/bin/titan-python"},
 		Probe: func(_ context.Context, candidate string) (torchTitanProbe, error) {
 			if candidate == "missing" {
 				return torchTitanProbe{}, errors.New("not installed")
@@ -37,7 +37,7 @@ func TestTorchTitanResolverRecordsEveryVisibleAccelerator(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend, ok := selection.Backend.(TorchTitan)
-	if !ok || backend.LocalProcs != 2 || selection.Execution.WorldSize != 2 || selection.Execution.Nodes != 1 || len(selection.Execution.Accelerators) != 2 || !selection.Backend.Descriptor().Capabilities.Distributed || !strings.Contains(selection.Execution.Runtime, "TorchTitan 0.2.2") {
+	if !ok || backend.LocalProcs != 2 || selection.Execution.WorldSize != 2 || selection.Execution.Nodes != 1 || len(selection.Execution.Accelerators) != 2 || !selection.Backend.Descriptor().Capabilities.Distributed || !strings.HasPrefix(selection.Execution.Runtime, "titan-python; ") || !strings.Contains(selection.Execution.Runtime, "TorchTitan 0.2.2") {
 		t.Fatalf("selection = %+v", selection)
 	}
 }

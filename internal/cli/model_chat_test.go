@@ -209,3 +209,25 @@ func (session *chatSession) Generate(_ context.Context, prompt string, _ inferen
 }
 
 func (*chatSession) Close() error { return nil }
+
+func TestPromptsChatAnswersEachLineAsOneShotJSON(t *testing.T) {
+	session := &chatSession{data: []byte("ok")}
+	opened := inference.Opened{Description: inference.Description{Model: "foo"}, Session: session}
+	previous := modelChatInput
+	modelChatInput = strings.NewReader("\"first\"\n\n\"second line\\nwith a break\"\n")
+	defer func() { modelChatInput = previous }()
+	var output bytes.Buffer
+	if err := runPromptsChat(Context{Execution: context.Background(), JSON: true}, opened, model.Interaction{}, inference.Options{MaxTokens: 2, Temperature: 0, TopP: 1}, &output); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 2 || len(session.prompts) != 2 || session.prompts[1] != "second line\nwith a break" || !strings.Contains(lines[0], `"prompt":"first"`) {
+		t.Fatalf("lines = %q, prompts = %#v", lines, session.prompts)
+	}
+	for input, want := range map[string]string{"\"ok\"\nnot json\n": "line 2", "null\n": "line 1"} {
+		modelChatInput = strings.NewReader(input)
+		if err := runPromptsChat(Context{Execution: context.Background(), JSON: true}, opened, model.Interaction{}, inference.Options{MaxTokens: 2, Temperature: 0, TopP: 1}, &output); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%q: error %v, want %s", input, err, want)
+		}
+	}
+}

@@ -153,7 +153,8 @@ func runModelEUGPAIBOM(context Context, options modelBOMOptions, stdout, stderr 
 		}
 		provider = &profile
 	}
-	report, err := disclosure.BuildEUGPAIReport(inspection, provider, disclosure.ReleaseFromModel(inspection), time.Now())
+	history := model.TrainingHistory(root, inspection)
+	report, err := disclosure.BuildEUGPAIReport(inspection, history, provider, disclosure.ReleaseFromModel(inspection, history), time.Now())
 	if err != nil {
 		return err
 	}

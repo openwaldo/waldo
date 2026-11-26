@@ -67,8 +67,8 @@ class RateWindow:
         return progress_estimate(step, target_steps, step - self.step, tokens - self.tokens, now - self.started)
 
 
-# WALDO_GPU_THROTTLE=0.25 caps training to ~25% of wall-clock time; GPU alternates between
-# full-speed and idle. Applies only to the MLX worker.
+# WALDO_GPU_THROTTLE=0.25 caps training steps, optimizer updates, and held-out scoring to ~25% of
+# wall-clock time, as the MLX chat worker does generation; the GPU alternates between full speed and idle.
 def read_gpu_throttle():
     try:
         value = float(os.environ.get("WALDO_GPU_THROTTLE") or 1)
@@ -79,6 +79,65 @@ def read_gpu_throttle():
         return 1
     return value
 GPU_THROTTLE = read_gpu_throttle()
+
+
+# The waldo config, for settings `waldo config set` may change while the worker runs.
+def config_path():
+    # Join runs workers under its own config; live settings come from the one `waldo config set` changes.
+    if os.environ.get("WALDO_LIVE_CONFIG"):
+        return os.environ["WALDO_LIVE_CONFIG"]
+    if os.environ.get("WALDO_CONFIG"):
+        return os.environ["WALDO_CONFIG"]
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/waldo/config.json")
+    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "waldo", "config.json")
+
+
+live_config = {"read": -math.inf, "value": {}}
+
+
+def live_setting(section, key):
+    """A value from the waldo config, re-read at most every 30 seconds while the worker runs."""
+    now = time.monotonic()
+    if now - live_config["read"] >= 30:
+        live_config["read"] = now
+        try:
+            with open(config_path(), encoding="utf-8") as file:
+                live_config["value"] = json.load(file)
+        except (OSError, ValueError):
+            live_config["value"] = {}
+    configured = live_config["value"].get(section) if isinstance(live_config["value"], dict) else None
+    return configured.get(key) if isinstance(configured, dict) else None
+
+
+# checkpoint_due saves every `every` steps, and also once `minutes` of wall clock have passed since
+# the last save (training.checkpoint-minutes), so slow training still stops cheaply.
+def checkpoint_due(step, every, saved_at, now, minutes):
+    if every <= 0:
+        return False
+    return step % every == 0 or (isinstance(minutes, (int, float)) and minutes > 0 and now - saved_at >= minutes * 60)
+
+
+# WALDO_GPU_THROTTLE is the ceiling; `waldo config set gpu.throttle` moves the live budget under it.
+def live_gpu_throttle():
+    configured = live_setting("gpu", "throttle")
+    if isinstance(configured, (int, float)) and 0 <= configured <= 1:
+        return min(configured, GPU_THROTTLE)
+    return GPU_THROTTLE
+
+
+# idle_after sleeps so GPU work since started is the live budget's share of wall-clock time; 0 pauses.
+def idle_after(started):
+    elapsed = time.perf_counter() - started
+    throttle = live_gpu_throttle()
+    if throttle == 0:
+        emit("event", event={"kind": "log", "message": "paused: gpu.throttle is 0 until `waldo config set gpu.throttle` raises it"})
+        while throttle == 0:
+            time.sleep(30)
+            throttle = live_gpu_throttle()
+        emit("event", event={"kind": "log", "message": f"resumed at gpu.throttle {throttle}"})
+    if throttle < 1:
+        time.sleep(elapsed * (1 / throttle - 1))
 
 
 # WALDO_PROGRESS_HEARTBEAT_SECONDS is how long a run may go without a progress line before the
@@ -299,6 +358,7 @@ class Trainer:
         self.target_steps = self.parameters["steps"]
         self.step_number = 0
         self.replay_micro_batches = 0
+        self.saved_at = time.monotonic()  # a resume counts its minutes from here, as a fresh run does
         self.consumed_tokens = 0
         self.token_buffer = []
         self.loss_buffer = []
@@ -471,8 +531,6 @@ class Trainer:
         mx.random.seed(self.parameters["seed"] ^ micro_seed)
         loss, gradients = self.loss_and_grad(self.model, inputs, targets, mask)
         mx.eval(loss, gradients)
-        if GPU_THROTTLE < 1:
-            time.sleep((time.perf_counter() - step_started) * (1 / GPU_THROTTLE - 1))
         valid_tokens = int(mask.sum().item())
         if not math.isfinite(float(loss.item())):
             raise NumericalIntegrityError(f"non-finite training loss at optimizer step {next_step}; no optimizer update was applied")
@@ -490,6 +548,7 @@ class Trainer:
         self.batch = []
         self.accumulation_number += 1
         self.accumulated_compute_seconds += max(time.perf_counter() - step_started, 1e-9)
+        idle_after(step_started)
         if self.accumulation_number < self.gradient_accumulation_steps and not final:
             self.last_step_finished = time.perf_counter()
             return
@@ -497,6 +556,7 @@ class Trainer:
         averaged_gradients = tree_map(lambda gradient: gradient / self.accumulated_tokens, self.accumulated_gradients)
         # Validate every optimizer update before mutating model or optimizer
         # state. Delayed sampling can let one bad gradient poison a long run.
+        checked_started = time.perf_counter()
         squared_norm = mx.array(0.0)
         for _, gradient in tree_flatten(averaged_gradients):
             squared_norm = squared_norm + mx.sum(gradient.astype(mx.float32) ** 2)
@@ -509,6 +569,7 @@ class Trainer:
         self.optimizer.update(self.model, averaged_gradients)
         mx.eval(self.model.parameters(), self.optimizer.state)
         self.accumulated_compute_seconds += max(time.perf_counter() - update_started, 1e-9)
+        idle_after(checked_started)
         loss_value = self.accumulated_loss_sum / self.accumulated_tokens
         valid_tokens = self.accumulated_tokens
         step_seconds = max(self.accumulated_compute_seconds, 1e-9)
@@ -554,8 +615,9 @@ class Trainer:
         )
         if evaluate_due:
             self.record_evaluation(loss_value)
-        checkpoint_every = self.parameters["checkpoint_every"]
-        if checkpoint_every > 0 and self.step_number % checkpoint_every == 0 and not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints):
+        due = checkpoint_due(self.step_number, self.parameters["checkpoint_every"], self.saved_at, time.monotonic(),
+                             live_setting("training", "checkpoint_minutes"))
+        if due and not any(checkpoint["step"] == self.step_number for checkpoint in self.checkpoints):
             self.save_checkpoint()
         self.last_step_finished = time.perf_counter()
 
@@ -577,6 +639,7 @@ class Trainer:
         )
 
     def save_checkpoint(self):
+        self.saved_at = time.monotonic()
         name = f"checkpoints/step-{self.step_number:08d}"
         path = os.path.join(self.artifact_directory, *name.split("/"))
         temporary = path + f".tmp-{os.getpid()}"
@@ -672,6 +735,7 @@ class Trainer:
         total_loss = 0.0
         total_tokens = 0.0
         for offset in range(0, len(self.evaluation_sequences), self.batch_size):
+            batch_started = time.perf_counter()
             batch = self.evaluation_sequences[offset : offset + self.batch_size]
             tokens = mx.array([item[0] for item in batch], dtype=mx.int32)
             mask = mx.array([item[1] for item in batch], dtype=mx.float32)
@@ -682,6 +746,7 @@ class Trainer:
             loss_sum = (losses * mask).sum()
             token_count = mask.sum()
             mx.eval(loss_sum, token_count)
+            idle_after(batch_started)
             total_loss += float(loss_sum.item())
             total_tokens += float(token_count.item())
         self.model.train()
@@ -723,13 +788,36 @@ class Trainer:
             },
         )
 
-    def finish(self):
+    def verify_evaluation_stream(self):
         evaluation_set = self.begin["evaluation_set"]
         if self.evaluation_record_count != evaluation_set["records"] or self.evaluation_token_targets != evaluation_set["token_targets"]:
             raise ValueError(
                 f"evaluation stream has {self.evaluation_record_count} records and {self.evaluation_token_targets} targets; "
                 f"run BOM pins {evaluation_set['records']} records and {evaluation_set['token_targets']} targets"
             )
+
+    def evaluate_only(self):
+        """Scores the initialization weights on the held-out records; trains and writes nothing."""
+        self.verify_evaluation_stream()
+        if not self.evaluation_sequences:
+            raise ValueError("evaluate-only run has no held-out records")
+        self.record_evaluation(None)
+        emit(
+            "complete",
+            observation={
+                "simulated": False,
+                "steps": 0,
+                "consumed_tokens": 0,
+                "checkpoints": [],
+                "evaluations": self.evaluations,
+                "selected_checkpoint": None,
+                "artifacts": [],
+                "consumption": [],
+            },
+        )
+
+    def finish(self):
+        self.verify_evaluation_stream()
         if self.step_number < self.target_steps and len(self.token_buffer) > 1:
             target_mask = self.loss_buffer[1 : self.sequence_length + 1]
             self.add_sequence(self.token_buffer[: self.sequence_length + 1], target_mask, self.corpus_buffer[1 : self.sequence_length + 1])
@@ -749,7 +837,8 @@ class Trainer:
         # run must validate and select its published inference artifact.
         if self.evaluation_sequences and (not self.evaluations or self.evaluations[-1]["step"] != self.step_number):
             self.record_evaluation(self.final_loss)
-        if self.parameters["checkpoint_every"] > 0 and (
+        # Final selection needs a checkpoint at the last step even without periodic checkpoints.
+        if (self.parameters["checkpoint_every"] > 0 or self.parameters.get("artifact_selection") == "final") and (
             not self.checkpoints or self.checkpoints[-1]["step"] != self.step_number
         ):
             self.save_checkpoint()
@@ -758,6 +847,9 @@ class Trainer:
         weights_path = os.path.join(self.artifact_directory, weights_name)
         evaluated_checkpoints = {checkpoint["step"]: checkpoint for checkpoint in self.checkpoints}
         candidates = [evaluation for evaluation in self.evaluations if evaluation["step"] in evaluated_checkpoints]
+        if self.parameters.get("artifact_selection") == "final":
+            # The run's last weights, still verified against their held-out loss.
+            candidates = [evaluation for evaluation in candidates if evaluation["step"] == self.step_number]
         selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"]) if candidates else None
         selected_checkpoint = None if selected_evaluation is None else evaluated_checkpoints[selected_evaluation["step"]]
         selected_step = self.step_number
@@ -873,7 +965,10 @@ def run():
             raise ValueError(f"unsupported worker input kind {kind!r}")
     if trainer is None or not ended:
         raise ValueError("worker input ended without begin/end framing")
-    trainer.finish()
+    if trainer.begin.get("evaluate_only"):
+        trainer.evaluate_only()
+    else:
+        trainer.finish()
 
 
 Attention = WALDO_SHARED_ATTENTION

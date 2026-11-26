@@ -97,6 +97,18 @@ func TestValidateBackendObservationVerifiesBoundsAndArtifacts(t *testing.T) {
 			}
 		})
 	}
+	// With artifact_selection final, the last step is published even when an earlier checkpoint scored better.
+	final := PlannedStage{PlannedTokens: 128, Parameters: training.Parameters{Steps: 2, ArtifactSelection: "final"}}
+	earlierBest := valid
+	earlierBest.Evaluations = []training.Evaluation{{Step: valid.Evaluations[0].Step, Tokens: valid.Evaluations[0].Tokens, Metrics: map[string]float64{"heldout_loss": 1.0}}, valid.Evaluations[1]}
+	if err := validateBackendObservation(runDirectory, final, earlierBest); err != nil {
+		t.Fatalf("final selection rejected: %v", err)
+	}
+	notFinal := earlierBest
+	notFinal.SelectedCheckpoint = &training.CheckpointSelection{Step: valid.Evaluations[0].Step, Tokens: valid.Evaluations[0].Tokens, Metric: "heldout_loss", Value: 1.0}
+	if err := validateBackendObservation(runDirectory, final, notFinal); err == nil || !strings.Contains(err.Error(), "not the final step") {
+		t.Fatalf("earlier checkpoint under final selection: %v", err)
+	}
 }
 
 func TestRealBackendsRequireArtifactVerification(t *testing.T) {
@@ -156,5 +168,20 @@ func TestCheckArtifactFileDefersContentHashing(t *testing.T) {
 	artifact.SHA256 = "invalid"
 	if err := CheckArtifactFile(path, artifact); err == nil || !strings.Contains(err.Error(), "invalid SHA-256 metadata") {
 		t.Fatalf("invalid digest metadata error = %v", err)
+	}
+}
+
+func TestResumeIgnoresTheInterpreterDirectoryInRuntime(t *testing.T) {
+	recorded := training.Execution{Framework: "mlx", Runtime: "/Users/me/.venv/bin/python3; Python 3.12.4; MLX 0.25.0", Nodes: 1, WorldSize: 1}
+	current := recorded
+	current.Runtime = "python3; Python 3.12.4; MLX 0.25.0"
+	if !sameExecution(recorded, current) {
+		t.Fatal("a run recorded with the interpreter's full path does not resume")
+	}
+	for _, runtime := range []string{"python3; Python 3.12.4; MLX 0.26.0", "python3.13; Python 3.12.4; MLX 0.25.0"} {
+		current.Runtime = runtime
+		if sameExecution(recorded, current) {
+			t.Fatalf("runtime %q resumes a run recorded under %q", runtime, recorded.Runtime)
+		}
 	}
 }

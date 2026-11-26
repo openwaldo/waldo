@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -110,7 +111,7 @@ func runModelComposeForecast(context Context, path string, stdout, progress io.W
 	if err != nil {
 		return err
 	}
-	compose, err = builder.ResolveCompose(context.Execution, compose, false)
+	compose, err = builder.ResolveCompose(context.Execution, "", compose, false)
 	if err != nil {
 		return err
 	}
@@ -569,11 +570,8 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 		return writeJSON(stdout, inspection)
 	}
 	state := "untrained"
-	if inspection.Origin != nil {
-		state = "downloaded"
-	}
-	if len(inspection.Model.Runs) > 0 {
-		state = string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
+	if current := model.State(inspection); current != "" {
+		state = current
 	}
 	var consumed int64
 	for _, run := range inspection.Runs {
@@ -604,7 +602,13 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 		}
 		fmt.Fprintf(stdout, "INTERACTION:   %s\n", label)
 	}
-	if inspection.Origin != nil {
+	if merge := originMerge(inspection); merge != nil {
+		parents := make([]string, 0, len(merge.Parents))
+		for _, parent := range merge.Parents {
+			parents = append(parents, "weights "+parent.WeightsSHA256[:12])
+		}
+		fmt.Fprintf(stdout, "ORIGIN:        %s of %s (merge)\n", merge.Method, strings.Join(parents, ", "))
+	} else if inspection.Origin != nil {
 		fmt.Fprintf(stdout, "ORIGIN:        %s@%s (%s)\n", inspection.Origin.Source.Repository, shortModelHash(inspection.Origin.Source.Revision), inspection.Origin.Source.Provider)
 	}
 	for position, pin := range inspection.Model.Runs {
@@ -729,6 +733,9 @@ func runModelBOM(context Context, args []string, stdout, stderr io.Writer) error
 }
 
 func runModelTrain(context Context, args []string, stdout, stderr io.Writer) error {
+	if boolOption(context, "evaluate-only") {
+		return runModelEvaluate(context, args, stdout, stderr)
+	}
 	hostfilePath := strings.TrimSpace(stringOption(context, "hostfile"))
 	if hostfilePath != "" || strings.TrimSpace(os.Getenv("MULTINODE_HOSTLIST_NOSLOTS")) != "" {
 		return runModelTrainHostfile(context, args, hostfilePath, stdout, stderr)
@@ -1344,11 +1351,11 @@ func runCompletedComposeNoop(context Context, args []string, stdout, stderr io.W
 	if err != nil {
 		return false, err
 	}
-	compose, err = builder.ResolveCompose(context.Execution, compose, true)
+	name := args[0]
+	compose, err = builder.ResolveCompose(context.Execution, name, compose, true)
 	if err != nil {
 		return false, err
 	}
-	name := args[0]
 	if err := builder.CheckComposeTarget(name, compose); err != nil {
 		return false, err
 	}
@@ -1371,6 +1378,13 @@ func runCompletedComposeNoop(context Context, args []string, stdout, stderr io.W
 	return finishCompletedComposeNoop(context, name, composePath, compose, inspection, skipped, stdout, stderr)
 }
 
+// completesWithoutCompose reports whether a request with no stages left can
+// finish as a verified no-op. A pending merge-only compose cannot: only
+// Compose finishes its transaction.
+func completesWithoutCompose(pending bool, compose model.Compose) bool {
+	return !pending || compose.Base == nil || len(compose.Base.Merge) == 0
+}
+
 func finishCompletedComposeNoop(context Context, name, composePath string, requested model.Compose, inspection model.Inspection, skipped []model.SkippedCorpus, stdout, stderr io.Writer) (bool, error) {
 	for _, selected := range skipped {
 		fmt.Fprintf(stderr, "preflight/%s          skipped %s (already completed by this model)\n", selected.Stage, selected.Path)
@@ -1379,10 +1393,13 @@ func finishCompletedComposeNoop(context Context, name, composePath string, reque
 	if err != nil {
 		return false, err
 	}
+	if !completed && len(requested.Stages) == 0 {
+		return false, fmt.Errorf("model %q is no longer the merge compose %q describes; it has trained since, or was built from another base — use a new model name for this compose", name, composePath)
+	}
 	if !completed {
 		return false, fmt.Errorf("model %q previously trained every selected corpus path, but its completed run BOMs do not match compose %q; WALDO will not treat changed stages, filters, order, or training parameters as completed — use a new model name for this compose", name, composePath)
 	}
-	if err := model.VerifyCurrentModelArtifacts(inspection); err != nil {
+	if err := model.VerifyCompletedCompose(requested, inspection); err != nil {
 		return false, fmt.Errorf("verify completed model artifacts: %w", err)
 	}
 	if err := model.PersistCompletedCompose(inspection.Path, requested, filepath.Base(composePath)); err != nil {
@@ -1394,6 +1411,10 @@ func finishCompletedComposeNoop(context Context, name, composePath string, reque
 			Result  model.Inspection      `json:"result"`
 			Skipped []model.SkippedCorpus `json:"skipped"`
 		}{Compose: composePath, Result: inspection, Skipped: skipped})
+	}
+	if len(requested.Stages) == 0 {
+		fmt.Fprintf(stdout, "model %s unchanged; verified it is still the merge compose %s describes\n", name, composePath)
+		return true, nil
 	}
 	fmt.Fprintf(stdout, "model %s unchanged; verified all %d stages of compose %s were already completed\n", name, len(requested.Stages), composePath)
 	return true, nil
@@ -1419,7 +1440,7 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 	if err != nil {
 		return err
 	}
-	compose, err = builder.ResolveCompose(context.Execution, compose, true)
+	compose, err = builder.ResolveCompose(context.Execution, name, compose, true)
 	if err != nil {
 		return err
 	}
@@ -1456,7 +1477,7 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 		for _, corpus := range skipped {
 			fmt.Fprintf(stderr, "preflight/%s          skipped %s (already completed by this model)\n", corpus.Stage, corpus.Path)
 		}
-		if len(compose.Stages) == 0 {
+		if len(compose.Stages) == 0 && completesWithoutCompose(pending, compose) {
 			_, err := finishCompletedComposeNoop(context, name, composePath, requestedCompose, inspection, skipped, stdout, io.Discard)
 			return err
 		}
@@ -1472,8 +1493,11 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
 			objectives = append(objectives, stage.Objective)
 		}
 	}
-	if err := builder.CheckBackend(context.Execution, compose.Architecture, objectives); err != nil {
-		return err
+	// A merge-only compose trains nothing, so it needs no training backend.
+	if len(objectives) > 0 {
+		if err := builder.CheckBackend(context.Execution, compose.Architecture, objectives); err != nil {
+			return err
+		}
 	}
 	builder.PreparedCacheDirectory = filepath.Join(cache.Scratch(), "prepared")
 	builder.PreparedCacheMaxBytes = cache.MaxBytes()
@@ -1668,7 +1692,9 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return fmt.Errorf("load configured disclosure.provider: %w", err)
 	}
-	report, err := disclosure.BuildEUGPAIReport(inspection, &provider, disclosure.ReleaseFromModel(inspection), time.Now())
+	// The training behind the weights, through fine-tunes and merges, for both disclosures.
+	history := model.TrainingHistory(root, inspection)
+	report, err := disclosure.BuildEUGPAIReport(inspection, history, &provider, disclosure.ReleaseFromModel(inspection, history), time.Now())
 	if err != nil {
 		return err
 	}
@@ -1681,9 +1707,20 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 	}
 	euBOM = append(euBOM, '\n')
 	trainingBOMs := make([]corpus.BOM, 0, len(inspection.RunBOMs))
+	attributed := map[string]bool{}
 	for position, runBOM := range inspection.RunBOMs {
 		if position < len(inspection.Runs) && inspection.Runs[position].State == model.RunComplete {
 			trainingBOMs = append(trainingBOMs, runBOM.CorpusBOM)
+			attributed[runBOM.CorpusBOMSHA256] = true
+		}
+	}
+	// A fine-tune or merge also carries its ancestors' training data.
+	for _, digest := range slices.Sorted(maps.Keys(history.Corpora)) {
+		if used := history.Corpora[digest][0]; !attributed[digest] {
+			if _, err := corpus.ReviewDistributable(used.BOM); err != nil {
+				return fmt.Errorf("build training data attribution: ancestor %s run %s trained on a corpus that can't be redistributed: %w", used.Model, used.Run, err)
+			}
+			trainingBOMs = append(trainingBOMs, used.BOM)
 		}
 	}
 	attribution, err := corpus.AttributionNotice(trainingBOMs)
@@ -1743,33 +1780,41 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 			fmt.Fprintf(stderr, "calibration        selected %s byte tokens from %s records in %s shards\n", humanCount(prepared.BOM.SampledTokens), humanCount(prepared.BOM.Records), humanInteger(int64(len(prepared.BOM.Shards))))
 		}
 	}
+	warnLineage := func(message string) { fmt.Fprintln(stderr, "warning: "+message) }
+	var lineage []byte
+	if parsed.Format != "waldo" {
+		lineage, err = model.ReleaseLineage(root, inspection, warnLineage)
+		if err != nil {
+			return err
+		}
+	}
 	switch parsed.Format {
 	case "waldo":
-		options := model.ExportOptions{Files: map[string][]byte{signing.EUBOM: euBOM, "ATTRIBUTION.md": attribution}}
+		options := model.ExportOptions{Files: map[string][]byte{signing.EUBOM: euBOM, "ATTRIBUTION.md": attribution}, Warn: warnLineage}
 		if signed {
 			options.Finalize = finalize
 		}
 		output, err = model.ExportPackage(root, parsed.Name, parsed.Destination, options)
 	case "huggingface":
-		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution}
+		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution, Lineage: lineage}
 		if signed {
 			options.Finalize = finalize
 		}
 		output, err = modelexport.ExportHuggingFace(context.Execution, inspection, parsed.Destination, options)
 	case "mlx":
-		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution}
+		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution, Lineage: lineage}
 		if signed {
 			options.Finalize = finalize
 		}
 		output, err = modelexport.ExportMLX(context.Execution, inspection, parsed.Destination, options)
 	case "gguf":
-		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
+		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution, Lineage: lineage, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
 		if signed {
 			options.Finalize = finalize
 		}
 		output, err = modelexport.ExportGGUF(context.Execution, inspection, parsed.Destination, options)
 	case "ollama":
-		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
+		options := modelexport.Options{EUBOM: euBOM, Attribution: attribution, Lineage: lineage, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
 		if signed {
 			options.Finalize = finalize
 		}
@@ -1860,6 +1905,9 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
+	if configuration, err := config.Load(); err == nil && configuration.GPU.Throttle != nil && *configuration.GPU.Throttle == 0 {
+		fmt.Fprintln(stderr, "warning: gpu.throttle is 0, so MLX chat waits until `waldo config set gpu.throttle` raises it")
+	}
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
@@ -1879,11 +1927,15 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	if raw {
 		interaction = model.Interaction{}
 	}
-	interactive := prompt == nil && modelChatTerminal()
+	prompts := boolOption(context, "prompts")
+	if prompts && (prompt != nil || !context.JSON) {
+		return fmt.Errorf("--prompts reads its prompts from standard input and requires --json")
+	}
+	interactive := !prompts && prompt == nil && modelChatTerminal()
 	if context.JSON && interactive {
 		return fmt.Errorf("--json requires a positional prompt or piped standard input")
 	}
-	if !interactive && prompt == nil {
+	if !interactive && !prompts && prompt == nil {
 		data, err := io.ReadAll(modelChatInput)
 		if err != nil {
 			return fmt.Errorf("read chat prompt from standard input: %w", err)
@@ -1907,6 +1959,8 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	var chatErr error
 	if interactive {
 		chatErr = runInteractiveChat(context.Execution, opened, interaction, options, stdout)
+	} else if prompts {
+		chatErr = runPromptsChat(context, opened, interaction, options, stdout)
 	} else {
 		chatErr = runOneShotChat(context, opened, interaction, *prompt, options, stdout)
 	}
@@ -1968,6 +2022,39 @@ func selectModelChatRun(inspection model.Inspection, runID string, checkpointSte
 		return inspection, nil
 	}
 	return model.Inspection{}, fmt.Errorf("model %q has no run %q", inspection.Model.Name, runID)
+}
+
+// runPromptsChat answers each input line, a JSON string, as runOneShotChat would with --json, so a
+// caller with many prompts loads the model once; each result is one compact JSON line.
+func runPromptsChat(context Context, opened inference.Opened, interaction model.Interaction, options inference.Options, stdout io.Writer) error {
+	scanner := bufio.NewScanner(modelChatInput)
+	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	number := 0
+	for scanner.Scan() {
+		number++
+		if strings.TrimSpace(scanner.Text()) == "" {
+			continue
+		}
+		var prompt *string
+		if err := json.Unmarshal(scanner.Bytes(), &prompt); err != nil || prompt == nil {
+			return fmt.Errorf("--prompts line %d is not a JSON string", number)
+		}
+		var result, line bytes.Buffer
+		if err := runOneShotChat(context, opened, interaction, *prompt, options, &result); err != nil {
+			return fmt.Errorf("--prompts line %d: %w", number, err)
+		}
+		if err := json.Compact(&line, result.Bytes()); err != nil {
+			return err
+		}
+		line.WriteByte('\n')
+		if _, err := stdout.Write(line.Bytes()); err != nil {
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("--prompts line %d: %w", number+1, err)
+	}
+	return nil
 }
 
 func runOneShotChat(context Context, opened inference.Opened, interaction model.Interaction, prompt string, options inference.Options, stdout io.Writer) error {
@@ -2581,4 +2668,9 @@ func humanBytesUint(value uint64) string {
 		return humanBytes(int64(value))
 	}
 	return fmt.Sprintf("%d B", value)
+}
+
+func originMerge(inspection model.Inspection) *model.MergeRecord {
+	merge, _ := model.ReadMerge(inspection)
+	return merge
 }

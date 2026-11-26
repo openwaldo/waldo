@@ -49,6 +49,7 @@ waldo
 │   ├── forecast
 │   ├── train
 │   ├── continue
+│   ├── join
 │   ├── export
 │   ├── chat
 │   └── rm

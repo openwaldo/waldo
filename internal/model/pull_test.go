@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/openwaldo/waldo/internal/modelweights"
+	waldotokenizer "github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/openwaldo/waldo/internal/training"
 )
 
@@ -96,9 +97,141 @@ func TestValidateDownloadedTokenizerAcceptsLegacyClassAlias(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, "tokenizer_config.json"), configuration, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	architecture := Architecture{VocabularySize: 259}
-	if err := validateDownloadedTokenizer(directory, architecture); err != nil {
+	if _, err := downloadedTokenizer(directory, 259); err != nil {
 		t.Fatalf("legacy exported tokenizer rejected: %v", err)
+	}
+}
+
+func TestPullOfAByteExportIgnoresItsTokenizerArtifact(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
+	revision := strings.Repeat("e", 40)
+	pull := func(files map[string][]byte) string {
+		t.Helper()
+		puller := Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: &http.Client{Transport: huggingFaceTransport(t, files, revision)}, Now: func() time.Time { return time.Date(2026, 8, 5, 1, 2, 3, 0, time.UTC) }}
+		inspection, err := puller.Pull(t.Context(), "tiny", "huggingface://org/tiny@"+revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return inspection.Model.OriginBOMSHA256
+	}
+	without := pull(huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass))
+	// Exports write the byte tokenizer's artifact too; earlier pulls never recorded it.
+	files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
+	files[TokenizerArtifactFile] = []byte(`{"kind":"waldo-byte-tokenizer","schema":1}`)
+	if with := pull(files); with != without {
+		t.Fatalf("origin with the byte tokenizer artifact = %s, without = %s", with, without)
+	}
+}
+
+func TestPullKeepsAnExportedTrainedTokenizer(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	artifact, err := waldotokenizer.TrainByteBPE([]waldotokenizer.Sample{{ID: "one", Text: strings.Repeat("fn main() { println!(\"hello\"); } ", 20)}, {ID: "two", Text: strings.Repeat("def main():\n    print('hello')\n", 20)}}, 300, 4096, strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: uint64(artifact.VocabularySize), HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: artifact.Name, Revision: artifact.Revision, Artifact: &artifact}}
+	// The tokenizer artifact as a Hugging Face or MLX export writes it.
+	exported, err := json.Marshal(struct {
+		Kind   string `json:"kind"`
+		Schema int    `json:"schema"`
+		training.TokenizerSpec
+	}{"waldo-tokenizer", 1, training.TokenizerSpec{Name: artifact.Name, Revision: artifact.Revision, VocabularySize: artifact.VocabularySize, PadID: 0, BOSID: 1, EOSID: 2, Artifact: &artifact}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
+	files[TokenizerArtifactFile] = exported
+	revision := strings.Repeat("d", 40)
+	puller := Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: &http.Client{Transport: huggingFaceTransport(t, files, revision)}}
+	probed, err := puller.Probe(t.Context(), "huggingface://org/tiny@"+revision)
+	if err != nil || !reflect.DeepEqual(probed, architecture) {
+		t.Fatalf("probed architecture = %+v, %v", probed, err)
+	}
+	inspection, err := puller.Pull(t.Context(), "trained", "huggingface://org/tiny@"+revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := hashJSON(architecture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(inspection.Model.Architecture, architecture) || inspection.Model.ArchitectureSHA256 != hash {
+		t.Fatalf("pulled architecture = %+v, want %+v", inspection.Model.Architecture, architecture)
+	}
+	runtime, err := os.ReadFile(filepath.Join(inspection.Path, "origin", "artifacts", "tokenizer.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var origin struct {
+		Kind string `json:"kind"`
+		training.TokenizerSpec
+	}
+	if err := json.Unmarshal(runtime, &origin); err != nil || origin.Kind != "waldo-tokenizer" || origin.Artifact == nil || !reflect.DeepEqual(*origin.Artifact, artifact) {
+		t.Fatalf("origin tokenizer = %s, %v", runtime, err)
+	}
+	if _, _, err := training.ResolveTokenizerSpec(origin.TokenizerSpec); err != nil {
+		t.Fatalf("pulled tokenizer does not resolve: %v", err)
+	}
+	// A vocabulary that disagrees with config.json is refused.
+	architecture.VocabularySize++
+	mismatched := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
+	mismatched[TokenizerArtifactFile] = exported
+	puller.Client = &http.Client{Transport: huggingFaceTransport(t, mismatched, revision)}
+	if _, err := puller.Pull(t.Context(), "mismatched", "huggingface://org/tiny@"+revision); err == nil || !strings.Contains(err.Error(), "vocabulary_size") {
+		t.Fatalf("mismatched vocabulary error = %v", err)
+	}
+}
+
+// A package naming two tokenizers under keys Go's JSON folds together, or a repeated key, would have
+// WALDO record one tokenizer while the package's Python code runs the other.
+func TestPullRefusesATokenizerFileWithTwoTokenizers(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	train := func(text string) waldotokenizer.Artifact {
+		artifact, err := waldotokenizer.TrainByteBPE([]waldotokenizer.Sample{{ID: "one", Text: strings.Repeat(text, 40)}}, 265, 4096, strings.Repeat("a", 64))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return artifact
+	}
+	first, second := train("fn main() { println!(\"hello\"); } "), train("def main():\n    print('hello')\n")
+	if first.VocabularySize != second.VocabularySize || reflect.DeepEqual(first, second) {
+		t.Fatal("fixture: the two tokenizers must differ at one vocabulary size")
+	}
+	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: uint64(first.VocabularySize), HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: first.Name, Revision: first.Revision, Artifact: &first}}
+	exported, err := json.Marshal(struct {
+		Kind   string `json:"kind"`
+		Schema int    `json:"schema"`
+		training.TokenizerSpec
+	}{"waldo-tokenizer", 1, training.TokenizerSpec{Name: second.Name, Revision: second.Revision, VocabularySize: second.VocabularySize, PadID: 0, BOSID: 1, EOSID: 2, Artifact: &first}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Under "Artifact", Python's json reads "artifact", the first; Go keeps the last, which the top-level fields describe.
+	other, err := json.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := strings.Repeat("e", 40)
+	for _, key := range []string{"Artifact", "artifact"} {
+		files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
+		files[TokenizerArtifactFile] = append(append(append(exported[:len(exported)-1:len(exported)-1], []byte(`,"`+key+`":`)...), other...), '}')
+		puller := Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: &http.Client{Transport: huggingFaceTransport(t, files, revision)}}
+		if _, err := puller.Pull(t.Context(), "two", "huggingface://org/tiny@"+revision); err == nil || !strings.Contains(err.Error(), TokenizerArtifactFile) {
+			t.Fatalf("a second tokenizer under %q: pull error = %v", key, err)
+		}
+	}
+}
+
+// Keys Go's JSON folds onto a field name but Python reads as another key are refused, as are repeats.
+func TestExactKeysRefusesKeysGoFoldsTogether(t *testing.T) {
+	for _, document := range []string{`{"artifact":{"merge\u017f":[]}}`, `{"\u212aind":"x"}`, `{"a":{"b":1,"b":2}}`, `{"Kind":"x"}`} {
+		if exactKeys([]byte(document)) == nil {
+			t.Fatalf("exactKeys accepted %s", document)
+		}
+	}
+	if err := exactKeys([]byte(`{"kind":"waldo-tokenizer","artifact":{"merges":[{"left":1,"right":2}],"pieces":["aGVsbG8="],"pad_id":0}}`)); err != nil {
+		t.Fatalf("exactKeys refused WALDO's own keys: %v", err)
 	}
 }
 
@@ -113,7 +246,7 @@ func TestComposeAcquiresPinnedHuggingFaceBaseWithoutVisibleModel(t *testing.T) {
 	stage := testStage("adapt")
 	stage.Parameters.SequenceLength = 32
 	compose := Compose{Kind: "waldo-model-compose", Schema: 1, Base: &ComposeBase{Source: "huggingface://org/tiny@" + revision}, Stages: []Stage{stage}}
-	probed, err := builder.ResolveCompose(t.Context(), compose, false)
+	probed, err := builder.ResolveCompose(t.Context(), "", compose, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +327,11 @@ func huggingFaceWeights(t *testing.T, architecture Architecture) []byte {
 			elements *= dimension
 		}
 		bytes := elements * 2
-		header[hf] = map[string]any{"dtype": "BF16", "shape": shapes[name], "data_offsets": []uint64{offset, offset + bytes}}
+		dtype := "BF16"
+		if architecture.ParameterDType == "float16" {
+			dtype = "F16"
+		}
+		header[hf] = map[string]any{"dtype": dtype, "shape": shapes[name], "data_offsets": []uint64{offset, offset + bytes}}
 		offset += bytes
 	}
 	encoded, err := json.Marshal(header)
@@ -255,5 +392,96 @@ func sortStrings(values []string) {
 		for j := i; j > 0 && values[j] < values[j-1]; j-- {
 			values[j], values[j-1] = values[j-1], values[j]
 		}
+	}
+}
+
+func TestPullDirectoryImportsATrainedTokenizerPackage(t *testing.T) {
+	artifact, err := waldotokenizer.TrainByteBPE([]waldotokenizer.Sample{{ID: "one", Text: strings.Repeat("fn main() { println!(\"hello\"); } ", 20)}, {ID: "two", Text: strings.Repeat("def main():\n    print('hello')\n", 20)}}, 300, 4096, strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: uint64(artifact.VocabularySize), HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: artifact.Name, Revision: artifact.Revision, Artifact: &artifact}}
+	exported, err := json.Marshal(struct {
+		Kind   string `json:"kind"`
+		Schema int    `json:"schema"`
+		training.TokenizerSpec
+	}{"waldo-tokenizer", 1, training.TokenizerSpec{Name: artifact.Name, Revision: artifact.Revision, VocabularySize: artifact.VocabularySize, PadID: 0, BOSID: 1, EOSID: 2, Artifact: &artifact}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
+	files[TokenizerArtifactFile] = exported
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(directory, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inspection, err := pullDirectory(t, t.TempDir(), "trained", directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The pulled architecture is the exported model's, so copies of it can merge and continue training.
+	hash, err := hashJSON(architecture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(inspection.Model.Architecture, architecture) || inspection.Model.ArchitectureSHA256 != hash {
+		t.Fatalf("pulled architecture = %+v, want %+v", inspection.Model.Architecture, architecture)
+	}
+	if _, _, err := training.ResolveArchitectureTokenizer(mustJSON(t, inspection.Model.Architecture)); err != nil {
+		t.Fatalf("pulled tokenizer does not resolve: %v", err)
+	}
+	runtime, err := os.ReadFile(filepath.Join(inspection.Path, "origin", "artifacts", "tokenizer.json"))
+	if err != nil || !strings.Contains(string(runtime), `"kind":"waldo-tokenizer"`) && !strings.Contains(string(runtime), `"kind": "waldo-tokenizer"`) {
+		t.Fatalf("origin tokenizer = %s, %v", runtime, err)
+	}
+	// A vocabulary that disagrees with config.json is refused.
+	architecture.VocabularySize++
+	files = huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
+	files[TokenizerArtifactFile] = exported
+	mismatched := t.TempDir()
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(mismatched, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pullDirectory(t, t.TempDir(), "mismatched", mismatched); err == nil || !strings.Contains(err.Error(), "vocabulary_size") {
+		t.Fatalf("mismatched vocabulary error = %v", err)
+	}
+}
+
+func mustJSON(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestPullDirectoryImportsAnExportedPackage(t *testing.T) {
+	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
+	files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
+	var origins []string
+	for range 2 {
+		// Two identities keep the same package in their own places.
+		directory := t.TempDir()
+		writePackage(t, directory, files)
+		inspection, err := pullDirectory(t, t.TempDir(), "local", directory)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := inspection.Origin.Source
+		if source.Provider != "waldo-join" || source.Repository != "runs/test/local" || len(source.Revision) != 64 || strings.Contains(source.URL+source.Repository, directory) || len(inspection.Origin.SourceArtifacts) != 4 {
+			t.Fatalf("origin = %+v", inspection.Origin)
+		}
+		if _, err := pullDirectory(t, filepath.Dir(inspection.Path), "local", directory); err == nil {
+			t.Fatal("pulled over an existing model")
+		}
+		origins = append(origins, inspection.Model.OriginBOMSHA256)
+	}
+	if origins[0] != origins[1] {
+		t.Fatal("the same package kept in two places has two origins")
 	}
 }

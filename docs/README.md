@@ -32,6 +32,8 @@ Read these in order:
 - [Model lifecycle](MODEL-LIFECYCLE.md): managed models, runs, and backends.
 - [Multi-host training](MULTI-NODE-TRAINING.md): TorchTitan cluster
   requirements and exact operator commands.
+- [Distributed training with model join](MODEL-JOIN.md): runs kept in git,
+  signed contributor records, replica verification, and merges with lineage.
 - [Model exports](MODEL-EXPORTS.md): release formats and quantization.
 - [Foundation and sparse-MoE plan](FOUNDATION-MOE-PLAN.md): planned model
   lineages, native artifacts, and NeMo/Megatron execution.

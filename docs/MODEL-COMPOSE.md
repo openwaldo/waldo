@@ -185,7 +185,8 @@ BOM.
 | `base` | no | object | Optionally initializes a new model from verified managed or external weights. |
 | `architecture` | normally | object | Defines immutable model structure and tokenizer identity. It may be omitted with `base.source`, in which case WALDO inherits the verified source architecture. |
 | `interaction` | no | object | Declares a versioned inference-time prompt contract. Omit it for raw causal continuation. |
-| `stages` | yes | non-empty list | Ordered training stages. Stage names must be unique. |
+| `stages` | yes, unless `base.merge` creates the model | list | Ordered training stages. Stage names must be unique. |
+| `join` | no | object | Makes the compose a distributed run's file, read only by `waldo model join` ([Model join](MODEL-JOIN.md)); every other command ignores it, and it is no part of the compose's identity. |
 
 ### Interaction fields
 
@@ -222,28 +223,30 @@ model-level contract. New composes should use only `interaction.tools`.
 
 | Field | Required | Value | Meaning |
 | --- | --- | --- | --- |
-| `model` | exactly one of `model` or `source` | `^[a-z0-9][a-z0-9._-]{0,63}$` | Names a managed model with a verified completed checkpoint or pulled origin. |
-| `source` | exactly one of `model` or `source` | pinned model source | Acquires a supported external model through the same verified importer as `model pull`. Schema 1 accepts `huggingface://organization/model@<commit>`. |
+| `model` | exactly one of `model`, `source`, or `merge` | `^[a-z0-9][a-z0-9._-]{0,63}$` | Names a managed model with a verified completed checkpoint or pulled origin. |
+| `source` | exactly one of `model`, `source`, or `merge` | pinned model source | Acquires a supported external model through the same verified importer as `model pull`. Schema 1 accepts `huggingface://organization/model@<commit>`. |
 | `origin_sha256` | no | SHA-256 | Asserts the expected origin BOM. WALDO always resolves and pins the actual value. |
 | `model_id` | no | model ID | Asserts the identity of a managed base. WALDO fills it during resolution. |
 | `run_id` | no | run ID | Selects a completed run. When omitted, WALDO resolves the latest completed run with real weights. |
 | `run_bom_sha256` | no | SHA-256 | Asserts the selected run BOM. WALDO fills it during resolution. |
 | `artifact_sha256` | no | SHA-256 | Asserts the selected checkpoint bytes. WALDO fills it during resolution. |
 | `artifact_bytes` | no | non-negative bytes | Asserts the selected checkpoint size. WALDO fills it during resolution. |
+| `merge` | exactly one of `model`, `source`, or `merge` | two or more `{model, weight}` | Averages managed models into a merged origin. `weight` is optional and must be given for every parent or none; weighted parents contribute in proportion. |
 
 ## Base initialization
 
 `base` controls the weights used to initialize a model before its first stage.
 It does not name the destination model; the destination is the first argument
-to `waldo model train`. A compose supports three initialization modes:
+to `waldo model train`. A compose supports four initialization modes:
 
 | Compose declaration | Initial weights | Architecture rule |
 | --- | --- | --- |
 | no `base` | Newly initialized weights | `architecture` is required. |
 | `base.model` | Verified completed checkpoint from a named managed model, falling back to its origin when it has no completed run | `architecture` may be omitted and inherited; when present, it must exactly match. |
 | `base.source` | Verified origin weights acquired from an external source | `architecture` may be omitted and inherited; when present, it must exactly match. |
+| `base.merge` | The weighted mean of two or more managed models that share an ancestor | Every parent must have the same architecture, which the compose inherits. |
 
-`model` and `source` are mutually exclusive. A base initializes the destination
+`model`, `source`, and `merge` are mutually exclusive. A base initializes the destination
 model and is never mutated by its training. For a trained managed base, WALDO
 resolves the latest completed run containing real weights unless `run_id` is
 specified. It verifies and persists the parent model ID, run ID, run BOM hash,
@@ -267,6 +270,56 @@ present, the complete architecture must exactly match. Use this form when the
 base should be visible to `waldo model list` and independently inspectable with
 `waldo model summary conversation`. Resolution turns the inherited architecture
 and omitted pins into immutable values before training starts.
+
+### Merged base
+
+```yaml
+kind: waldo-model-compose
+schema: 1
+base:
+  merge:
+    - model: contributor-a
+      weight: 472344
+    - model: contributor-b
+      weight: 477616
+```
+
+Averaging weights is meaningful only for models trained from common weights,
+so WALDO fails closed unless the parents share an ancestor
+([ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)). WALDO walks each
+parent's history ([ADR 0084](adr/0084-record-model-lineage.md)) as git walks
+commits, by weights hash, and finds the merge-base: the common ancestors no other
+common ancestor descends from. Every step from each parent down to the
+merge-base must be in its history, with no gap and no model that starts there
+from scratch or from an outside release, and every earlier merge above it must
+have parents that reach a common ancestor too: a family never merges in a model
+from outside it, but a merge can merge again with its own parents. Below the
+merge-base, gaps are only recorded. Merges accept models with `bfloat16` or
+`float32` parameters, whether their tokenizer is the byte tokenizer or a trained
+one.
+
+WALDO computes every new merge from the parents' weights and writes it as an
+origin under the model root's `.merges` directory, named by the hash of its
+`MERGE.json`, so the same merge is built once. `MERGE.json` (`waldo-model-merge`,
+schema 1) records the method (`mean-f32-v1`, or `weighted-mean-f32-v1` with
+weights: float32 accumulation from +0 in parent order, rounded to nearest
+even, with subnormal results as IEEE float32 computes them; weights must be
+normal, finite float32 values, and a merge fails if the average overflows
+float32) and each parent by the run or origin BOM that made its weights, its
+weights hash, and `share` (its compose `weight`), sorted by weights hash. It
+names no models or places, so everyone who merges parents recorded the same way
+writes the same bytes and the same weights; licenses come from the parents'
+BOMs in their history. The merged origin's source is provider `merge` at that
+hash, and its `LINEAGE.json` holds `MERGE.json` and every parent's history, so
+the parents can be deleted. A compose with `base.merge` may have no stages: the
+destination is then the merged model itself, usable for chat, export, or as
+another compose's base. With stages, the merge initializes training like any
+origin. Once the model exists, the same `base.merge` resolves to the merge it
+was built from while each parent's name still holds the weights that were
+averaged, or a model that trained on from them; otherwise the compose is
+refused before anything is merged. Repeating a merge-only compose is a verified
+no-op until the model runs a stage, and appending stages continues the same
+model.
 
 ### Direct external base
 
@@ -312,13 +365,19 @@ Hugging Face token file. Verified direct origins are cached beneath
 `waldo model list`. The destination hard-links cached artifacts when possible
 and copies them otherwise. Its `ORIGIN-BOM.json` records the repository,
 requested and resolved revisions, declared license when available, source-file
-hashes, and normalized artifact hashes.
+hashes, and normalized artifact hashes. When the release is a WALDO export, the
+pull also fetches its `LINEAGE.json` and keeps the history in the model's own
+`LINEAGE.json` ([ADR 0084](adr/0084-record-model-lineage.md)). A listed
+`LINEAGE.json` that can't be downloaded fails the pull, to be run again; history
+that doesn't check out is a gap with a warning.
 
 Schema 1 currently accepts standard bias-free Llama Safetensors with
 `OpenWALDOTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors—the
 format produced by current WALDO Hugging Face exports. Pull also accepts the
 legacy `OpenWALDOByteTokenizer` class name used by older WALDO exports; both
-names identify the same byte tokenizer. Other tokenizers, architectures, tensor
+names identify the same byte tokenizer. A trained `waldo/byte-bpe` tokenizer
+exported as `openwaldo_tokenizer.json` is restored with a matching vocabulary
+size. Other tokenizers, architectures, tensor
 layouts, and source providers fail before the destination model is published.
 `base.source` and `model pull` intentionally share this same compatibility
 boundary.
@@ -405,8 +464,13 @@ does not change model structure.
 | `parameters` | yes | object | Declares the portable training budget and controls. |
 
 Relative corpus values are logical paths beneath the selected WALDO index.
-Absolute paths may identify another index checkout. Values select indexed
-corpora, never raw source directories or exported corpus files.
+Absolute paths may identify another index checkout. A value written as a path
+on disk (absolute, or starting with `./`, `../`, or `~/`) resolves to the
+longest logical path in the index that it ends with, so per-corpus filters and
+weights apply to it as to its logical path. A stage's first corpus resolves
+relative paths against the current directory; later corpora resolve them against
+that corpus's index root. Values select indexed corpora, never raw source
+directories or exported corpus files.
 
 Before downloading any shard, `model train` refreshes the selected index and
 checks every corpus path in every stage. A failed sanity check reports all
@@ -486,7 +550,7 @@ corpora:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `path` | yes in object form | Logical index path. |
+| `path` | yes in object form | Logical index path, or a path on disk that ends with one. |
 | `weight` | only for `causal-pretrain-weighted` | Positive integer relative token exposure. It replaces the legacy map entry for this corpus. |
 | `filter` | no | Record filter local to this corpus. |
 | `filter.main_content` | no | Requires the canonical main-content boolean to equal the declared value. Normally `true`; older schemas default to `true`. |
@@ -498,6 +562,7 @@ corpora:
 | `sources` | no | Matches either the canonical source identifier or source name. |
 | `metadata` | no | Maps canonical `meta` JSON keys to value filters. Each declared key must contain a string value and all declared keys must match. Missing, malformed, or non-string values are rejected. |
 | `date` | no | Selects canonical dates that overlap the inclusive `from`/`to` interval. |
+| `slice` | no | `{index, count}`, both required, with `0 <= index < count`. Keeps the records whose lowercase hex ID's SHA-256, read as a big-endian 64-bit integer from its first 8 bytes, modulo `count` equals `index` ([ADR 0086](adr/0086-deterministic-corpus-slices.md)). The `count` slices of a corpus are disjoint, near-equal in size, and stable for as long as each record's text is unchanged, so several trainings can each take a reproducible share of one corpus. Stage and corpus slices hash the same value, so declare a slice at one level only. Train each slice of a corpus into its own model: a model that completed one slice skips the corpus as already trained. |
 | `include` | no | At least one shell-style, case-sensitive pattern must match. |
 | `exclude` | no | Any matching pattern rejects the record and takes precedence over `include`. |
 | `languages.include_unset` | no | Also retains rows with no recorded language. Known languages must still match `include`. Defaults to `false`; it is not accepted for license or source filters. |
@@ -573,7 +638,7 @@ must use one representation or the other, never both.
 | `learning_rate` | yes | finite positive number | Peak optimizer learning rate. |
 | `optimizer` | no | `adamw` or `muon-adamw`; default `adamw` | Optimizer recipe. Muon applies orthogonalized momentum updates to hidden matrices and AdamW to embeddings, output heads, and vectors; it currently requires PyTorch data-parallel placement. |
 | `schedule` | no | `cosine` or `warmup-stable-warmdown`; default `cosine` | Learning-rate schedule. |
-| `seed` | no | default `0` | Controls deterministic shuffling, evaluation selection, initialization, and training randomness. Reference composes set it explicitly. |
+| `seed` | no | default `0` | Controls deterministic shuffling, evaluation selection (unless `evaluation_seed` is set), initialization, and training randomness. Reference composes set it explicitly. |
 | `weight_decay` | no | default `0.1`; `0..1` | AdamW weight decay. Explicit zero disables it. |
 | `warmup_steps` | no | `min(100, steps/10)`; `0..steps` | Linear warmup duration. For runs longer than one step, the default is at least one. Explicit zero disables warmup. |
 | `warmdown_steps` | no | half of the run for `warmup-stable-warmdown`, otherwise `0` | Linear warmdown duration. Warmup plus warmdown cannot exceed the run. |
@@ -587,6 +652,13 @@ must use one representation or the other, never both.
 | `evaluation_fraction` | no | default `0.01`; `0 <= value < 1` | Candidate fraction for deterministic held-out selection. |
 | `evaluation_max_records` | no | default `256`; `0..1000000` | Held-out record cap. |
 | `evaluation_max_bytes` | no | default 1 MiB; `0 B..16 GiB` | Held-out text-byte cap. |
+| `evaluation_seed` | no | unsigned integer; default `seed` | Picks the held-out records instead of `seed`, so runs that shuffle differently hold out the same records and their held-out losses compare. |
+| `artifact_selection` | no | `final`; default lowest held-out | Which weights the run publishes. By default, the checkpoint with the lowest held-out loss; `final`, the last step's weights, still verified against their held-out loss. |
+
+WALDO versions before `evaluation_seed` and `artifact_selection` reject a
+compose that declares either as an unknown field. They also can't read a model
+trained with either: they report its run as not matching its model pin and
+refuse to list the model store that holds it.
 
 Exactly one of `tokens`, `epochs`, or legacy `steps` is normally declared. A
 legacy compose may declare both `steps` and `epochs`; steps remains the exact
@@ -615,7 +687,7 @@ Setting any one of `evaluation_fraction`, `evaluation_max_records`, or
 three values to zero.
 
 The default indexed evaluation policies derive deterministic row positions
-from the pinned shard record counts and seed, then read only a bounded sample
+from the pinned shard record counts and seed (or `evaluation_seed`), then read only a bounded sample
 of complete rows. License and content filters are applied to those candidates;
 the selected identities and evaluation evidence are pinned before training.
 There is no corpus-wide evaluation scan. The `stratified-` form distributes
@@ -770,7 +842,8 @@ WALDO fails before training when a compose has:
 - an unsupported architecture, tokenizer contract, dtype, or objective;
 - zero architecture dimensions or incompatible attention-head divisibility;
 - dropout outside `0..<1` or a sequence longer than the architecture context;
-- no stages, duplicate stage names, no corpus selection, or duplicate corpora;
+- no stages (unless `base.merge` makes the merged model the destination),
+  duplicate stage names, no corpus selection, or duplicate corpora;
 - invalid parameter ranges or an overflowing planned token capacity;
 - corpus weights outside `causal-pretrain-weighted`, missing weighted-profile
   weights, or weights for unselected corpora;

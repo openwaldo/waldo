@@ -22,6 +22,7 @@ import (
 	"github.com/openwaldo/waldo/internal/inference"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/modelquant"
+	waldotokenizer "github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/openwaldo/waldo/internal/training"
 )
 
@@ -31,6 +32,7 @@ type Options struct {
 	Finalize     func(string) error
 	Quantization *Quantization
 	Report       func(string)
+	Lineage      []byte // LINEAGE.json, the exported weights' history
 	result       *modelquant.Result
 }
 
@@ -101,7 +103,7 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	if err := validateStandardLlamaArchitecture(record.Architecture, format); err != nil {
 		return "", err
 	}
-	if err := validateByteTokenizerExport(record.Architecture, format); err != nil {
+	if err := validatePortableTokenizerExport(record.Architecture, format); err != nil {
 		return "", err
 	}
 	artifacts, err := inference.ResolveArtifacts(inspection)
@@ -185,6 +187,12 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	if interactionTemplate != "" {
 		roles["chat_template.jinja"] = "interaction-template"
 	}
+	if err := writeLineage(temporary, options.Lineage, roles); err != nil {
+		return "", err
+	}
+	if err := writeProvenance(temporary, inspection, roles); err != nil {
+		return "", err
+	}
 	inventory, err := inventoryFiles(temporary, roles)
 	if err != nil {
 		return "", err
@@ -237,6 +245,19 @@ func exportTokenizerArtifact(path string, architectureVocabularySize uint64) ([]
 func validateStandardLlamaArchitecture(architecture model.Architecture, format string) error {
 	if architecture.QKNormalization {
 		return fmt.Errorf("%s export cannot preserve WALDO qk_normalization; use the native waldo export until this runtime has an exact architecture implementation", format)
+	}
+	return nil
+}
+
+// validatePortableTokenizerExport admits the tokenizers tokenization_openwaldo.py implements
+// exactly: the byte tokenizer, and a trained byte-BPE tokenizer, by its current or legacy name,
+// carried as its artifact.
+func validatePortableTokenizerExport(architecture model.Architecture, format string) error {
+	if trained := architecture.Tokenizer.Artifact; waldotokenizer.IsTrainedName(architecture.Tokenizer.Name) && trained != nil && uint64(trained.VocabularySize) == architecture.VocabularySize {
+		return nil
+	}
+	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
+		return fmt.Errorf("%s export currently requires byte@builtin-byte-schema-1 with vocabulary_size 259, or a trained %s tokenizer", format, waldotokenizer.TrainedName)
 	}
 	return nil
 }
@@ -587,3 +608,66 @@ exact byte or trained byte-BPE tokenizer. The Safetensors payload is copied with
 conversion. ` + "`BOM.json`" + ` inventories every release file and ` + "`EU-BOM.json`" + `
 contains the EU GPAI training-content disclosure mapping.
 `
+
+// writeLineage ships the release's LINEAGE.json, listed in BOM.json.
+func writeLineage(directory string, lineage []byte, roles map[string]string) error {
+	if len(lineage) == 0 {
+		return nil
+	}
+	roles["LINEAGE.json"] = "lineage"
+	return os.WriteFile(filepath.Join(directory, "LINEAGE.json"), lineage, 0o644)
+}
+
+// writeProvenance publishes the run BOMs behind the released weights beside
+// them, each named by its hash, so the release itself proves what data
+// trained it.
+func writeProvenance(directory string, inspection model.Inspection, roles map[string]string) error {
+	records, err := model.ProvenanceRecords(inspection)
+	if err != nil {
+		return err
+	}
+	for digest, source := range records {
+		data, err := os.ReadFile(source)
+		if err != nil {
+			return fmt.Errorf("read run BOM %s: %w", digest[:12], err)
+		}
+		name := "provenance-" + digest + ".json"
+		if err := os.WriteFile(filepath.Join(directory, name), data, 0o644); err != nil {
+			return err
+		}
+		roles[name] = model.ProvenanceRole
+	}
+	closure, err := model.ModelClosure(inspection)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(closure, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(directory, model.ClosureFile), append(data, '\n'), 0o644); err != nil {
+		return err
+	}
+	roles[model.ClosureFile] = model.ClosureRole
+	// Weights unchanged since a distributed run produced them keep their link to its records.
+	trained := false
+	for _, run := range inspection.Model.Runs {
+		trained = trained || run.State == model.RunComplete
+	}
+	if !trained && inspection.Origin != nil {
+		for _, artifact := range inspection.Origin.Artifacts {
+			if artifact.Role != model.RoundRole {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path)))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(directory, model.RoundFile), data, 0o644); err != nil {
+				return err
+			}
+			roles[model.RoundFile] = model.RoundRole
+		}
+	}
+	return nil
+}

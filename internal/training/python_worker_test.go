@@ -92,8 +92,8 @@ func TestGracefulCancellationLetsLauncherReapWorker(t *testing.T) {
 	script := `#!/bin/sh
 sleep 30 &
 worker=$!
-printf '%s' "$worker" > "$1"
 trap 'kill "$worker" 2>/dev/null; wait "$worker" 2>/dev/null; printf stopped > "$2"; exit 0' TERM
+printf '%s' "$worker" > "$1"
 wait "$worker"
 `
 	if err := os.WriteFile(launcher, []byte(script), 0o755); err != nil {
