@@ -1860,6 +1860,9 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
+	if configuration, err := config.Load(); err == nil && configuration.GPU.Throttle != nil && *configuration.GPU.Throttle == 0 {
+		fmt.Fprintln(stderr, "warning: gpu.throttle is 0, so MLX chat waits until `waldo config set gpu.throttle` raises it")
+	}
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
@@ -1879,11 +1882,15 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	if raw {
 		interaction = model.Interaction{}
 	}
-	interactive := prompt == nil && modelChatTerminal()
+	prompts := boolOption(context, "prompts")
+	if prompts && (prompt != nil || !context.JSON) {
+		return fmt.Errorf("--prompts reads its prompts from standard input and requires --json")
+	}
+	interactive := !prompts && prompt == nil && modelChatTerminal()
 	if context.JSON && interactive {
 		return fmt.Errorf("--json requires a positional prompt or piped standard input")
 	}
-	if !interactive && prompt == nil {
+	if !interactive && !prompts && prompt == nil {
 		data, err := io.ReadAll(modelChatInput)
 		if err != nil {
 			return fmt.Errorf("read chat prompt from standard input: %w", err)
@@ -1907,6 +1914,8 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	var chatErr error
 	if interactive {
 		chatErr = runInteractiveChat(context.Execution, opened, interaction, options, stdout)
+	} else if prompts {
+		chatErr = runPromptsChat(context, opened, interaction, options, stdout)
 	} else {
 		chatErr = runOneShotChat(context, opened, interaction, *prompt, options, stdout)
 	}
@@ -1968,6 +1977,39 @@ func selectModelChatRun(inspection model.Inspection, runID string, checkpointSte
 		return inspection, nil
 	}
 	return model.Inspection{}, fmt.Errorf("model %q has no run %q", inspection.Model.Name, runID)
+}
+
+// runPromptsChat answers each input line, a JSON string, as runOneShotChat would with --json, so a
+// caller with many prompts loads the model once; each result is one compact JSON line.
+func runPromptsChat(context Context, opened inference.Opened, interaction model.Interaction, options inference.Options, stdout io.Writer) error {
+	scanner := bufio.NewScanner(modelChatInput)
+	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	number := 0
+	for scanner.Scan() {
+		number++
+		if strings.TrimSpace(scanner.Text()) == "" {
+			continue
+		}
+		var prompt *string
+		if err := json.Unmarshal(scanner.Bytes(), &prompt); err != nil || prompt == nil {
+			return fmt.Errorf("--prompts line %d is not a JSON string", number)
+		}
+		var result, line bytes.Buffer
+		if err := runOneShotChat(context, opened, interaction, *prompt, options, &result); err != nil {
+			return fmt.Errorf("--prompts line %d: %w", number, err)
+		}
+		if err := json.Compact(&line, result.Bytes()); err != nil {
+			return err
+		}
+		line.WriteByte('\n')
+		if _, err := stdout.Write(line.Bytes()); err != nil {
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("--prompts line %d: %w", number+1, err)
+	}
+	return nil
 }
 
 func runOneShotChat(context Context, opened inference.Opened, interaction model.Interaction, prompt string, options inference.Options, stdout io.Writer) error {

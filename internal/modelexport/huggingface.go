@@ -22,6 +22,7 @@ import (
 	"github.com/openwaldo/waldo/internal/inference"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/modelquant"
+	waldotokenizer "github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/openwaldo/waldo/internal/training"
 )
 
@@ -101,7 +102,7 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	if err := validateStandardLlamaArchitecture(record.Architecture, format); err != nil {
 		return "", err
 	}
-	if err := validateByteTokenizerExport(record.Architecture, format); err != nil {
+	if err := validatePortableTokenizerExport(record.Architecture, format); err != nil {
 		return "", err
 	}
 	artifacts, err := inference.ResolveArtifacts(inspection)
@@ -237,6 +238,19 @@ func exportTokenizerArtifact(path string, architectureVocabularySize uint64) ([]
 func validateStandardLlamaArchitecture(architecture model.Architecture, format string) error {
 	if architecture.QKNormalization {
 		return fmt.Errorf("%s export cannot preserve WALDO qk_normalization; use the native waldo export until this runtime has an exact architecture implementation", format)
+	}
+	return nil
+}
+
+// validatePortableTokenizerExport admits the tokenizers tokenization_openwaldo.py implements
+// exactly: the byte tokenizer, and a trained byte-BPE tokenizer, by its current or legacy name,
+// carried as its artifact.
+func validatePortableTokenizerExport(architecture model.Architecture, format string) error {
+	if trained := architecture.Tokenizer.Artifact; waldotokenizer.IsTrainedName(architecture.Tokenizer.Name) && trained != nil && uint64(trained.VocabularySize) == architecture.VocabularySize {
+		return nil
+	}
+	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
+		return fmt.Errorf("%s export currently requires byte@builtin-byte-schema-1 with vocabulary_size 259, or a trained %s tokenizer", format, waldotokenizer.TrainedName)
 	}
 	return nil
 }

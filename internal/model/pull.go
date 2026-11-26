@@ -6,6 +6,7 @@
 package model
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,16 +18,21 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/openwaldo/waldo/internal/modelweights"
+	waldotokenizer "github.com/openwaldo/waldo/internal/tokenizer"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 const (
 	HuggingFaceTokenizerClass       = "OpenWALDOTokenizer"
 	LegacyHuggingFaceTokenizerClass = "OpenWALDOByteTokenizer"
+	// TokenizerArtifactFile is the exported tokenizer artifact, a trained tokenizer's vocabulary.
+	TokenizerArtifactFile = "openwaldo_tokenizer.json"
 )
 
 type PullProgress struct {
@@ -83,8 +89,11 @@ func (puller Puller) Probe(ctx context.Context, source string) (Architecture, er
 	for _, sibling := range metadata.Siblings {
 		sizes[sibling.Name] = sibling.Size
 	}
-	for _, filename := range []string{"config.json", "tokenizer_config.json"} {
+	for _, filename := range []string{"config.json", "tokenizer_config.json", TokenizerArtifactFile} {
 		if !slicesContains(names, filename) {
+			if filename == TokenizerArtifactFile {
+				continue
+			}
 			return Architecture{}, fmt.Errorf("Hugging Face model must contain %s", filename)
 		}
 		fileURL := endpoint + "/" + repository + "/resolve/" + metadata.SHA + "/" + escapePath(filename)
@@ -92,14 +101,7 @@ func (puller Puller) Probe(ctx context.Context, source string) (Architecture, er
 			return Architecture{}, fmt.Errorf("probe %s@%s %s: %w", repository, requested, filename, err)
 		}
 	}
-	architecture, err := loadHuggingFaceArchitecture(filepath.Join(directory, "config.json"))
-	if err != nil {
-		return Architecture{}, err
-	}
-	if err := validateDownloadedTokenizer(directory, architecture); err != nil {
-		return Architecture{}, err
-	}
-	return architecture, nil
+	return loadHuggingFaceArchitecture(directory)
 }
 
 func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection, error) {
@@ -161,12 +163,13 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 	if err := validateShardIndex(sourceDirectory, names); err != nil {
 		return Inspection{}, err
 	}
-	architecture, err := loadHuggingFaceArchitecture(filepath.Join(sourceDirectory, "config.json"))
+	architecture, err := loadHuggingFaceArchitecture(sourceDirectory)
 	if err != nil {
 		return Inspection{}, err
 	}
-	if err := validateDownloadedTokenizer(sourceDirectory, architecture); err != nil {
-		return Inspection{}, err
+	// A byte package's tokenizer artifact is unused, so its origin stays what earlier pulls recorded.
+	if architecture.Tokenizer.Artifact == nil {
+		sourceArtifacts = slices.DeleteFunc(sourceArtifacts, func(artifact OriginArtifact) bool { return artifact.Path == TokenizerArtifactFile })
 	}
 	architectureHash, err := hashJSON(architecture)
 	if err != nil {
@@ -198,10 +201,18 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 	}); err != nil {
 		return Inspection{}, err
 	}
-	if err := writeJSONAtomic(filepath.Join(artifactDirectory, "tokenizer.json"), map[string]any{
+	var tokenizer any = map[string]any{
 		"kind": "waldo-byte-tokenizer", "schema": 1, "name": "byte", "revision": "builtin-byte-schema-1",
 		"pad_id": 0, "bos_id": 1, "eos_id": 2, "byte_offset": 3, "vocabulary_size": 259,
-	}); err != nil {
+	}
+	if trained := architecture.Tokenizer.Artifact; trained != nil {
+		tokenizer = struct {
+			Kind   string `json:"kind"`
+			Schema int    `json:"schema"`
+			training.TokenizerSpec
+		}{"waldo-tokenizer", 1, training.TokenizerSpec{Name: trained.Name, Revision: trained.Revision, VocabularySize: trained.VocabularySize, PadID: trained.PadID, BOSID: trained.BOSID, EOSID: trained.EOSID, Artifact: trained}}
+	}
+	if err := writeJSONAtomic(filepath.Join(artifactDirectory, "tokenizer.json"), tokenizer); err != nil {
 		return Inspection{}, err
 	}
 	artifacts, err := inventoryOriginArtifacts(temporary, []string{"origin/artifacts/model.safetensors", "origin/artifacts/config.json", "origin/artifacts/tokenizer.json"})
@@ -327,7 +338,7 @@ func selectModelFiles(metadata hubModel) ([]string, error) {
 		return nil, fmt.Errorf("Hugging Face model must contain config.json and tokenizer_config.json")
 	}
 	var selected []string
-	for _, name := range []string{"config.json", "tokenizer_config.json", "special_tokens_map.json", "tokenization_openwaldo.py", "README.md", "LICENSE", "LICENSE.md", "BOM.json"} {
+	for _, name := range []string{"config.json", "tokenizer_config.json", "special_tokens_map.json", "tokenization_openwaldo.py", TokenizerArtifactFile, "README.md", "LICENSE", "LICENSE.md", "BOM.json"} {
 		if available[name] {
 			selected = append(selected, name)
 		}
@@ -351,7 +362,8 @@ func selectModelFiles(metadata hubModel) ([]string, error) {
 	return selected, nil
 }
 
-func loadHuggingFaceArchitecture(path string) (Architecture, error) {
+// loadHuggingFaceArchitecture reads a package's config.json and tokenizer into a WALDO architecture.
+func loadHuggingFaceArchitecture(directory string) (Architecture, error) {
 	var config struct {
 		ModelType        string  `json:"model_type"`
 		HiddenSize       uint64  `json:"hidden_size"`
@@ -374,11 +386,11 @@ func loadHuggingFaceArchitecture(path string) (Architecture, error) {
 		EOS              int     `json:"eos_token_id"`
 		PAD              int     `json:"pad_token_id"`
 	}
-	if err := readJSON(path, &config); err != nil {
+	if err := readJSON(filepath.Join(directory, "config.json"), &config); err != nil {
 		return Architecture{}, err
 	}
 	if config.ModelType != "llama" || config.RMS != 1e-5 || config.Rope != 0 && config.Rope != 10000 || config.HiddenAct != "" && config.HiddenAct != "silu" || config.AttentionBias || config.MLPBias || config.RopeScaling != nil || config.BOS != 1 || config.EOS != 2 || config.PAD != 0 {
-		return Architecture{}, fmt.Errorf("download currently supports standard Llama configuration with SiLU, bias-free projections, rms_norm_eps 1e-5, rope_theta 10000, no rope_scaling, and byte-tokenizer IDs pad=0, bos=1, eos=2")
+		return Architecture{}, fmt.Errorf("download currently supports standard Llama configuration with SiLU, bias-free projections, rms_norm_eps 1e-5, rope_theta 10000, no rope_scaling, and tokenizer IDs pad=0, bos=1, eos=2")
 	}
 	if config.DType == "" {
 		config.DType = config.DTypeNew
@@ -387,14 +399,66 @@ func loadHuggingFaceArchitecture(path string) (Architecture, error) {
 	if dtype == "" {
 		return Architecture{}, fmt.Errorf("unsupported Hugging Face torch_dtype %q", config.DType)
 	}
-	architecture := Architecture{Family: "decoder-transformer", ContextTokens: config.Context, VocabularySize: config.Vocabulary, HiddenSize: config.HiddenSize, IntermediateSize: config.IntermediateSize, Layers: config.Layers, AttentionHeads: config.Heads, KeyValueHeads: config.KVHeads, TieEmbeddings: config.Tie, ParameterDType: dtype, Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
+	tokenizer, err := downloadedTokenizer(directory, config.Vocabulary)
+	if err != nil {
+		return Architecture{}, err
+	}
+	architecture := Architecture{Family: "decoder-transformer", ContextTokens: config.Context, VocabularySize: config.Vocabulary, HiddenSize: config.HiddenSize, IntermediateSize: config.IntermediateSize, Layers: config.Layers, AttentionHeads: config.Heads, KeyValueHeads: config.KVHeads, TieEmbeddings: config.Tie, ParameterDType: dtype, Tokenizer: tokenizer}
 	if err := architecture.Validate(); err != nil {
 		return Architecture{}, err
 	}
 	return architecture, nil
 }
 
-func validateDownloadedTokenizer(directory string, architecture Architecture) error {
+// exactKeys refuses JSON whose object keys repeat or aren't plain lowercase ASCII: encoding/json
+// matches keys with Unicode case folding and merges repeats, while the package's Python reads them exactly.
+func exactKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	var value func() error
+	value = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		switch token {
+		case json.Delim('{'):
+			seen := map[string]bool{}
+			for decoder.More() {
+				key, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				name := key.(string)
+				if seen[name] {
+					return fmt.Errorf("key %q appears twice", name)
+				}
+				if strings.IndexFunc(name, func(r rune) bool { return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' }) >= 0 {
+					return fmt.Errorf("key %q isn't plain lowercase ASCII", name)
+				}
+				seen[name] = true
+				if err := value(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		case json.Delim('['):
+			for decoder.More() {
+				if err := value(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		}
+		return nil
+	}
+	return value()
+}
+
+// downloadedTokenizer is the package's tokenizer: the trained artifact WALDO exports beside
+// a trained-tokenizer model, or the byte tokenizer.
+func downloadedTokenizer(directory string, vocabulary uint64) (Tokenizer, error) {
 	var config struct {
 		TokenizerClass string `json:"tokenizer_class"`
 		BOS            string `json:"bos_token"`
@@ -402,14 +466,40 @@ func validateDownloadedTokenizer(directory string, architecture Architecture) er
 		PAD            string `json:"pad_token"`
 	}
 	if err := readJSON(filepath.Join(directory, "tokenizer_config.json"), &config); err != nil {
-		return err
+		return Tokenizer{}, err
+	}
+	var artifact struct {
+		Kind   string `json:"kind"`
+		Schema int    `json:"schema"`
+		training.TokenizerSpec
+	}
+	data, err := os.ReadFile(filepath.Join(directory, TokenizerArtifactFile))
+	if err == nil {
+		if err = exactKeys(data); err == nil {
+			err = json.Unmarshal(data, &artifact)
+		}
+	}
+	if err == nil && artifact.Kind == "waldo-tokenizer" && waldotokenizer.IsTrainedName(artifact.Name) {
+		if config.TokenizerClass != HuggingFaceTokenizerClass || config.BOS != "<bos>" || config.EOS != "<eos>" || config.PAD != "<pad>" {
+			return Tokenizer{}, fmt.Errorf("download of trained tokenizer %s requires %s with <bos>, <eos>, and <pad>", artifact.Name, HuggingFaceTokenizerClass)
+		}
+		if artifact.Schema != 1 || artifact.VocabularySize != int(vocabulary) {
+			return Tokenizer{}, fmt.Errorf("%s does not match the model's vocabulary_size %d", TokenizerArtifactFile, vocabulary)
+		}
+		spec, _, err := training.ResolveTokenizerSpec(artifact.TokenizerSpec)
+		if err != nil {
+			return Tokenizer{}, fmt.Errorf("%s: %w", TokenizerArtifactFile, err)
+		}
+		return Tokenizer{Name: spec.Name, Revision: spec.Revision, Artifact: spec.Artifact}, nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return Tokenizer{}, fmt.Errorf("read %s: %w", TokenizerArtifactFile, err)
 	}
 	// Earlier exports used LegacyHuggingFaceTokenizerClass, which remains an
 	// alias of the same byte-tokenizer implementation in exported modules.
-	if (config.TokenizerClass != HuggingFaceTokenizerClass && config.TokenizerClass != LegacyHuggingFaceTokenizerClass) || config.BOS != "<bos>" || config.EOS != "<eos>" || config.PAD != "<pad>" || architecture.VocabularySize != 259 {
-		return fmt.Errorf("download currently supports %s (or legacy %s) with vocabulary_size 259; this model uses %q with vocabulary_size %d", HuggingFaceTokenizerClass, LegacyHuggingFaceTokenizerClass, config.TokenizerClass, architecture.VocabularySize)
+	if (config.TokenizerClass != HuggingFaceTokenizerClass && config.TokenizerClass != LegacyHuggingFaceTokenizerClass) || config.BOS != "<bos>" || config.EOS != "<eos>" || config.PAD != "<pad>" || vocabulary != 259 {
+		return Tokenizer{}, fmt.Errorf("download currently supports %s (or legacy %s) with vocabulary_size 259 or a trained tokenizer in %s; this model uses %q with vocabulary_size %d", HuggingFaceTokenizerClass, LegacyHuggingFaceTokenizerClass, TokenizerArtifactFile, config.TokenizerClass, vocabulary)
 	}
-	return nil
+	return Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}, nil
 }
 
 func validateDownloadedTensors(architecture Architecture, actual map[string]modelweights.Descriptor) error {

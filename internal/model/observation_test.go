@@ -158,3 +158,18 @@ func TestCheckArtifactFileDefersContentHashing(t *testing.T) {
 		t.Fatalf("invalid digest metadata error = %v", err)
 	}
 }
+
+func TestResumeIgnoresTheInterpreterDirectoryInRuntime(t *testing.T) {
+	recorded := training.Execution{Framework: "mlx", Runtime: "/Users/me/.venv/bin/python3; Python 3.12.4; MLX 0.25.0", Nodes: 1, WorldSize: 1}
+	current := recorded
+	current.Runtime = "python3; Python 3.12.4; MLX 0.25.0"
+	if !sameExecution(recorded, current) {
+		t.Fatal("a run recorded with the interpreter's full path does not resume")
+	}
+	for _, runtime := range []string{"python3; Python 3.12.4; MLX 0.26.0", "python3.13; Python 3.12.4; MLX 0.25.0"} {
+		current.Runtime = runtime
+		if sameExecution(recorded, current) {
+			t.Fatalf("runtime %q resumes a run recorded under %q", runtime, recorded.Runtime)
+		}
+	}
+}
