@@ -1,0 +1,43 @@
+{
+  "model": "general-base-1b-coherence-5tpp-01",
+  "model_id": "112a481abdde5d9870d6cfb14d8855e10b98f45edff8d4770d0d2b3319036d33",
+  "run_id": "e361dbbe010dcd43",
+  "architecture_sha256": "540fd9c73ed75c00402e11ece9787bb154587d3f86fd345f24df6a7dc735cb45",
+  "parameters": {
+    "total": 1034512384,
+    "core": 968976384
+  },
+  "training": {
+    "steps": 295709,
+    "consumed_tokens": 4844896256,
+    "core_tpp": 5.0,
+    "initial_heldout_loss": 10.706750273955771,
+    "selected_heldout_loss": 2.194106698375752,
+    "selected_heldout_bits_per_byte": 0.7989428897145281,
+    "selected_step": 295709,
+    "serialization_loss_delta": 0.0
+  },
+  "artifact": {
+    "path": "artifacts/model.safetensors",
+    "sha256": "674cd66c99017ae9aee53b55f227cf08e8a5319d3a792d14d24891213ff1d43c",
+    "bytes": 4138071392
+  },
+  "generation": {
+    "sampled_two_complete_sentences": 20,
+    "sampled_three_sentence_manual_coherence": 18,
+    "sampled_loops": 1,
+    "greedy_loops": 1,
+    "sampled_eos_diagnostic": 17,
+    "responses": 20
+  },
+  "gates": {
+    "finite_metrics": true,
+    "exact_reload": true,
+    "selected_checkpoint_final_20_percent": true,
+    "two_complete_sentences": true,
+    "three_sentence_manual_coherence": true,
+    "sampled_loops": true,
+    "greedy_loops": true
+  },
+  "passed": true
+}

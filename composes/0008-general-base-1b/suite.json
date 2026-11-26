@@ -1,0 +1,22 @@
+[
+  {"form":"narrative","prompt":"Mara carried the blue lantern into the cave because the path was dark. Inside the cave,"},
+  {"form":"narrative","prompt":"Jon found a small red boat beside the lake. He wanted to cross the water, so"},
+  {"form":"narrative","prompt":"Lina planted three sunflower seeds behind the white fence. Every morning,"},
+  {"form":"narrative","prompt":"Owen left his green scarf on the wooden chair before he went outside. When he returned,"},
+  {"form":"narrative","prompt":"Ava heard thunder over the hill and saw rain moving toward the village. She decided"},
+  {"form":"description","prompt":"The library was a quiet brick building with tall windows. Near the front door,"},
+  {"form":"description","prompt":"A tiny brown rabbit lived under the old apple tree. Its home was"},
+  {"form":"description","prompt":"The classroom had a round clock, twelve desks, and a large map. On the teacher’s table,"},
+  {"form":"description","prompt":"The silver bicycle belonged to Elena. It had a basket on the front and"},
+  {"form":"description","prompt":"The beach was empty after the storm. Wet shells covered the sand, while"},
+  {"form":"dialogue","prompt":"\"Please close the gate,\" said Nora. \"I will,\" Ben replied, \"because"},
+  {"form":"dialogue","prompt":"\"Why is the puppy hiding?\" asked Eli. Mia looked under the table and said,"},
+  {"form":"dialogue","prompt":"\"May I borrow your yellow pencil?\" Tom asked. Sara handed it to him and said,"},
+  {"form":"dialogue","prompt":"\"The soup is too hot,\" said Ana. Her father answered,"},
+  {"form":"explanation","prompt":"Plants need light to grow. Their leaves use energy from sunlight to"},
+  {"form":"explanation","prompt":"Rain forms when water vapor in the air cools and"},
+  {"form":"explanation","prompt":"A thermometer is a tool used to measure temperature. When the liquid inside becomes warmer,"},
+  {"form":"explanation","prompt":"A map helps people understand where places are. Symbols on a map can show"},
+  {"form":"explanation","prompt":"Bees visit flowers to collect nectar. As they move from one flower to another,"},
+  {"form":"explanation","prompt":"A shadow appears when an object blocks light. If the light source moves,"}
+]
