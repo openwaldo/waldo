@@ -2,7 +2,7 @@
 
 This directory is a catalog of reproducible models that passed every declared
 gate. It is not a roadmap and it is not an experiment log. At present the
-validated ladder ends at rung 0007.
+validated ladder ends at rung 0008.
 
 Only a passed recipe may have a numbered rung directory. Candidate composes
 belong on an experiment branch or in a temporary workspace. A failed candidate
@@ -20,6 +20,7 @@ Git and the persisted model artifact.
 | [0005](0005-general-base-125m/) | 125M general-language base model | 106.2M core parameters, 32K byte BPE | 16/20 locally relevant two-sentence continuations, bounded repetition, and exact reload | Passed |
 | [0006](0006-general-base-350m/) | 350M general-language base model with longer coherent continuation | 314.6M core parameters, 32K byte BPE | BPB 0.8009, 18/20 locally relevant three-sentence continuations, bounded repetition, and exact reload | Passed |
 | [0007](0007-interaction-assistant-350m/) | Bounded interaction-contract assistant derived from rung 0006 | Same 350M model plus 75-step contract SFT and 5-step formatting correction | 42/42 EOS, 37/42 exact, valid JSON/YAML, zero interaction loops/leaks, and retained raw generation | Passed |
+| [0008](0008-general-base-1b/) | 1B general-language base model with sustained three-sentence coherence | 969.0M core parameters, 32K byte BPE | BPB 0.7989, 18/20 coherent three-sentence continuations, bounded repetition, and exact reload | Passed |
 
 A cell-biology candidate previously occupying rung 0003 failed every
 behavioral promotion gate and was removed. The promoted rung instead adds a
@@ -48,6 +49,7 @@ expected to be a reliable open-domain factual system.
 | 0005 | 124.6M total / about 106.2M core | 30 layers, width 576, SwiGLU 1,536, 9/3 grouped-query heads, 32K tied vocabulary, 2,048 context | Grammatical, locally relevant general-language continuation without assistant claims | Passed |
 | 0006 | 345.4M total / 314.6M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Improve distribution fit and sustain longer coherent general-language continuation | Passed at 20 core TPP |
 | 0007 | inherit passed 0006 | No architecture change; 75-step supervised contract stage plus 5-step formatting-only correction | Bounded assistant behavior across the frozen interaction contract | Passed |
+| 0008 | 1.034B total / 969.0M core | 22 layers, width 2,048, SwiGLU 5,632, 32/4 grouped-query heads, 32K tied vocabulary, 2,048 context | Scale the general-language base while preserving coherent continuation and bounded repetition | Passed at 5 core TPP |
 
 The 125M and 350M designs follow the deep-and-thin, tied-embedding, grouped-
 query direction validated by MobileLLM at those scales. Rung 0004 is an
@@ -322,6 +324,36 @@ reloaded exactly. Ten formatting steps were rejected because retention fell to
 17/20 two-sentence outputs; the promoted five-step stage is therefore the
 smallest tested correction that passed both objectives.
 
+### Rung 0008: 1B general-language base
+
+Purpose: prove a fresh billion-parameter WALDO foundation run can improve
+distribution fit while sustaining coherent general-language continuation. It
+remains a raw base model; assistant behavior, reliable factual recall, coding,
+and multi-step reasoning are outside the promotion claim.
+
+The promoted architecture has 22 layers, width 2,048, SwiGLU intermediate
+size 5,632, 32 query heads, four key/value heads, tied 32K embeddings, RoPE,
+RMSNorm, and 2,048-token context. It contains 1.034B total and 969.0M core
+parameters. The corpus is the proven 9:6:3:2 mixture of Wikimedia,
+child-filtered Cosmopedia textbook narrative, Stack Exchange, and GPT-4
+TinyStories.
+
+Promotion criteria:
+
+- finite metrics, exact artifact reload, and a selected checkpoint in the
+  final 20% of training;
+- at least 18/20 sampled outputs contain two complete sentences;
+- at least 18/20 sampled outputs remain grammatical and on topic through three
+  sentences; and
+- no more than 1/20 sampled or 2/20 greedy outputs enter a phrase loop.
+
+The fresh five-core-TPP run passed. It consumed 4.845B tokens and selected the
+final step 295,709 checkpoint. Held-out loss improved from 10.7068 to 2.1941,
+selected BPB was 0.7989, and the artifact reloaded exactly. All 20 sampled
+outputs contained two complete sentences; manual review found 18/20 coherent
+through three sentences. The sampled/greedy suites contained one/one loops,
+and sampled EOS was 17/20 as a diagnostic.
+
 ## What the failed expansion proved
 
 The failed `cell-biology-30m-80tpp-01` run was numerically healthy: it consumed
@@ -457,29 +489,10 @@ failed qualification run.
 
 ## Next authorized work
 
-Rungs 0001 through 0007 are passed and frozen. The first rung-0008 capacity
-pilot increased the frozen general-base architecture from 314.6M to 969.0M
-core parameters while retaining the same 1.573B-token exposure and all other
-training controls. It was rejected: selected BPB was 0.8487 versus the
-predeclared rung-0006 baseline of 0.8442. The frozen behavioral suite passed,
-but behavioral non-regression cannot replace the failed distribution-fit gate.
-The complete decision is recorded in
-[`docs/RUNG-0008-CAPACITY-PILOT.md`](../docs/RUNG-0008-CAPACITY-PILOT.md).
-
-The matched learning-rate calibration selected `4e-4`, and its full
-1.573B-token qualification selected BPB `0.8125`, reloaded exactly, completed
-20/20 sampled responses, and stayed within the frozen repetition limits. Its
-longer educational continuations were not yet reliable enough for final rung
-promotion at only 1.62 core TPP.
-
-The authorized next experiment is therefore the unnumbered
-[`5-TPP qualification`](experiments/rung-0008-general-base-1b-5tpp/). It keeps
-the qualified architecture, `4e-4` learning rate, data, tokenizer, seed,
-batch, and evaluator fixed while increasing only the cosine exposure horizon.
-It has a stop/go behavioral gate at 2.5 core TPP and the final rung gate at 5
-core TPP. Passing 5 TPP authorizes 10 TPP; each later exposure phase must pass
-before the next one is run. No numbered rung-0008 directory is created until
-a candidate passes every promotion gate.
+Rungs 0001 through 0008 are passed and frozen. No rung 0009 training is
+authorized by this document. A proposal must first provide the evidence packet
+defined above, identify one falsifiable capability increase over rung 0008,
+and freeze its evaluator and early-stop rule before consuming training tokens.
 
 ## Rung directory contract
 

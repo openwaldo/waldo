@@ -1,0 +1,71 @@
+# Promoted 1B general-language base. The qualified architecture uses the
+# coherence-source 9:6:3:2 mixture for exactly five core TPP.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 2048
+  vocabulary_size: 32000
+  hidden_size: 2048
+  intermediate_size: 5632
+  layers: 22
+  attention_heads: 32
+  key_value_heads: 4
+  dropout: 0.0
+  qk_normalization: false
+  initialization: depth-scaled
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    artifact_path: tokenizer.json
+stages:
+  - name: general-base-1b-coherence-5tpp
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: core/common-pile/wikimedia
+        weight: 9
+      - path: core/synthetic/cosmopedia-v2
+        weight: 6
+        filter:
+          metadata:
+            audience:
+              include: [young_children]
+            format:
+              include: [textbook_narrative]
+      - path: core/common-pile/stackexchange
+        weight: 3
+      - path: core/synthetic/tinystories-gpt4-v2
+        weight: 2
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      # Exactly five tokens per 968,976,384 non-embedding core parameters.
+      tokens: 4844881920
+      batch_size: 8
+      gradient_accumulation_steps: 2
+      compute_precision: bfloat16
+      activation_checkpointing: false
+      compile: false
+      sequence_length: 2048
+      learning_rate: 0.0004
+      optimizer: adamw
+      schedule: cosine
+      seed: 42
+      weight_decay: 0.1
+      warmup_steps: 1000
+      # Persist the nearest optimizer boundary to 2.5 core TPP for the
+      # mandatory midpoint stop/go decision.
+      checkpoint_every: 147855
+      evaluate_every: 147855
+      shuffle_buffer_records: 65536
+      shuffle_buffer_bytes: 2147483648
+      evaluation_selection: stratified-lowest-sha256-v1
+      evaluation_fraction: 0.01
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
