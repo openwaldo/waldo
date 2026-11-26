@@ -20,6 +20,9 @@ Every package contains two consistently named public documents:
 - `EU-BOM.json` is WALDO's version-pinned, machine-readable projection onto the
   EU GPAI public training-content disclosure template.
 
+Derived packages also ship `LINEAGE.json`, the history of their weights; a
+native package carries it when the model was made from another.
+
 When signing is configured, both documents also receive detached Sigstore
 bundles. An export contains one weight representation, so choosing GGUF does
 not also copy Safetensors and choosing Hugging Face does not also create GGUF.
@@ -214,11 +217,12 @@ BOM from which it was produced. Each artifact path is relative to the package
 root. This makes a release relocatable without embedding a machine-specific
 model directory.
 
-The derived package currently records the source model BOM by hash rather than
-embedding the full `MODEL-BOM.json` and run tree. The hash makes substitution
-detectable when the source BOM is retained or published, but it cannot recreate
-that missing document by itself. Keep or publish the native WALDO package when
-a self-contained, inspectable provenance archive is required. `EU-BOM.json`
+`LINEAGE.json` (role `lineage`) holds the source model BOM, its plan and run
+BOMs, and the documents behind each model the weights came from, each as its
+bytes under its SHA-256 ([ADR 0084](adr/0084-record-model-lineage.md)). What
+the exporting model root couldn't supply is listed as a gap, and export warns
+rather than refusing. Weights, checkpoints, and corpora are not included. Keep or publish the native WALDO package when a
+self-contained, inspectable provenance archive is required. `EU-BOM.json`
 contains the regulatory projection of training evidence, but is not a
 replacement for the full technical run provenance.
 
@@ -309,6 +313,7 @@ Representative layout:
 small-huggingface/
 ├── BOM.json
 ├── EU-BOM.json
+├── LINEAGE.json
 ├── README.md
 ├── architecture.py
 ├── config.json
@@ -359,6 +364,7 @@ Layout:
 small-gguf/
 ├── BOM.json
 ├── EU-BOM.json
+├── LINEAGE.json
 └── model.gguf
 ```
 
@@ -431,6 +437,7 @@ Layout:
 small-ollama/
 ├── BOM.json
 ├── EU-BOM.json
+├── LINEAGE.json
 ├── Modelfile
 └── model.gguf
 ```

@@ -134,6 +134,7 @@ func Exists(root, name string) (bool, error) {
 type ExportOptions struct {
 	Files    map[string][]byte
 	Finalize func(string) error
+	Warn     func(string) // gaps in the model's history
 }
 
 func Export(root, name, destination string) (string, error) {
@@ -177,6 +178,11 @@ func ExportPackage(root, name, destination string, options ExportOptions) (strin
 	}()
 	if err := copyTree(inspection.Path, temporary); err != nil {
 		return "", err
+	}
+	if inspection.Plan.Parent != nil || inspection.Plan.OriginBOMSHA256 != "" {
+		if err := writeHistory(newLineageIndex(root, options.Warn), inspection, filepath.Join(temporary, lineageFile)); err != nil {
+			return "", err
+		}
 	}
 	if err := os.Remove(filepath.Join(temporary, "MODEL-BOM.json")); err != nil && !os.IsNotExist(err) {
 		return "", err

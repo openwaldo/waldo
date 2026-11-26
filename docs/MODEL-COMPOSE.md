@@ -312,7 +312,10 @@ Hugging Face token file. Verified direct origins are cached beneath
 `waldo model list`. The destination hard-links cached artifacts when possible
 and copies them otherwise. Its `ORIGIN-BOM.json` records the repository,
 requested and resolved revisions, declared license when available, source-file
-hashes, and normalized artifact hashes.
+hashes, and normalized artifact hashes. When the release is a WALDO export, the
+pull also fetches its `LINEAGE.json` and keeps the history in the model's own
+`LINEAGE.json` ([ADR 0084](adr/0084-record-model-lineage.md)). What doesn't
+check out is a gap with a warning; it never fails the pull.
 
 Schema 1 currently accepts standard bias-free Llama Safetensors with
 `OpenWALDOTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors—the

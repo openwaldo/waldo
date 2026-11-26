@@ -161,6 +161,11 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 	if err := validateShardIndex(sourceDirectory, names); err != nil {
 		return Inspection{}, err
 	}
+	// The release's history isn't pinned in the origin, so origin IDs match an earlier WALDO's pull.
+	if release, err := os.ReadFile(filepath.Join(sourceDirectory, "BOM.json")); err == nil && listedLineage(release) != "" {
+		fileURL := endpoint + "/" + repository + "/resolve/" + metadata.SHA + "/" + lineageFile
+		_, _, _ = downloadFile(ctx, client, fileURL, token, filepath.Join(sourceDirectory, lineageFile), sizes[lineageFile])
+	}
 	architecture, err := loadHuggingFaceArchitecture(filepath.Join(sourceDirectory, "config.json"))
 	if err != nil {
 		return Inspection{}, err
@@ -235,6 +240,15 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 		Kind: "waldo-model", Schema: 1, ID: planHash, Name: name, PlanSHA256: planHash,
 		ArchitectureSHA256: architectureHash, Architecture: architecture, Forecast: plan.Forecast,
 		Created: created, Updated: created, Runs: []RunPin{}, OriginBOMSHA256: originHash, OriginArtifacts: artifacts,
+	}
+	lineage, err := pullLineage(puller.Root, sourceDirectory, origin, plan, func(message string) {
+		puller.report(PullProgress{Phase: "lineage", Message: message})
+	})
+	if err != nil {
+		return Inspection{}, err
+	}
+	if err := writeJSONAtomic(filepath.Join(temporary, lineageFile), lineage); err != nil {
+		return Inspection{}, err
 	}
 	if err := os.RemoveAll(sourceDirectory); err != nil {
 		return Inspection{}, err

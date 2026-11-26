@@ -435,7 +435,10 @@ When `base.model` is present, WALDO selects its explicitly requested completed
 run or its latest completed run with real weights. If it has no such run, WALDO
 uses the model's verified pulled origin. WALDO pins the parent model ID, run ID,
 run BOM hash, weight hash, and size, then hard-links or copies trained parent
-weights into the destination as `base/model.safetensors`. `base.source` instead
+weights into the destination as `base/model.safetensors`. The new model holds
+the documents behind its base in `LINEAGE.json`, so the base can later be
+deleted without losing its history
+([ADR 0084](adr/0084-record-model-lineage.md)). `base.source` instead
 accepts a pinned supported external source and uses the same verified importer
 as `model pull`. In every mode WALDO verifies artifacts and exact architecture
 equality, and a compose never mutates its base model.
