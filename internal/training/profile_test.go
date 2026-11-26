@@ -152,6 +152,26 @@ func TestResolveParametersAcceptsContiguousTailEvaluation(t *testing.T) {
 	}
 }
 
+func TestResolveParametersValidatesArtifactSelection(t *testing.T) {
+	parameters := Parameters{Steps: 10, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 42}
+	resolved, err := ResolveParameters(parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The default stays out of resolved JSON so existing run identities are unchanged.
+	if encoded, err := json.Marshal(resolved); err != nil || resolved.ArtifactSelection != "" || strings.Contains(string(encoded), "artifact_selection") {
+		t.Fatalf("default artifact selection = %q in %s: %v", resolved.ArtifactSelection, encoded, err)
+	}
+	parameters.ArtifactSelection = "final"
+	if resolved, err = ResolveParameters(parameters); err != nil || resolved.ArtifactSelection != "final" {
+		t.Fatalf("final artifact selection = %q: %v", resolved.ArtifactSelection, err)
+	}
+	parameters.ArtifactSelection = "best"
+	if _, err := ResolveParameters(parameters); err == nil || !strings.Contains(err.Error(), "artifact_selection must be final or omitted") {
+		t.Fatalf("unknown artifact selection: %v", err)
+	}
+}
+
 func TestWeightedProfilePinsDeclaredCorpusWeights(t *testing.T) {
 	parameters := Parameters{Profile: WeightedProfile, Steps: 10, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 42, CorpusWeights: map[string]uint64{"corpus-a": 3, "corpus-b": 1}}
 	resolved, err := ResolveParameters(parameters)
@@ -1280,6 +1300,38 @@ func TestWorkerInputStopsTrainingRecordsAfterTargetSignal(t *testing.T) {
 	}
 }
 
+func TestEvaluateOnlyWorkerInputSendsOnlyHeldOutRecords(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := workerBeginFromRequest(Request{RunID: "evaluate", Stage: "pretrain", Objective: "causal-language-modeling", Parameters: parameters, EvaluateOnly: true})
+	records := recordSourceFunc(func(_ context.Context, consume func(Record) error) error {
+		return consume(Record{ID: "training", Text: "training text"})
+	})
+	evaluation := recordSourceFunc(func(_ context.Context, consume func(Record) error) error {
+		return consume(Record{ID: "held-out", Text: "held-out text"})
+	})
+	var encoded bytes.Buffer
+	if err := WriteWorkerInput(context.Background(), &encoded, begin, records, evaluation); err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, line := range strings.Split(strings.TrimSpace(encoded.String()), "\n") {
+		var frame WorkerInputFrame
+		if err := json.Unmarshal([]byte(line), &frame); err != nil {
+			t.Fatal(err)
+		}
+		kinds = append(kinds, frame.Kind)
+		if frame.Begin != nil && !frame.Begin.EvaluateOnly {
+			t.Fatalf("begin frame dropped evaluate_only: %s", line)
+		}
+	}
+	if strings.Join(kinds, ",") != "begin,evaluation_record,end" {
+		t.Fatalf("evaluate-only input frames = %v", kinds)
+	}
+}
+
 func TestResolveParametersPinsGradientAccumulation(t *testing.T) {
 	resolved, err := ResolveParameters(Parameters{Steps: 2, BatchSize: 8, GradientAccumulation: 4, SequenceLength: 16, LearningRate: 0.001})
 	if err != nil {
@@ -1783,4 +1835,39 @@ func writeTrainingRows(t *testing.T, rows []shard.Row) Input {
 		t.Fatal(err)
 	}
 	return Input{Path: path, SHA256: digest, Bytes: int64(len(data)), Records: int64(len(rows))}
+}
+
+func TestEvaluationSeedHoldsOutTheSameRecordsAcrossTrainingSeeds(t *testing.T) {
+	var texts []string
+	for index := 0; index < 40; index++ {
+		texts = append(texts, fmt.Sprintf("record %d", index))
+	}
+	inputs := []Input{writeTrainingShard(t, texts[:20]), writeTrainingShard(t, texts[20:])}
+	inputs[0].Corpus, inputs[1].Corpus = "first", "second"
+	limit, fraction := 5, 0.5
+	for _, selection := range []string{"indexed-sample-v1", "stratified-indexed-sample-v1", "lowest-sha256-v1"} {
+		heldOut := func(seed uint64, evaluationSeed *uint64) EvaluationSet {
+			t.Helper()
+			parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: seed,
+				EvaluationSelection: selection, EvaluationFraction: &fraction, EvaluationMaxRecords: &limit, EvaluationSeed: evaluationSeed})
+			if err != nil {
+				t.Fatal(err)
+			}
+			partition, err := NewRecordPartition(inputs, parameters)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return partition.Evaluation
+		}
+		// Without an evaluation seed, each training seed holds out its own records, as before.
+		if heldOut(1, nil).SHA256 == heldOut(2, nil).SHA256 {
+			t.Fatalf("%s: training seeds 1 and 2 held out the same records", selection)
+		}
+		// With one, runs that shuffle differently hold out the same records.
+		nine := uint64(9)
+		first, second := heldOut(1, &nine), heldOut(2, &nine)
+		if first.SHA256 != second.SHA256 || first.Seed != 9 || first.Records == 0 {
+			t.Fatalf("%s: held out %+v and %+v", selection, first, second)
+		}
+	}
 }

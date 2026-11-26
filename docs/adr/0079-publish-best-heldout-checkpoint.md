@@ -29,6 +29,11 @@ held-out set.
 WALDO records the selected step, consumed tokens, metric, and value and rejects
 a PyTorch completion that lacks artifact verification for that selection.
 
+A stage may declare `artifact_selection: final` to publish its last optimizer
+step instead, when continuity with the last weights matters more than the
+lowest held-out loss. That artifact is reloaded and verified the same way,
+and WALDO rejects a completion whose selected step is not the final step.
+
 The requested optimizer-step budget still completes. Checkpoint selection is
 not automatic early stopping, and it does not replace independent downstream
 quality evaluation.
