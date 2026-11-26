@@ -31,6 +31,7 @@ type Options struct {
 	Finalize     func(string) error
 	Quantization *Quantization
 	Report       func(string)
+	Lineage      []byte // LINEAGE.json, the exported weights' history
 	result       *modelquant.Result
 }
 
@@ -184,6 +185,9 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	}
 	if interactionTemplate != "" {
 		roles["chat_template.jinja"] = "interaction-template"
+	}
+	if err := writeLineage(temporary, options.Lineage, roles); err != nil {
+		return "", err
 	}
 	inventory, err := inventoryFiles(temporary, roles)
 	if err != nil {
@@ -587,3 +591,12 @@ exact byte or trained byte-BPE tokenizer. The Safetensors payload is copied with
 conversion. ` + "`BOM.json`" + ` inventories every release file and ` + "`EU-BOM.json`" + `
 contains the EU GPAI training-content disclosure mapping.
 `
+
+// writeLineage ships the release's LINEAGE.json, listed in BOM.json.
+func writeLineage(directory string, lineage []byte, roles map[string]string) error {
+	if len(lineage) == 0 {
+		return nil
+	}
+	roles["LINEAGE.json"] = "lineage"
+	return os.WriteFile(filepath.Join(directory, "LINEAGE.json"), lineage, 0o644)
+}

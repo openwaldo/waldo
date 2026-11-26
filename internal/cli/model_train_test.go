@@ -180,3 +180,22 @@ func TestModelTrainFormatsOmittedNameDiagnostic(t *testing.T) {
 		t.Fatalf("stdout does not contain Cobra usage: %q", stdout.String())
 	}
 }
+
+// A pending merge-only compose has no stages left, but only Compose finishes
+// its transaction, so it never takes the completed-compose shortcut.
+func TestPendingMergeComposeFinishesThroughCompose(t *testing.T) {
+	merge := model.Compose{Base: &model.ComposeBase{Merge: []model.ComposeMergeParent{{Model: "left"}, {Model: "right"}}}}
+	for name, test := range map[string]struct {
+		pending bool
+		compose model.Compose
+		want    bool
+	}{
+		"repeated merge":   {false, merge, true},
+		"pending merge":    {true, merge, false},
+		"pending training": {true, model.Compose{}, true},
+	} {
+		if got := completesWithoutCompose(test.pending, test.compose); got != test.want {
+			t.Fatalf("%s: completes without Compose = %v, want %v", name, got, test.want)
+		}
+	}
+}
